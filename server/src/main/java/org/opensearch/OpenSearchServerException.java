@@ -9,6 +9,7 @@
 package org.opensearch;
 
 import org.opensearch.core.index.snapshots.IndexShardSnapshotException;
+import org.opensearch.crypto.CryptoManagerMissingException;
 
 import static org.opensearch.OpenSearchException.OpenSearchExceptionHandle;
 import static org.opensearch.OpenSearchException.OpenSearchExceptionHandleRegistry.registerExceptionHandle;
@@ -1194,6 +1195,14 @@ public final class OpenSearchServerException {
                 org.opensearch.search.pipeline.SearchPipelineProcessingException::new,
                 170,
                 V_2_7_0
+            )
+        );
+        registerExceptionHandle(
+            new OpenSearchExceptionHandle(
+                CryptoManagerMissingException.class,
+                CryptoManagerMissingException::new,
+                171,
+                V_3_0_0
             )
         );
         registerExceptionHandle(
