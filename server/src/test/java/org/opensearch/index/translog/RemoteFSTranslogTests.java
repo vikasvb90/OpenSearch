@@ -161,7 +161,7 @@ public class RemoteFSTranslogTests extends OpenSearchTestCase {
         final TranslogConfig translogConfig = getTranslogConfig(path);
         final TranslogDeletionPolicy deletionPolicy = createTranslogDeletionPolicy(translogConfig.getIndexSettings());
         threadPool = new TestThreadPool(getClass().getName());
-        blobStoreTransferService = new BlobStoreTransferService(repository.blobStore(), threadPool);
+        blobStoreTransferService = new BlobStoreTransferService(repository.blobStore(), threadPool, null);
         return new RemoteFsTranslog(
             translogConfig,
             translogUUID,
@@ -171,7 +171,8 @@ public class RemoteFSTranslogTests extends OpenSearchTestCase {
             getPersistedSeqNoConsumer(),
             repository,
             threadPool,
-            primaryMode::get
+            primaryMode::get,
+            null
         );
 
     }
@@ -1222,7 +1223,8 @@ public class RemoteFSTranslogTests extends OpenSearchTestCase {
                 persistedSeqNos::add,
                 repository,
                 threadPool,
-                () -> Boolean.TRUE
+                () -> Boolean.TRUE,
+                null
             ) {
                 @Override
                 ChannelFactory getChannelFactory() {
@@ -1328,7 +1330,8 @@ public class RemoteFSTranslogTests extends OpenSearchTestCase {
                 persistedSeqNos::add,
                 repository,
                 threadPool,
-                () -> Boolean.TRUE
+                () -> Boolean.TRUE,
+                null
             ) {
                 @Override
                 ChannelFactory getChannelFactory() {

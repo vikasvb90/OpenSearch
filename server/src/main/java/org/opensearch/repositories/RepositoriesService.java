@@ -66,6 +66,7 @@ import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.FeatureFlags;
 import org.opensearch.common.util.concurrent.ConcurrentCollections;
 import org.opensearch.common.util.io.IOUtils;
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.repositories.blobstore.MeteredBlobStoreRepository;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.TransportService;
@@ -460,6 +461,15 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
             assert false : new AssertionError(ex);
             logger.warn("failure updating cluster state ", ex);
         }
+    }
+
+    /**
+     * Returns registered crypto client
+     * @param repositoryMetadata repository metadata for which crypto client needs to be returned.
+     * @return crypto client
+     */
+    public CryptoManager cryptoManager(RepositoryMetadata repositoryMetadata) {
+        return cryptoManagers.get(getCryptoManagerKey(repositoryMetadata));
     }
 
     /**

@@ -53,7 +53,8 @@ public class RemoteTransferContainerTests extends OpenSearchTestCase {
                     }
                 },
                 0,
-                false
+                false,
+                null
             )
         ) {
             testSupplyStreamContext(remoteTransferContainer, 16, 16, 8);
@@ -75,7 +76,8 @@ public class RemoteTransferContainerTests extends OpenSearchTestCase {
                     }
                 },
                 0,
-                false
+                false,
+                null
             )
         ) {
             testSupplyStreamContext(remoteTransferContainer, 10, 8, 13);
@@ -129,7 +131,8 @@ public class RemoteTransferContainerTests extends OpenSearchTestCase {
                     }
                 },
                 0,
-                false
+                false,
+                null
             )
         ) {
             remoteTransferContainer.supplyStreamContext(16);
@@ -164,7 +167,8 @@ public class RemoteTransferContainerTests extends OpenSearchTestCase {
                     }
                 },
                 expectedChecksum,
-                doRemoteDataIntegrityCheck
+                doRemoteDataIntegrityCheck,
+                null
             )
         ) {
             WriteContext writeContext = remoteTransferContainer.createWriteContext();
@@ -196,7 +200,8 @@ public class RemoteTransferContainerTests extends OpenSearchTestCase {
                     }
                 },
                 0,
-                isRemoteDataIntegritySupported
+                isRemoteDataIntegritySupported,
+                null
             )
         ) {
             StreamContext streamContext = remoteTransferContainer.supplyStreamContext(16);

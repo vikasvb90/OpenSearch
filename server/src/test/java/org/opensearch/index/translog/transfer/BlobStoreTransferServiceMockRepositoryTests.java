@@ -67,7 +67,7 @@ public class BlobStoreTransferServiceMockRepositoryTests extends OpenSearchTestC
         }).when(blobContainer).asyncBlobUpload(any(WriteContext.class), any());
         when(blobStore.blobContainer(any(BlobPath.class))).thenReturn(blobContainer);
 
-        TransferService transferService = new BlobStoreTransferService(blobStore, threadPool);
+        TransferService transferService = new BlobStoreTransferService(blobStore, threadPool, null);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean onResponseCalled = new AtomicBoolean(false);
         AtomicReference<Exception> exceptionRef = new AtomicReference<>();
@@ -87,7 +87,7 @@ public class BlobStoreTransferServiceMockRepositoryTests extends OpenSearchTestC
             public void onFailure(Exception e) {
                 exceptionRef.set(e);
             }
-        }, latch), WritePriority.HIGH);
+        }, latch), WritePriority.HIGH, TransferContentType.DATA);
 
         assertTrue(latch.await(1000, TimeUnit.MILLISECONDS));
         verify(blobContainer).asyncBlobUpload(any(WriteContext.class), any());
@@ -110,7 +110,7 @@ public class BlobStoreTransferServiceMockRepositoryTests extends OpenSearchTestC
         doThrow(new IOException()).when(blobContainer).asyncBlobUpload(any(WriteContext.class), any());
         when(blobStore.blobContainer(any(BlobPath.class))).thenReturn(blobContainer);
 
-        TransferService transferService = new BlobStoreTransferService(blobStore, threadPool);
+        TransferService transferService = new BlobStoreTransferService(blobStore, threadPool, null);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean onResponseCalled = new AtomicBoolean(false);
         AtomicReference<Exception> exceptionRef = new AtomicReference<>();
@@ -128,7 +128,7 @@ public class BlobStoreTransferServiceMockRepositoryTests extends OpenSearchTestC
             public void onFailure(Exception e) {
                 exceptionRef.set(e);
             }
-        }, latch), WritePriority.HIGH);
+        }, latch), WritePriority.HIGH, TransferContentType.DATA);
 
         assertTrue(latch.await(1000, TimeUnit.MILLISECONDS));
         verify(blobContainer).asyncBlobUpload(any(WriteContext.class), any());
@@ -154,7 +154,7 @@ public class BlobStoreTransferServiceMockRepositoryTests extends OpenSearchTestC
 
         when(blobStore.blobContainer(any(BlobPath.class))).thenReturn(blobContainer);
 
-        TransferService transferService = new BlobStoreTransferService(blobStore, threadPool);
+        TransferService transferService = new BlobStoreTransferService(blobStore, threadPool, null);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicBoolean onResponseCalled = new AtomicBoolean(false);
         AtomicReference<Exception> exceptionRef = new AtomicReference<>();
@@ -173,7 +173,7 @@ public class BlobStoreTransferServiceMockRepositoryTests extends OpenSearchTestC
             {
                 put(transferFileSnapshot.getPrimaryTerm(), new BlobPath().add("sample_path"));
             }
-        }, listener, WritePriority.HIGH);
+        }, listener, WritePriority.HIGH, TransferContentType.DATA);
 
         assertTrue(latch.await(1000, TimeUnit.MILLISECONDS));
         verify(blobContainer).asyncBlobUpload(any(WriteContext.class), any());

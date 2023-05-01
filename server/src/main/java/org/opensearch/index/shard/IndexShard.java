@@ -44,7 +44,6 @@ import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.QueryCachingPolicy;
 import org.apache.lucene.search.ReferenceManager;
@@ -105,6 +104,7 @@ import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.lease.Releasables;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.gateway.WriteStateException;
 import org.opensearch.core.index.Index;
 import org.opensearch.index.IndexModule;
@@ -219,7 +219,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
@@ -335,7 +334,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final RefreshPendingLocationListener refreshPendingLocationListener;
     private volatile boolean useRetentionLeasesInPeerRecovery;
     private final Store remoteStore;
-    private final BiFunction<IndexSettings, ShardRouting, TranslogFactory> translogFactorySupplier;
+    private final IndicesService.TranslogFactorySupplier translogFactorySupplier;
+
     private final boolean isTimeSeriesIndex;
     private final RemoteRefreshSegmentPressureService remoteRefreshSegmentPressureService;
 
@@ -360,7 +360,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final Runnable globalCheckpointSyncer,
         final RetentionLeaseSyncer retentionLeaseSyncer,
         final CircuitBreakerService circuitBreakerService,
-        final BiFunction<IndexSettings, ShardRouting, TranslogFactory> translogFactorySupplier,
+        final IndicesService.TranslogFactorySupplier translogFactorySupplier,
         @Nullable final SegmentReplicationCheckpointPublisher checkpointPublisher,
         @Nullable final Store remoteStore,
         final RemoteRefreshSegmentPressureService remoteRefreshSegmentPressureService
@@ -3710,7 +3710,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             tombstoneDocSupplier(),
             isReadOnlyReplica,
             replicationTracker::isPrimaryMode,
-            translogFactorySupplier.apply(indexSettings, shardRouting),
+            translogFactorySupplier.createTranslogFactory(indexSettings, shardRouting),
             isTimeSeriesDescSortOptimizationEnabled() ? DataStream.TIMESERIES_LEAF_SORTER : null // DESC @timestamp default order for
                                                                                                  // timeseries
         );
@@ -4581,17 +4581,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     public void deleteTranslogFilesFromRemoteTranslog() throws IOException {
-        TranslogFactory translogFactory = translogFactorySupplier.apply(indexSettings, shardRouting);
+        TranslogFactory translogFactory = translogFactorySupplier.createTranslogFactory(indexSettings, shardRouting);
         assert translogFactory instanceof RemoteBlobStoreInternalTranslogFactory;
         Repository repository = ((RemoteBlobStoreInternalTranslogFactory) translogFactory).getRepository();
         RemoteFsTranslog.cleanup(repository, shardId, getThreadPool());
     }
 
     public void syncTranslogFilesFromRemoteTranslog() throws IOException {
-        TranslogFactory translogFactory = translogFactorySupplier.apply(indexSettings, shardRouting);
+        TranslogFactory translogFactory = translogFactorySupplier.createTranslogFactory(indexSettings, shardRouting);
         assert translogFactory instanceof RemoteBlobStoreInternalTranslogFactory;
         Repository repository = ((RemoteBlobStoreInternalTranslogFactory) translogFactory).getRepository();
-        RemoteFsTranslog.download(repository, shardId, getThreadPool(), shardPath().resolveTranslog(), logger);
+        CryptoManager cryptoManager = translogFactorySupplier.createCryptoManager(repository.getMetadata());
+        RemoteFsTranslog.download(repository, shardId, getThreadPool(), shardPath().resolveTranslog(), logger, cryptoManager);
     }
 
     /**
@@ -4762,7 +4763,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             for (String file : uploadedSegments.keySet()) {
                 long checksum = Long.parseLong(uploadedSegments.get(file).getChecksum());
                 if (overrideLocal || localDirectoryContains(storeDirectory, file, checksum) == false) {
-                    storeDirectory.copyFrom(sourceRemoteDirectory, file, file, IOContext.DEFAULT);
+                    sourceRemoteDirectory.downloadDataFile(storeDirectory, file, IOContext.DEFAULT);
                     storeDirectory.sync(Collections.singleton(file));
                     downloadedSegments.add(file);
                 } else {

@@ -33,13 +33,14 @@ public interface TransferService {
      * @param fileSnapshot the file snapshot to upload
      * @param remotePath the remote path where upload should be made
      * @param listener the callback to be invoked once upload completes successfully/fails
+     * @param transferContentType type of content to be uploaded.
      */
     void uploadBlob(
         String threadPoolName,
         final TransferFileSnapshot fileSnapshot,
         Iterable<String> remotePath,
         ActionListener<TransferFileSnapshot> listener,
-        WritePriority writePriority
+        TransferContentType transferContentType
     );
 
     /**
@@ -52,7 +53,8 @@ public interface TransferService {
         Set<TransferFileSnapshot> fileSnapshots,
         final Map<Long, BlobPath> blobPaths,
         ActionListener<TransferFileSnapshot> listener,
-        WritePriority writePriority
+        WritePriority writePriority,
+        TransferContentType transferContentType
     ) throws Exception;
 
     /**
@@ -62,7 +64,7 @@ public interface TransferService {
      * @param writePriority Priority by which content needs to be written.
      * @throws IOException the exception while transferring the data
      */
-    void uploadBlob(final TransferFileSnapshot fileSnapshot, Iterable<String> remotePath, WritePriority writePriority) throws IOException;
+    void uploadBlob(final TransferFileSnapshot fileSnapshot, Iterable<String> remotePath, WritePriority writePriority, TransferContentType transferContentType) throws IOException;
 
     void deleteBlobs(Iterable<String> path, List<String> fileNames) throws IOException;
 
