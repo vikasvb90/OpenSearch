@@ -42,9 +42,12 @@ import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandler;
 import org.opensearch.threadpool.ThreadPool;
+import org.opensearch.common.unit.ByteSizeUnit;
+import org.opensearch.crypto.CryptoManager;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.NoSuchFileException;
 import java.util.Collection;
 import java.util.Collections;
@@ -95,6 +98,11 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     private final ThreadPool threadPool;
 
     /**
+     * To encrypt or decrypt segment data of an encrypted repo before transfer.
+     */
+    private final CryptoManager cryptoManager;
+
+    /**
      * Keeps track of local segment filename to uploaded filename along with other attributes like checksum.
      * This map acts as a cache layer for uploaded segment filenames which helps avoid calling listAll() each time.
      * It is important to initialize this map on creation of RemoteSegmentStoreDirectory and update it on each upload and delete.
@@ -121,13 +129,15 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         RemoteDirectory remoteDataDirectory,
         RemoteDirectory remoteMetadataDirectory,
         RemoteStoreLockManager mdLockManager,
-        ThreadPool threadPool
+        ThreadPool threadPool,
+        CryptoManager cryptoManager
     ) throws IOException {
         super(remoteDataDirectory);
         this.remoteDataDirectory = remoteDataDirectory;
         this.remoteMetadataDirectory = remoteMetadataDirectory;
         this.mdLockManager = mdLockManager;
         this.threadPool = threadPool;
+        this.cryptoManager = cryptoManager;
         init();
     }
 
@@ -413,7 +423,8 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             WritePriority.NORMAL,
             (size, position) -> new OffsetRangeIndexInputStream(from.openInput(src, ioContext), size, position),
             expectedChecksum,
-            remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer
+            remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer,
+            cryptoManager
         );
         ActionListener<Void> completionListener = ActionListener.wrap(resp -> {
             try {
@@ -533,6 +544,34 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     private void postUpload(Directory from, String src, String remoteFilename, String checksum) throws IOException {
         UploadedSegmentMetadata segmentMetadata = new UploadedSegmentMetadata(src, remoteFilename, checksum, from.fileLength(src));
         segmentsUploadedToRemoteStore.put(src, segmentMetadata);
+    }
+
+    /**
+     * This method shouldn't be used to download metadata files because it performs decryption if remote directory
+     * is an encrypted dir. Metadata files are never encrypted.
+     * @param to Directory to which file needs to be downloaded
+     * @param file Name by which new file needs to be downloaded in "to" directory.
+     * @param context File context
+     * @throws IOException when there is an issue in download.
+     */
+    public void downloadDataFile(Directory to, String file, IOContext context) throws IOException {
+
+        try (IndexOutput indexOutput = to.createOutput(file, context); InputStream inputStream = maybeCreateEncryptedRemoteInputStream(file)) {
+            byte[] buffer = new byte[(int) ByteSizeUnit.KB.toBytes(10)];
+            int len;
+            while ((len = inputStream.read(buffer, 0, buffer.length)) > 0) {
+                indexOutput.writeBytes(buffer, 0, len);
+            }
+        }
+    }
+
+    private InputStream maybeCreateEncryptedRemoteInputStream(String file) throws IOException {
+        String remoteFilename = getNewRemoteSegmentFilename(file);
+        InputStream inputStream = remoteDataDirectory.blobContainer.readBlob(remoteFilename);
+        if (cryptoManager != null) {
+            inputStream = cryptoManager.createDecryptingStream(inputStream);
+        }
+        return inputStream;
     }
 
     /**

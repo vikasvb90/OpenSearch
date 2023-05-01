@@ -24,6 +24,7 @@ import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.core.common.bytes.BytesReference;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.index.translog.transfer.listener.TranslogTransferListener;
 import org.opensearch.threadpool.ThreadPool;
@@ -59,6 +60,7 @@ public class TranslogTransferManager {
     private final BlobPath remoteMetadataTransferPath;
     private final BlobPath remoteBaseTransferPath;
     private final FileTransferTracker fileTransferTracker;
+    private final CryptoManager cryptoManager;
 
     private static final long TRANSFER_TIMEOUT_IN_MILLIS = 30000;
 
@@ -75,9 +77,11 @@ public class TranslogTransferManager {
     public TranslogTransferManager(
         ShardId shardId,
         TransferService transferService,
+        CryptoManager cryptoManager,
         BlobPath remoteBaseTransferPath,
         FileTransferTracker fileTransferTracker
     ) {
+        this.cryptoManager = cryptoManager;
         this.shardId = shardId;
         this.transferService = transferService;
         this.remoteBaseTransferPath = remoteBaseTransferPath;
@@ -128,7 +132,7 @@ public class TranslogTransferManager {
                 )
             );
 
-            transferService.uploadBlobs(toUpload, blobPathMap, latchedActionListener, WritePriority.HIGH);
+            transferService.uploadBlobs(toUpload, blobPathMap, latchedActionListener, WritePriority.HIGH, TransferContentType.DATA);
 
             try {
                 if (latch.await(TRANSFER_TIMEOUT_IN_MILLIS, TimeUnit.MILLISECONDS) == false) {
@@ -142,7 +146,7 @@ public class TranslogTransferManager {
                 throw ex;
             }
             if (exceptionList.isEmpty()) {
-                transferService.uploadBlob(prepareMetadata(transferSnapshot), remoteMetadataTransferPath, WritePriority.HIGH);
+                transferService.uploadBlob(prepareMetadata(transferSnapshot), remoteMetadataTransferPath, WritePriority.HIGH, TransferContentType.METADATA);
                 translogTransferListener.onUploadComplete(transferSnapshot);
                 return true;
             } else {
@@ -166,22 +170,28 @@ public class TranslogTransferManager {
         );
         // Download Checkpoint file from remote to local FS
         String ckpFileName = Translog.getCommitCheckpointFileName(Long.parseLong(generation));
-        downloadToFS(ckpFileName, location, primaryTerm);
+        downloadToFS(ckpFileName, location, primaryTerm, TransferContentType.DATA);
         // Download translog file from remote to local FS
         String translogFilename = Translog.getFilename(Long.parseLong(generation));
-        downloadToFS(translogFilename, location, primaryTerm);
+        downloadToFS(translogFilename, location, primaryTerm, TransferContentType.DATA);
         return true;
     }
 
-    private void downloadToFS(String fileName, Path location, String primaryTerm) throws IOException {
+    private void downloadToFS(String fileName, Path location, String primaryTerm, TransferContentType transferContentType)
+        throws IOException {
         Path filePath = location.resolve(fileName);
         // Here, we always override the existing file if present.
         // We need to change this logic when we introduce incremental download
         if (Files.exists(filePath)) {
             Files.delete(filePath);
         }
-        try (InputStream inputStream = transferService.downloadBlob(remoteDataTransferPath.add(primaryTerm), fileName)) {
-            Files.copy(inputStream, filePath);
+
+        try (InputStream inputStream = transferService.downloadBlob(remoteBaseTransferPath.add(primaryTerm), fileName)) {
+            InputStream transferInputStream = inputStream;
+            if (transferContentType == TransferContentType.DATA && cryptoManager != null) {
+                transferInputStream = cryptoManager.createDecryptingStream(inputStream);
+            }
+            Files.copy(transferInputStream, filePath);
         }
         // Mark in FileTransferTracker so that the same files are not uploaded at the time of translog sync
         fileTransferTracker.add(fileName, true);

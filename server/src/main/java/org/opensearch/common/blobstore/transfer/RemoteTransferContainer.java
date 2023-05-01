@@ -20,6 +20,7 @@ import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeInputStream;
 import org.opensearch.common.blobstore.transfer.stream.ResettableCheckedInputStream;
 import org.opensearch.common.io.InputStreamContainer;
+import org.opensearch.crypto.CryptoManager;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -46,6 +47,9 @@ public class RemoteTransferContainer implements Closeable {
     private final long expectedChecksum;
     private final OffsetRangeInputStreamSupplier offsetRangeInputStreamSupplier;
     private final boolean isRemoteDataIntegritySupported;
+    private final CryptoManager cryptoManager;
+    private final Object cryptoContext;
+    private final long remoteContentLength;
 
     private static final Logger log = LogManager.getLogger(RemoteTransferContainer.class);
 
@@ -60,6 +64,7 @@ public class RemoteTransferContainer implements Closeable {
      * @param offsetRangeInputStreamSupplier A supplier to create OffsetRangeInputStreams
      * @param expectedChecksum               The expected checksum value for the file being uploaded. This checksum will be used for local or remote data integrity checks
      * @param isRemoteDataIntegritySupported A boolean to signify whether the remote repository supports server side data integrity verification
+     * @param cryptoManager                   Crypto manager to encrypt file content
      */
     public RemoteTransferContainer(
         String fileName,
@@ -69,7 +74,8 @@ public class RemoteTransferContainer implements Closeable {
         WritePriority writePriority,
         OffsetRangeInputStreamSupplier offsetRangeInputStreamSupplier,
         long expectedChecksum,
-        boolean isRemoteDataIntegritySupported
+        boolean isRemoteDataIntegritySupported,
+        CryptoManager cryptoManager
     ) {
         this.fileName = fileName;
         this.remoteFileName = remoteFileName;
@@ -79,6 +85,14 @@ public class RemoteTransferContainer implements Closeable {
         this.offsetRangeInputStreamSupplier = offsetRangeInputStreamSupplier;
         this.expectedChecksum = expectedChecksum;
         this.isRemoteDataIntegritySupported = isRemoteDataIntegritySupported;
+        this.cryptoManager = cryptoManager;
+        if (cryptoManager != null) {
+            this.cryptoContext = cryptoManager.initCryptoContext();
+            this.remoteContentLength = cryptoManager.estimateEncryptedLength(cryptoContext, contentLength);
+        } else {
+            this.cryptoContext = null;
+            this.remoteContentLength = contentLength;
+        }
     }
 
     /**
@@ -98,7 +112,6 @@ public class RemoteTransferContainer implements Closeable {
     }
 
     // package-private for testing
-
     /**
      * This method is called to create the {@link StreamContext} object that will be used by the vendor plugin to
      * open streams during uploads. Calling this method won't actually create the streams, for that the consumer needs
@@ -115,12 +128,17 @@ public class RemoteTransferContainer implements Closeable {
         }
     }
 
-    private StreamContext openMultipartStreams(long partSize) throws IOException {
+    private StreamContext openMultipartStreams(long remotePartSize) throws IOException {
         if (inputStreams.get() != null) {
             throw new IOException("Multi-part streams are already created.");
         }
 
-        this.partSize = partSize;
+        // This is needed because each part of encrypted content should correctly line up with encryption boundaries.
+        if (cryptoManager != null) {
+            this.partSize = cryptoManager.adjustEncryptedStreamSize(cryptoContext, remotePartSize);
+        } else {
+            this.partSize = remotePartSize;
+        }
         this.lastPartSize = (contentLength % partSize) != 0 ? contentLength % partSize : partSize;
         this.numberOfParts = (int) ((contentLength % partSize) == 0 ? contentLength / partSize : (contentLength / partSize) + 1);
         InputStream[] streams = new InputStream[numberOfParts];
@@ -160,7 +178,17 @@ public class RemoteTransferContainer implements Closeable {
                     : offsetRangeInputStream;
                 Objects.requireNonNull(inputStreams.get())[streamIdx] = inputStream;
 
-                return new InputStreamContainer(inputStream, size, position);
+                InputStreamContainer streamContainer = new InputStreamContainer(inputStream, size, position);
+                if (cryptoManager != null) {
+                    streamContainer = cryptoManager.createEncryptingStreamOfPart(
+                        cryptoContext,
+                        streamContainer,
+                        Objects.requireNonNull(inputStreams.get()).length,
+                        streamIdx
+                    );
+                }
+
+                return streamContainer;
             } catch (IOException e) {
                 log.error("Failed to create input stream", e);
                 throw e;
@@ -169,7 +197,7 @@ public class RemoteTransferContainer implements Closeable {
     }
 
     private boolean isRemoteDataIntegrityCheckPossible() {
-        return isRemoteDataIntegritySupported;
+        return isRemoteDataIntegritySupported && cryptoManager == null;
     }
 
     private void finalizeUpload(boolean uploadSuccessful) throws IOException {
