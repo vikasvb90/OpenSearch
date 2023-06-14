@@ -13,6 +13,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.mockito.invocation.InvocationOnMock;
 import org.opensearch.cluster.metadata.RepositoryMetadata;
+import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.BlobPath;
@@ -455,13 +456,10 @@ public class S3BlobContainerMockClientTests extends OpenSearchTestCase implement
                         }
                     }, partSize, calculateLastPartSize(bytes.length, partSize), calculateNumberOfParts(bytes.length, partSize));
                 }
-            }, bytes.length, false, WritePriority.NORMAL, new Consumer<Boolean>() {
-                @Override
-                public void accept(Boolean uploadSuccess) {
-                    assertTrue(uploadSuccess);
-                    if (throwExceptionOnFinalizeUpload) {
-                        throw new RuntimeException();
-                    }
+            }, bytes.length, false, WritePriority.NORMAL, uploadSuccess -> {
+                assertTrue(uploadSuccess);
+                if (throwExceptionOnFinalizeUpload) {
+                    throw new RuntimeException();
                 }
             }, false, null)
         );
@@ -506,13 +504,10 @@ public class S3BlobContainerMockClientTests extends OpenSearchTestCase implement
                         }
                     }, partSize, calculateLastPartSize(blobSize, partSize), calculateNumberOfParts(blobSize, partSize));
                 }
-            }, blobSize, false, WritePriority.HIGH, new Consumer<Boolean>() {
-                @Override
-                public void accept(Boolean uploadSuccess) {
-                    assertTrue(uploadSuccess);
-                    if (throwExceptionOnFinalizeUpload) {
-                        throw new RuntimeException();
-                    }
+            }, blobSize, false, WritePriority.HIGH, uploadSuccess -> {
+                assertTrue(uploadSuccess);
+                if (throwExceptionOnFinalizeUpload) {
+                    throw new RuntimeException();
                 }
             }, false, null)
         );

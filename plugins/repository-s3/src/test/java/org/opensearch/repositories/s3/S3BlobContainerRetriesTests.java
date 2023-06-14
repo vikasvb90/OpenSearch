@@ -33,14 +33,17 @@ package org.opensearch.repositories.s3;
 
 import org.apache.http.HttpStatus;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.opensearch.cluster.metadata.RepositoryMetadata;
+import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobPath;
+import org.opensearch.common.blobstore.MultiStreamBlobContainer;
 import org.opensearch.common.blobstore.stream.write.StreamContextSupplier;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
@@ -155,7 +158,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
     }
 
     @Override
-    protected BlobContainer createBlobContainer(
+    protected MultiStreamBlobContainer createBlobContainer(
         final @Nullable Integer maxRetries,
         final @Nullable TimeValue readTimeout,
         final @Nullable Boolean disableChunkedEncoding,
@@ -313,7 +316,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
             }
         });
 
-        final BlobContainer blobContainer = createBlobContainer(maxRetries, null, true, null);
+        final MultiStreamBlobContainer blobContainer = createBlobContainer(maxRetries, null, true, null);
         List<InputStream> openInputStreams = new ArrayList<>();
         CompletableFuture<Void> completableFuture = blobContainer.writeBlobByStreams(
             new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
@@ -332,12 +335,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
                         }
                     }, partSize, calculateLastPartSize(bytes.length, partSize), calculateNumberOfParts(bytes.length, partSize));
                 }
-            }, bytes.length, false, WritePriority.NORMAL, new Consumer<Boolean>() {
-                @Override
-                public void accept(Boolean uploadSuccess) {
-                    assertTrue(uploadSuccess);
-                }
-            }, false, null)
+            }, bytes.length, false, WritePriority.NORMAL, Assert::assertTrue, false, null)
         );
 
         // wait for completableFuture to finish
