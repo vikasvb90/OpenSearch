@@ -24,19 +24,17 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.common.UUIDs;
-import org.opensearch.common.blobstore.MultiStreamBlobContainer;
+import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.exception.CorruptFileException;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.RemoteTransferContainer;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeIndexInputStream;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
-import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.util.ByteUtils;
 import org.opensearch.common.util.UploadListener;
 import org.opensearch.index.store.exception.ChecksumCombinationException;
-import org.opensearch.index.store.lockmanager.FileLockInfo;
 import org.opensearch.index.store.lockmanager.FileLockInfo;
 import org.opensearch.index.store.lockmanager.RemoteStoreCommitLevelLockManager;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
@@ -386,7 +384,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         for (String src : files) {
             String remoteFilename = createRemoteFileName(src, false);
             uploadListener.beforeUpload(src);
-            if (remoteDataDirectory.getBlobContainer() instanceof MultiStreamBlobContainer) {
+            if (remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer) {
                 try {
                     CompletableFuture<Void> resultFuture = createUploadFuture(from, src, remoteFilename, context);
                     resultFuture.whenComplete((uploadResponse, throwable) -> {
@@ -459,7 +457,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             remoteDataDirectory.getBlobContainer().isRemoteDataIntegritySupported()
         );
         WriteContext writeContext = remoteTransferContainer.createWriteContext();
-        CompletableFuture<Void> uploadFuture = ((MultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).writeBlobByStreams(writeContext);
+        CompletableFuture<Void> uploadFuture = ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).writeBlobByStreams(writeContext);
         return uploadFuture.whenComplete((resp, throwable) -> {
             try {
                 remoteTransferContainer.close();

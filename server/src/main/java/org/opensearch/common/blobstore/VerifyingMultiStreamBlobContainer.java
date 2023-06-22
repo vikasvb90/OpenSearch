@@ -13,7 +13,7 @@ import org.opensearch.common.blobstore.stream.write.WriteContext;
 import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 
-public interface MultiStreamBlobContainer extends BlobContainer {
+public interface VerifyingMultiStreamBlobContainer extends BlobContainer {
 
     /**
      * Reads blob content from multiple streams, each from a specific part of the file, which is provided by the

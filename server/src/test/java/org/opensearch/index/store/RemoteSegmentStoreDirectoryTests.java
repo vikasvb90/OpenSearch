@@ -25,8 +25,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.UUIDs;
-import org.opensearch.common.blobstore.BlobContainer;
-import org.opensearch.common.blobstore.MultiStreamBlobContainer;
+import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.bytes.BytesReference;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
@@ -549,7 +548,7 @@ public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
 
         assertFalse(remoteSegmentStoreDirectory.getSegmentsUploadedToRemoteStore().containsKey(filename));
 
-        MultiStreamBlobContainer blobContainer = mock(MultiStreamBlobContainer.class);
+        VerifyingMultiStreamBlobContainer blobContainer = mock(VerifyingMultiStreamBlobContainer.class);
         when(remoteDataDirectory.getBlobContainer()).thenReturn(blobContainer);
         CompletableFuture<Void> uploadResponseCompletableFuture = new CompletableFuture<>();
         uploadResponseCompletableFuture.complete(null);
@@ -577,7 +576,7 @@ public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
 
         assertFalse(remoteSegmentStoreDirectory.getSegmentsUploadedToRemoteStore().containsKey(filename));
 
-        MultiStreamBlobContainer blobContainer = mock(MultiStreamBlobContainer.class);
+        VerifyingMultiStreamBlobContainer blobContainer = mock(VerifyingMultiStreamBlobContainer.class);
         when(remoteDataDirectory.getBlobContainer()).thenReturn(blobContainer);
         CompletableFuture<Void> uploadResponseCompletableFuture = new CompletableFuture<>();
         uploadResponseCompletableFuture.complete(null);
@@ -608,7 +607,7 @@ public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
 
         assertFalse(remoteSegmentStoreDirectory.getSegmentsUploadedToRemoteStore().containsKey(filename));
 
-        MultiStreamBlobContainer blobContainer = mock(MultiStreamBlobContainer.class);
+        VerifyingMultiStreamBlobContainer blobContainer = mock(VerifyingMultiStreamBlobContainer.class);
         when(remoteDataDirectory.getBlobContainer()).thenReturn(blobContainer);
         CompletableFuture<Void> uploadResponseCompletableFuture = new CompletableFuture<>();
         uploadResponseCompletableFuture.completeExceptionally(new IOException());

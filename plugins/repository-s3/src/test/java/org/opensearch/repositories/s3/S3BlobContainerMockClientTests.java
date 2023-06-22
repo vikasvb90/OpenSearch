@@ -13,7 +13,6 @@ import org.junit.After;
 import org.junit.Before;
 import org.mockito.invocation.InvocationOnMock;
 import org.opensearch.cluster.metadata.RepositoryMetadata;
-import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.BlobPath;
@@ -58,7 +57,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doAnswer;

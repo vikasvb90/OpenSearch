@@ -36,14 +36,13 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.opensearch.cluster.metadata.RepositoryMetadata;
-import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.SuppressForbidden;
 import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.BlobPath;
-import org.opensearch.common.blobstore.MultiStreamBlobContainer;
+import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.stream.write.StreamContextSupplier;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
@@ -86,7 +85,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsString;
@@ -158,7 +156,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
     }
 
     @Override
-    protected MultiStreamBlobContainer createBlobContainer(
+    protected VerifyingMultiStreamBlobContainer createBlobContainer(
         final @Nullable Integer maxRetries,
         final @Nullable TimeValue readTimeout,
         final @Nullable Boolean disableChunkedEncoding,
@@ -316,7 +314,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
             }
         });
 
-        final MultiStreamBlobContainer blobContainer = createBlobContainer(maxRetries, null, true, null);
+        final VerifyingMultiStreamBlobContainer blobContainer = createBlobContainer(maxRetries, null, true, null);
         List<InputStream> openInputStreams = new ArrayList<>();
         CompletableFuture<Void> completableFuture = blobContainer.writeBlobByStreams(
             new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
