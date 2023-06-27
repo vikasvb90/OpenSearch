@@ -175,11 +175,6 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
     }
 
     @Override
-    public boolean isRemoteDataIntegritySupported() {
-        return true;
-    }
-
-    @Override
     public CompletableFuture<Void> writeBlobByStreams(WriteContext writeContext) throws IOException {
         UploadRequest uploadRequest = new UploadRequest(
             blobStore.bucket(),

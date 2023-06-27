@@ -454,7 +454,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             WritePriority.NORMAL,
             (size, position) -> new OffsetRangeIndexInputStream(from.openInput(src, ioContext), size, position),
             expectedChecksum,
-            remoteDataDirectory.getBlobContainer().isRemoteDataIntegritySupported()
+            remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer
         );
         WriteContext writeContext = remoteTransferContainer.createWriteContext();
         CompletableFuture<Void> uploadFuture = ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).writeBlobByStreams(writeContext);
