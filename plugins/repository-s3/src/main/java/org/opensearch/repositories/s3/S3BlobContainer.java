@@ -193,13 +193,8 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
                 S3AsyncClient s3AsyncClient = writeContext.getWritePriority() == WritePriority.HIGH
                     ? amazonS3Reference.get().priorityClient()
                     : amazonS3Reference.get().client();
-                CompletableFuture<Void> returnFuture = new CompletableFuture<>();
-                CompletableFuture<Void> completableFuture = blobStore.getAsyncUploadUtils()
+                return blobStore.getAsyncUploadUtils()
                     .uploadObject(s3AsyncClient, uploadRequest, streamContext);
-
-                CompletableFutureUtils.forwardExceptionTo(returnFuture, completableFuture);
-                CompletableFutureUtils.forwardResultTo(completableFuture, returnFuture);
-                return completableFuture;
             }
         } catch (Exception e) {
             logger.info("exception error from blob container for file {}", writeContext.getFileName());
