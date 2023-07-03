@@ -33,14 +33,12 @@
 package org.opensearch.index.translog;
 
 import org.apache.lucene.store.AlreadyClosedException;
-import org.apache.lucene.store.OutputStreamDataOutput;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.io.Channels;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.translog.checked.TranslogCheckedContainer;
 
-import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.EOFException;
 import java.io.IOException;

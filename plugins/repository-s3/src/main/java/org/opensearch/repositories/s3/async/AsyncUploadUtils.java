@@ -163,19 +163,18 @@ public final class AsyncUploadUtils {
         }
 
         CompletableFutureUtils.allOfExceptionForwarded(futures.toArray(CompletableFuture[]::new)).thenApply(resp -> {
-                try {
-                    uploadRequest.getUploadFinalizer().accept(true);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-                return resp;
+            try {
+                uploadRequest.getUploadFinalizer().accept(true);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            return resp;
+        }).thenApply(ignore -> {
+            if (uploadRequest.doRemoteDataIntegrityCheck()) {
+                mergeAndVerifyChecksum(inputStreamContainers, uploadRequest.getKey(), uploadRequest.getExpectedChecksum());
+            }
+            return null;
         })
-            .thenApply(ignore -> {
-                if (uploadRequest.doRemoteDataIntegrityCheck()) {
-                    mergeAndVerifyChecksum(inputStreamContainers, uploadRequest.getKey(), uploadRequest.getExpectedChecksum());
-                }
-                return null;
-            })
             .thenCompose(ignore -> completeMultipartUpload(s3AsyncClient, uploadRequest, uploadId, completedParts))
             .handle(handleExceptionOrResponse(s3AsyncClient, uploadRequest, returnFuture, uploadId))
             .exceptionally(throwable -> {

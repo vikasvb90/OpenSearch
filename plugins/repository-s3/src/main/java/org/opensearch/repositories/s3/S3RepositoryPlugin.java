@@ -93,8 +93,12 @@ public class S3RepositoryPlugin extends Plugin implements RepositoryPlugin, Relo
     @Override
     public List<ExecutorBuilder<?>> getExecutorBuilders(Settings settings) {
         List<ExecutorBuilder<?>> executorBuilders = new ArrayList<>();
-        executorBuilders.add(new FixedExecutorBuilder(settings, PRIORITY_FUTURE_COMPLETION, priorityPoolCount(settings), 10_000, PRIORITY_FUTURE_COMPLETION));
-        executorBuilders.add(new FixedExecutorBuilder(settings, PRIORITY_STREAM_READER, priorityPoolCount(settings), 10_000, PRIORITY_STREAM_READER));
+        executorBuilders.add(
+            new FixedExecutorBuilder(settings, PRIORITY_FUTURE_COMPLETION, priorityPoolCount(settings), 10_000, PRIORITY_FUTURE_COMPLETION)
+        );
+        executorBuilders.add(
+            new FixedExecutorBuilder(settings, PRIORITY_STREAM_READER, priorityPoolCount(settings), 10_000, PRIORITY_STREAM_READER)
+        );
         executorBuilders.add(new FixedExecutorBuilder(settings, FUTURE_COMPLETION, normalPoolCount(settings), 10_000, FUTURE_COMPLETION));
         executorBuilders.add(new FixedExecutorBuilder(settings, STREAM_READER, normalPoolCount(settings), 10_000, STREAM_READER));
         return executorBuilders;
@@ -109,6 +113,7 @@ public class S3RepositoryPlugin extends Plugin implements RepositoryPlugin, Relo
         this.service.refreshAndClearCache(clientsSettings);
         this.s3AsyncService.refreshAndClearCache(clientsSettings);
     }
+
     private static int boundedBy(int value, int min, int max) {
         return Math.min(max, Math.max(min, value));
     }

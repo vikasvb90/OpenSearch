@@ -35,6 +35,7 @@ import org.apache.http.HttpStatus;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.opensearch.action.ActionListener;
 import org.opensearch.cluster.metadata.RepositoryMetadata;
 import org.opensearch.common.CheckedTriFunction;
 import org.opensearch.common.Nullable;
@@ -81,10 +82,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsString;
@@ -316,28 +319,27 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
 
         final VerifyingMultiStreamBlobContainer blobContainer = createBlobContainer(maxRetries, null, true, null);
         List<InputStream> openInputStreams = new ArrayList<>();
-        CompletableFuture<Void> completableFuture = blobContainer.writeBlobByStreams(
-            new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
-                @Override
-                public StreamContext supplyStreamContext(long partSize) {
-                    return new StreamContext(new CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException>() {
-                        @Override
-                        public InputStreamContainer apply(Integer partNo, Long size, Long position) throws IOException {
-                            InputStream inputStream = new OffsetRangeIndexInputStream(
-                                new ByteArrayIndexInput("desc", bytes),
-                                size,
-                                position
-                            );
-                            openInputStreams.add(inputStream);
-                            return new InputStreamContainer(inputStream, size);
-                        }
-                    }, partSize, calculateLastPartSize(bytes.length, partSize), calculateNumberOfParts(bytes.length, partSize));
-                }
-            }, bytes.length, false, WritePriority.NORMAL, Assert::assertTrue, false, null)
-        );
+        CountDownLatch countDownLatch = new CountDownLatch(1);
+        AtomicReference<Exception> exceptionRef = new AtomicReference<>();
+        ActionListener<Void> completionListener = ActionListener.wrap(resp -> { countDownLatch.countDown(); }, ex -> {
+            exceptionRef.set(ex);
+            countDownLatch.countDown();
+        });
+        blobContainer.writeBlobByStreams(new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
+            @Override
+            public StreamContext supplyStreamContext(long partSize) {
+                return new StreamContext(new CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException>() {
+                    @Override
+                    public InputStreamContainer apply(Integer partNo, Long size, Long position) throws IOException {
+                        InputStream inputStream = new OffsetRangeIndexInputStream(new ByteArrayIndexInput("desc", bytes), size, position);
+                        openInputStreams.add(inputStream);
+                        return new InputStreamContainer(inputStream, size);
+                    }
+                }, partSize, calculateLastPartSize(bytes.length, partSize), calculateNumberOfParts(bytes.length, partSize));
+            }
+        }, bytes.length, false, WritePriority.NORMAL, Assert::assertTrue, false, null, completionListener));
 
-        // wait for completableFuture to finish
-        completableFuture.get();
+        assertTrue(countDownLatch.await(5000, TimeUnit.SECONDS));
 
         assertThat(countDown.isCountedDown(), is(true));
 

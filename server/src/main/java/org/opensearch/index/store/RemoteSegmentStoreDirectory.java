@@ -23,6 +23,7 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.action.ActionListener;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.exception.CorruptFileException;
@@ -33,7 +34,6 @@ import org.opensearch.common.blobstore.transfer.stream.OffsetRangeIndexInputStre
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.util.ByteUtils;
-import org.opensearch.common.util.UploadListener;
 import org.opensearch.index.store.exception.ChecksumCombinationException;
 import org.opensearch.index.store.lockmanager.FileLockInfo;
 import org.opensearch.index.store.lockmanager.RemoteStoreCommitLevelLockManager;
@@ -44,7 +44,6 @@ import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandler;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -54,11 +53,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 
@@ -363,84 +359,37 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     }
 
     /**
-     * Copies a list of files from the source directory to a remote based on multi-stream upload support.
+     * Copies a file from the source directory to a remote based on multi-stream upload support.
      * If vendor plugin supports uploading multiple parts in parallel, <code>BlobContainer#writeBlobByStreams</code>
      * will be used, else, the legacy {@link RemoteSegmentStoreDirectory#copyFrom(Directory, String, String, IOContext, boolean)}
      * will be called.
      *
-     * @param from          The directory for all files to be uploaded
-     * @param files         A list containing the names of all files to be uploaded
-     * @param context       IOContext to be used to open IndexInput to files during remote upload
-     * @param uploadListener An {@link UploadListener} for tracking file uploads
-     * @throws Exception When upload future creation fails or if {@link RemoteSegmentStoreDirectory#copyFrom(Directory, String, String, IOContext, boolean)}
-     *                   throws an exception
+     * @param from            The directory for the file to be uploaded
+     * @param src             File to be uploaded
+     * @param context         IOContext to be used to open IndexInput of file during remote upload
+     * @param listener        Listener to handle upload callback events
      */
-    public boolean copyFilesFrom(Directory from, Collection<String> files, IOContext context, UploadListener uploadListener)
-        throws Exception {
-
-        List<CompletableFuture<Void>> resultFutures = new ArrayList<>();
-
-        boolean uploadOfAllFilesSuccessful = true;
-        for (String src : files) {
-            String remoteFilename = createRemoteFileName(src, false);
-            uploadListener.beforeUpload(src);
-            if (remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer) {
-                try {
-                    CompletableFuture<Void> resultFuture = createUploadFuture(from, src, remoteFilename, context);
-                    resultFuture.whenComplete((uploadResponse, throwable) -> {
-                        if (throwable != null) {
-                            uploadListener.onFailure(src);
-                        } else {
-                            uploadListener.onSuccess(src);
-                        }
-                    });
-                    resultFutures.add(resultFuture);
-                } catch (Exception e) {
-                    uploadListener.onFailure(src);
-                    throw e;
-                }
-            } else {
-                boolean success = true;
-                try {
-                    copyFrom(from, src, src, context, false);
-                    uploadListener.onSuccess(src);
-                } catch (IOException e) {
-                    success = false;
-                    uploadOfAllFilesSuccessful = false;
-                    logger.warn(() -> new ParameterizedMessage("Exception while uploading file {} to the remote segment store", src), e);
-                } finally {
-                    if (!success) {
-                        uploadListener.onFailure(src);
-                    }
-                }
-            }
-        }
-
-        if (resultFutures.isEmpty() == false) {
-            CompletableFuture<Void> resultFuture = CompletableFuture.allOf(resultFutures.toArray(new CompletableFuture[0]));
+    public void copyFrom(Directory from, String src, IOContext context, ActionListener<Void> listener) {
+        if (remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer) {
             try {
-                resultFuture.get();
-            } catch (ExecutionException e) {
-                IOException corruptIndexException = ExceptionsHelper.unwrapCorruption(e);
-                if (corruptIndexException != null) {
-                    throw corruptIndexException;
-                }
-                Throwable throwable = ExceptionsHelper.unwrap(e, CorruptFileException.class);
-                if (throwable != null) {
-                    CorruptFileException corruptFileException = (CorruptFileException) throwable;
-                    throw new CorruptIndexException(corruptFileException.getMessage(), corruptFileException.getFileName());
-                }
-                throw e;
+                String remoteFilename = createRemoteFileName(src, false);
+                uploadBlob(from, src, remoteFilename, context, listener);
+            } catch (Exception e) {
+                listener.onFailure(e);
+            }
+        } else {
+            try {
+                copyFrom(from, src, src, context, false);
+                listener.onResponse(null);
+            } catch (Exception e) {
+                logger.warn(() -> new ParameterizedMessage("Exception while uploading file {} to the remote segment store", src), e);
+                listener.onFailure(e);
             }
         }
-
-        return uploadOfAllFilesSuccessful;
     }
 
-    private CompletableFuture<Void> createUploadFuture(Directory from, String src, String remoteFileName, IOContext ioContext)
+    private void uploadBlob(Directory from, String src, String remoteFileName, IOContext ioContext, ActionListener<Void> listener)
         throws Exception {
-
-        AtomicReference<Exception> exceptionRef = new AtomicReference<>();
         long expectedChecksum = calculateChecksumOfChecksum(from, src);
         long contentLength;
         try (IndexInput indexInput = from.openInput(src, ioContext)) {
@@ -456,40 +405,40 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             expectedChecksum,
             remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer
         );
-        WriteContext writeContext = remoteTransferContainer.createWriteContext();
-        CompletableFuture<Void> uploadFuture = ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).writeBlobByStreams(writeContext);
-        return uploadFuture.whenComplete((resp, throwable) -> {
+        ActionListener<Void> completionListener = ActionListener.wrap(resp -> {
+            try {
+                postUpload(from, src, remoteFileName, getChecksumOfLocalFile(from, src));
+                listener.onResponse(null);
+            } catch (Exception e) {
+                logger.error(() -> new ParameterizedMessage("Exception in segment postUpload for file [{}]", src), e);
+                listener.onFailure(e);
+            }
+        }, ex -> {
+            logger.error(() -> new ParameterizedMessage("Failed to upload blob {}", src), ex);
+            IOException corruptIndexException = ExceptionsHelper.unwrapCorruption(ex);
+            if (corruptIndexException != null) {
+                listener.onFailure(corruptIndexException);
+                return;
+            }
+            Throwable throwable = ExceptionsHelper.unwrap(ex, CorruptFileException.class);
+            if (throwable != null) {
+                CorruptFileException corruptFileException = (CorruptFileException) throwable;
+                listener.onFailure(new CorruptIndexException(corruptFileException.getMessage(), corruptFileException.getFileName()));
+                return;
+            }
+            listener.onFailure(ex);
+        });
+
+        completionListener = ActionListener.runBefore(completionListener, () -> {
             try {
                 remoteTransferContainer.close();
             } catch (Exception e) {
                 logger.warn("Error occurred while closing streams", e);
             }
-            if (throwable != null) {
-                handleException(throwable, exceptionRef);
-            } else {
-                try {
-                    postUpload(from, src, remoteFileName, getChecksumOfLocalFile(from, src));
-                } catch (Exception e) {
-                    logger.error(() -> new ParameterizedMessage("Exception in segment postUpload for file [{}]", src), e);
-                    handleException(e, exceptionRef);
-                }
-            }
         });
-    }
 
-    private void handleException(Throwable throwable, AtomicReference<Exception> exceptionRef) {
-        Exception ex;
-        if (throwable instanceof Exception) {
-            ex = (Exception) throwable;
-        } else {
-            ex = new RuntimeException(throwable);
-        }
-
-        if (exceptionRef.get() == null) {
-            exceptionRef.set(ex);
-        } else {
-            exceptionRef.get().addSuppressed(ex);
-        }
+        WriteContext writeContext = remoteTransferContainer.createWriteContext(completionListener);
+        ((VerifyingMultiStreamBlobContainer) remoteDataDirectory.getBlobContainer()).writeBlobByStreams(writeContext);
     }
 
     /**

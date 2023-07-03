@@ -10,9 +10,6 @@ package org.opensearch.index.translog.checked;
 
 import org.opensearch.common.util.concurrent.ReleasableLock;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.CRC32;

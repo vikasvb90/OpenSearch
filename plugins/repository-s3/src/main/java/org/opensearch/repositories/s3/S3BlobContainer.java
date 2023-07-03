@@ -77,7 +77,6 @@ import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 import org.opensearch.core.common.Strings;
 import org.opensearch.repositories.s3.async.UploadRequest;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
-import software.amazon.awssdk.utils.CompletableFutureUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -175,7 +174,7 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
     }
 
     @Override
-    public CompletableFuture<Void> writeBlobByStreams(WriteContext writeContext) throws IOException {
+    public void writeBlobByStreams(WriteContext writeContext) throws IOException {
         UploadRequest uploadRequest = new UploadRequest(
             blobStore.bucket(),
             buildKey(writeContext.getFileName()),
@@ -193,8 +192,16 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
                 S3AsyncClient s3AsyncClient = writeContext.getWritePriority() == WritePriority.HIGH
                     ? amazonS3Reference.get().priorityClient()
                     : amazonS3Reference.get().client();
-                return blobStore.getAsyncUploadUtils()
+                CompletableFuture<Void> completableFuture = blobStore.getAsyncUploadUtils()
                     .uploadObject(s3AsyncClient, uploadRequest, streamContext);
+                completableFuture.whenComplete((response, throwable) -> {
+                    if (throwable == null) {
+                        writeContext.getCompletionListener().onResponse(response);
+                    } else {
+                        Exception ex = throwable instanceof Error ? new Exception(throwable) : (Exception) throwable;
+                        writeContext.getCompletionListener().onFailure(ex);
+                    }
+                });
             }
         } catch (Exception e) {
             logger.info("exception error from blob container for file {}", writeContext.getFileName());
