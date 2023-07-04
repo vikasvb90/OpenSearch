@@ -325,7 +325,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
             exceptionRef.set(ex);
             countDownLatch.countDown();
         });
-        blobContainer.writeBlobByStreams(new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
+        blobContainer.asyncBlobUpload(new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
             @Override
             public StreamContext supplyStreamContext(long partSize) {
                 return new StreamContext(new CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException>() {
@@ -337,7 +337,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
                     }
                 }, partSize, calculateLastPartSize(bytes.length, partSize), calculateNumberOfParts(bytes.length, partSize));
             }
-        }, bytes.length, false, WritePriority.NORMAL, Assert::assertTrue, false, null, completionListener));
+        }, bytes.length, false, WritePriority.NORMAL, Assert::assertTrue, false, null), completionListener);
 
         assertTrue(countDownLatch.await(5000, TimeUnit.SECONDS));
 

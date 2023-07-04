@@ -447,7 +447,7 @@ public class S3BlobContainerMockClientTests extends OpenSearchTestCase implement
             exceptionRef.set(ex);
             countDownLatch.countDown();
         });
-        blobContainer.writeBlobByStreams(new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
+        blobContainer.asyncBlobUpload(new WriteContext("write_blob_by_streams_max_retries", new StreamContextSupplier() {
             @Override
             public StreamContext supplyStreamContext(long partSize) {
                 return new StreamContext(new CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException>() {
@@ -464,7 +464,7 @@ public class S3BlobContainerMockClientTests extends OpenSearchTestCase implement
             if (throwExceptionOnFinalizeUpload) {
                 throw new RuntimeException();
             }
-        }, false, null, completionListener));
+        }, false, null), completionListener);
 
         assertTrue(countDownLatch.await(5000, TimeUnit.SECONDS));
         // wait for completableFuture to finish
@@ -497,7 +497,7 @@ public class S3BlobContainerMockClientTests extends OpenSearchTestCase implement
             countDownLatch.countDown();
         });
         List<InputStream> openInputStreams = new ArrayList<>();
-        blobContainer.writeBlobByStreams(new WriteContext("write_large_blob", new StreamContextSupplier() {
+        blobContainer.asyncBlobUpload(new WriteContext("write_large_blob", new StreamContextSupplier() {
             @Override
             public StreamContext supplyStreamContext(long partSize) {
                 return new StreamContext(new CheckedTriFunction<Integer, Long, Long, InputStreamContainer, IOException>() {
@@ -514,7 +514,7 @@ public class S3BlobContainerMockClientTests extends OpenSearchTestCase implement
             if (throwExceptionOnFinalizeUpload) {
                 throw new RuntimeException();
             }
-        }, false, null, completionListener));
+        }, false, null), completionListener);
 
         assertTrue(countDownLatch.await(5000, TimeUnit.SECONDS));
         if (expectException || throwExceptionOnFinalizeUpload) {

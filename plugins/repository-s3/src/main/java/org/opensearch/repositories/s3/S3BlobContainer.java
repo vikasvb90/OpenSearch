@@ -36,6 +36,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.action.ActionListener;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.SetOnce;
 import org.opensearch.common.StreamContext;
@@ -174,7 +175,7 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
     }
 
     @Override
-    public void writeBlobByStreams(WriteContext writeContext) throws IOException {
+    public void asyncBlobUpload(WriteContext writeContext, ActionListener<Void> completionListener) throws IOException {
         UploadRequest uploadRequest = new UploadRequest(
             blobStore.bucket(),
             buildKey(writeContext.getFileName()),
@@ -196,10 +197,10 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
                     .uploadObject(s3AsyncClient, uploadRequest, streamContext);
                 completableFuture.whenComplete((response, throwable) -> {
                     if (throwable == null) {
-                        writeContext.getCompletionListener().onResponse(response);
+                        completionListener.onResponse(response);
                     } else {
                         Exception ex = throwable instanceof Error ? new Exception(throwable) : (Exception) throwable;
-                        writeContext.getCompletionListener().onFailure(ex);
+                        completionListener.onFailure(ex);
                     }
                 });
             }
