@@ -333,7 +333,7 @@ public class S3BlobContainerRetriesTests extends AbstractBlobContainerRetriesTes
                     public InputStreamContainer apply(Integer partNo, Long size, Long position) throws IOException {
                         InputStream inputStream = new OffsetRangeIndexInputStream(new ByteArrayIndexInput("desc", bytes), size, position);
                         openInputStreams.add(inputStream);
-                        return new InputStreamContainer(inputStream, size);
+                        return new InputStreamContainer(inputStream, size, position);
                     }
                 }, partSize, calculateLastPartSize(bytes.length, partSize), calculateNumberOfParts(bytes.length, partSize));
             }

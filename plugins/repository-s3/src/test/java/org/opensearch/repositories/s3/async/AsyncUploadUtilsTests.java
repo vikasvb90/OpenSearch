@@ -75,7 +75,7 @@ public class AsyncUploadUtilsTests extends OpenSearchTestCase {
                 // do nothing
             }, false, null),
             new StreamContext(
-                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize),
+                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize, position),
                 ByteSizeUnit.MB.toBytes(1),
                 ByteSizeUnit.MB.toBytes(1),
                 1
@@ -113,7 +113,7 @@ public class AsyncUploadUtilsTests extends OpenSearchTestCase {
                 // do nothing
             }, false, null),
             new StreamContext(
-                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize),
+                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize, position),
                 ByteSizeUnit.MB.toBytes(1),
                 ByteSizeUnit.MB.toBytes(1),
                 1
@@ -164,7 +164,7 @@ public class AsyncUploadUtilsTests extends OpenSearchTestCase {
                 // do nothing
             }, true, 3376132981L),
             new StreamContext(
-                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize),
+                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize, position),
                 ByteSizeUnit.MB.toBytes(1),
                 ByteSizeUnit.MB.toBytes(1),
                 5
@@ -214,7 +214,7 @@ public class AsyncUploadUtilsTests extends OpenSearchTestCase {
                 // do nothing
             }, true, 0L),
             new StreamContext(
-                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize),
+                (partIdx, partSize, position) -> new InputStreamContainer(new ZeroInputStream(partSize), partSize, position),
                 ByteSizeUnit.MB.toBytes(1),
                 ByteSizeUnit.MB.toBytes(1),
                 5

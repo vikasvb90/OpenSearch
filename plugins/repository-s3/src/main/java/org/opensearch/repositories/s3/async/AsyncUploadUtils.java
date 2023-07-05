@@ -19,7 +19,7 @@ import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.common.util.ByteUtils;
-import org.opensearch.repositories.s3.io.InputStreamCRC32Container;
+import org.opensearch.repositories.s3.io.CheckedContainer;
 import org.opensearch.repositories.s3.SocketAccess;
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.exception.SdkClientException;
@@ -146,9 +146,7 @@ public final class AsyncUploadUtils {
 
         // The list of completed parts must be sorted
         AtomicReferenceArray<CompletedPart> completedParts = new AtomicReferenceArray<>(streamContext.getNumberOfParts());
-        AtomicReferenceArray<InputStreamCRC32Container> inputStreamContainers = new AtomicReferenceArray<>(
-            streamContext.getNumberOfParts()
-        );
+        AtomicReferenceArray<CheckedContainer> inputStreamContainers = new AtomicReferenceArray<>(streamContext.getNumberOfParts());
 
         List<CompletableFuture<CompletedPart>> futures;
         try {
@@ -184,7 +182,7 @@ public final class AsyncUploadUtils {
     }
 
     private void mergeAndVerifyChecksum(
-        AtomicReferenceArray<InputStreamCRC32Container> inputStreamContainers,
+        AtomicReferenceArray<CheckedContainer> inputStreamContainers,
         String fileName,
         long expectedChecksum
     ) {
@@ -295,15 +293,12 @@ public final class AsyncUploadUtils {
         StreamContext streamContext,
         String uploadId,
         AtomicReferenceArray<CompletedPart> completedParts,
-        AtomicReferenceArray<InputStreamCRC32Container> inputStreamContainers
+        AtomicReferenceArray<CheckedContainer> inputStreamContainers
     ) throws IOException {
         List<CompletableFuture<CompletedPart>> futures = new ArrayList<>();
         for (int partIdx = 0; partIdx < streamContext.getNumberOfParts(); partIdx++) {
             InputStreamContainer inputStreamContainer = streamContext.provideStream(partIdx);
-            inputStreamContainers.set(
-                partIdx,
-                new InputStreamCRC32Container(inputStreamContainer.getInputStream(), inputStreamContainer.getContentLength())
-            );
+            inputStreamContainers.set(partIdx, new CheckedContainer(inputStreamContainer.getContentLength()));
             UploadPartRequest.Builder uploadPartRequestBuilder = UploadPartRequest.builder()
                 .bucket(uploadRequest.getBucket())
                 .partNumber(partIdx + 1)
@@ -330,7 +325,7 @@ public final class AsyncUploadUtils {
     private void sendIndividualUploadPart(
         S3AsyncClient s3AsyncClient,
         AtomicReferenceArray<CompletedPart> completedParts,
-        AtomicReferenceArray<InputStreamCRC32Container> inputStreamContainers,
+        AtomicReferenceArray<CheckedContainer> inputStreamContainers,
         List<CompletableFuture<CompletedPart>> futures,
         UploadPartRequest uploadPartRequest,
         InputStreamContainer inputStreamContainer,
@@ -368,7 +363,7 @@ public final class AsyncUploadUtils {
 
     private CompletedPart convertUploadPartResponse(
         AtomicReferenceArray<CompletedPart> completedParts,
-        AtomicReferenceArray<InputStreamCRC32Container> inputStreamContainers,
+        AtomicReferenceArray<CheckedContainer> inputStreamContainers,
         UploadPartResponse partResponse,
         int partNumber,
         boolean isRemoteDataIntegrityCheckEnabled
@@ -376,9 +371,9 @@ public final class AsyncUploadUtils {
         CompletedPart.Builder completedPartBuilder = CompletedPart.builder().eTag(partResponse.eTag()).partNumber(partNumber);
         if (isRemoteDataIntegrityCheckEnabled) {
             completedPartBuilder.checksumCRC32(partResponse.checksumCRC32());
-            InputStreamCRC32Container inputStreamCRC32Container = inputStreamContainers.get(partNumber - 1);
-            inputStreamCRC32Container.setChecksum(partResponse.checksumCRC32());
-            inputStreamContainers.set(partNumber - 1, inputStreamCRC32Container);
+            CheckedContainer checkedContainer = inputStreamContainers.get(partNumber - 1);
+            checkedContainer.setChecksum(partResponse.checksumCRC32());
+            inputStreamContainers.set(partNumber - 1, checkedContainer);
         }
         CompletedPart completedPart = completedPartBuilder.build();
         completedParts.set(partNumber - 1, completedPart);
