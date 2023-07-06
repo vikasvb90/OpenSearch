@@ -16,6 +16,7 @@ import io.netty.util.concurrent.Future;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.repositories.s3.SocketAccess;
 
 import java.io.Closeable;
@@ -40,8 +41,8 @@ public class AsyncTransferEventLoopGroup implements Closeable {
         // using epoll wherever available is preferred.
         this.eventLoopGroup = SocketAccess.doPrivileged(
             () -> Epoll.isAvailable()
-                ? new EpollEventLoopGroup(eventLoopThreads, new OpenSearchThreadFactory(THREAD_PREFIX))
-                : new NioEventLoopGroup(eventLoopThreads, new OpenSearchThreadFactory(THREAD_PREFIX))
+                ? new EpollEventLoopGroup(eventLoopThreads, OpenSearchExecutors.daemonThreadFactory(THREAD_PREFIX))
+                : new NioEventLoopGroup(eventLoopThreads, OpenSearchExecutors.daemonThreadFactory(THREAD_PREFIX))
         );
     }
 
