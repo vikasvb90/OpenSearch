@@ -14,7 +14,7 @@ import org.opensearch.cluster.metadata.RepositoryMetadata;
 import org.opensearch.common.settings.MockSecureSettings;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.repositories.s3.async.AsyncExecutorBuilder;
-import org.opensearch.repositories.s3.async.TransferNIOGroup;
+import org.opensearch.repositories.s3.async.AsyncTransferEventLoopGroup;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.util.Map;
@@ -38,7 +38,7 @@ public class S3AsyncServiceTests extends OpenSearchTestCase implements ConfigPat
         final AsyncExecutorBuilder asyncExecutorBuilder = new AsyncExecutorBuilder(
             Executors.newSingleThreadExecutor(),
             Executors.newSingleThreadExecutor(),
-            new TransferNIOGroup(1)
+            new AsyncTransferEventLoopGroup(1)
         );
         final S3ClientSettings clientSettings = s3AsyncService.settings(metadata2);
         final S3ClientSettings otherClientSettings = s3AsyncService.settings(metadata2);
@@ -73,7 +73,7 @@ public class S3AsyncServiceTests extends OpenSearchTestCase implements ConfigPat
         final AsyncExecutorBuilder asyncExecutorBuilder = new AsyncExecutorBuilder(
             Executors.newSingleThreadExecutor(),
             Executors.newSingleThreadExecutor(),
-            new TransferNIOGroup(1)
+            new AsyncTransferEventLoopGroup(1)
         );
         final S3ClientSettings clientSettings = s3AsyncService.settings(metadata2);
         final S3ClientSettings otherClientSettings = s3AsyncService.settings(metadata2);

@@ -24,9 +24,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * TransferNIOGroup is an encapsulation for netty {@link EventLoopGroup}
  */
-public class TransferNIOGroup implements Closeable {
-    private static final String THREAD_PREFIX = "aws-async-transfer-nio";
-    private final Logger logger = LogManager.getLogger(TransferNIOGroup.class);
+public class AsyncTransferEventLoopGroup implements Closeable {
+    private static final String THREAD_PREFIX = "s3-async-transfer-worker";
+    private final Logger logger = LogManager.getLogger(AsyncTransferEventLoopGroup.class);
 
     private final EventLoopGroup eventLoopGroup;
 
@@ -35,7 +35,7 @@ public class TransferNIOGroup implements Closeable {
      *
      * @param eventLoopThreads The number of event loop threads for this event loop group
      */
-    public TransferNIOGroup(int eventLoopThreads) {
+    public AsyncTransferEventLoopGroup(int eventLoopThreads) {
         // Epoll event loop incurs less GC and provides better performance than Nio loop. Therefore,
         // using epoll wherever available is preferred.
         this.eventLoopGroup = SocketAccess.doPrivileged(
