@@ -54,7 +54,7 @@ public class AsyncTransferManagerTests extends OpenSearchTestCase {
     @Before
     public void setUp() throws Exception {
         s3AsyncClient = mock(S3AsyncClient.class);
-        asyncTransferManager = new AsyncTransferManager(s3AsyncClient,
+        asyncTransferManager = new AsyncTransferManager(
             ByteSizeUnit.MB.toBytes(5),
             Executors.newSingleThreadExecutor(),
             Executors.newSingleThreadExecutor()
@@ -69,8 +69,9 @@ public class AsyncTransferManagerTests extends OpenSearchTestCase {
             putObjectResponseCompletableFuture
         );
 
-        CompletableFuture<Void> resultFuture = asyncTransferManager.uploadObject(new UploadRequest("bucket", "key", ByteSizeUnit.MB.toBytes(1),
-                WritePriority.HIGH, uploadSuccess -> {
+        CompletableFuture<Void> resultFuture = asyncTransferManager.uploadObject(
+            s3AsyncClient,
+            new UploadRequest("bucket", "key", ByteSizeUnit.MB.toBytes(1), WritePriority.HIGH, uploadSuccess -> {
                 // do nothing
             }, false, null),
             new StreamContext(
@@ -107,6 +108,7 @@ public class AsyncTransferManagerTests extends OpenSearchTestCase {
         when(s3AsyncClient.deleteObject(any(DeleteObjectRequest.class))).thenReturn(deleteObjectResponseCompletableFuture);
 
         CompletableFuture<Void> resultFuture = asyncTransferManager.uploadObject(
+            s3AsyncClient,
             new UploadRequest("bucket", "key", ByteSizeUnit.MB.toBytes(1), WritePriority.HIGH, uploadSuccess -> {
                 // do nothing
             }, false, null),
@@ -157,6 +159,7 @@ public class AsyncTransferManagerTests extends OpenSearchTestCase {
         );
 
         CompletableFuture<Void> resultFuture = asyncTransferManager.uploadObject(
+            s3AsyncClient,
             new UploadRequest("bucket", "key", ByteSizeUnit.MB.toBytes(5), WritePriority.HIGH, uploadSuccess -> {
                 // do nothing
             }, true, 3376132981L),
@@ -206,6 +209,7 @@ public class AsyncTransferManagerTests extends OpenSearchTestCase {
         );
 
         CompletableFuture<Void> resultFuture = asyncTransferManager.uploadObject(
+            s3AsyncClient,
             new UploadRequest("bucket", "key", ByteSizeUnit.MB.toBytes(5), WritePriority.HIGH, uploadSuccess -> {
                 // do nothing
             }, true, 0L),

@@ -186,14 +186,14 @@ class S3BlobContainer extends AbstractBlobContainer implements VerifyingMultiStr
             writeContext.getExpectedChecksum()
         );
         try {
-            long partSize = blobStore.getAsyncUploadUtils().calculateOptimalPartSize(writeContext.getFileSize());
+            long partSize = blobStore.getAsyncTransferManager().calculateOptimalPartSize(writeContext.getFileSize());
             StreamContext streamContext = SocketAccess.doPrivileged(() -> writeContext.getStreamProvider(partSize));
             try (AmazonAsyncS3Reference amazonS3Reference = SocketAccess.doPrivileged(blobStore::asyncClientReference)) {
 
                 S3AsyncClient s3AsyncClient = writeContext.getWritePriority() == WritePriority.HIGH
                     ? amazonS3Reference.get().priorityClient()
                     : amazonS3Reference.get().client();
-                CompletableFuture<Void> completableFuture = blobStore.getAsyncUploadUtils()
+                CompletableFuture<Void> completableFuture = blobStore.getAsyncTransferManager()
                     .uploadObject(s3AsyncClient, uploadRequest, streamContext);
                 completableFuture.whenComplete((response, throwable) -> {
                     if (throwable == null) {

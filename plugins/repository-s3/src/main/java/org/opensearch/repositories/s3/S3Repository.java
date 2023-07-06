@@ -57,7 +57,7 @@ import org.opensearch.repositories.RepositoryException;
 import org.opensearch.repositories.ShardGenerations;
 import org.opensearch.repositories.blobstore.MeteredBlobStoreRepository;
 import org.opensearch.repositories.s3.async.AsyncExecutorBuilder;
-import org.opensearch.repositories.s3.async.AsyncUploadUtils;
+import org.opensearch.repositories.s3.async.AsyncTransferManager;
 import org.opensearch.snapshots.SnapshotId;
 import org.opensearch.snapshots.SnapshotInfo;
 import org.opensearch.threadpool.Scheduler;
@@ -219,7 +219,7 @@ class S3Repository extends MeteredBlobStoreRepository {
 
     private final RepositoryMetadata repositoryMetadata;
 
-    private final AsyncUploadUtils asyncUploadUtils;
+    private final AsyncTransferManager asyncUploadUtils;
     private final S3AsyncService s3AsyncService;
     private final boolean multipartUploadEnabled;
     private final AsyncExecutorBuilder priorityExecutorBuilder;
@@ -234,7 +234,7 @@ class S3Repository extends MeteredBlobStoreRepository {
         final S3Service service,
         final ClusterService clusterService,
         final RecoverySettings recoverySettings,
-        final AsyncUploadUtils asyncUploadUtils,
+        final AsyncTransferManager asyncUploadUtils,
         final AsyncExecutorBuilder priorityExecutorBuilder,
         final AsyncExecutorBuilder normalExecutorBuilder,
         final S3AsyncService s3AsyncService,

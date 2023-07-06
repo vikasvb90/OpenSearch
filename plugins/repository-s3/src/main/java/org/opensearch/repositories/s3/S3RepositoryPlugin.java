@@ -50,8 +50,8 @@ import org.opensearch.plugins.RepositoryPlugin;
 import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.s3.async.AsyncExecutorBuilder;
-import org.opensearch.repositories.s3.async.AsyncUploadUtils;
-import org.opensearch.repositories.s3.async.TransferNIOGroup;
+import org.opensearch.repositories.s3.async.AsyncTransferEventLoopGroup;
+import org.opensearch.repositories.s3.async.AsyncTransferManager;
 import org.opensearch.script.ScriptService;
 import org.opensearch.threadpool.ExecutorBuilder;
 import org.opensearch.threadpool.FixedExecutorBuilder;
@@ -149,12 +149,12 @@ public class S3RepositoryPlugin extends Plugin implements RepositoryPlugin, Relo
         this.priorityExecutorBuilder = new AsyncExecutorBuilder(
             threadPool.executor(PRIORITY_FUTURE_COMPLETION),
             threadPool.executor(PRIORITY_STREAM_READER),
-            new TransferNIOGroup(priorityEventLoopThreads)
+            new AsyncTransferEventLoopGroup(priorityEventLoopThreads)
         );
         this.normalExecutorBuilder = new AsyncExecutorBuilder(
             threadPool.executor(FUTURE_COMPLETION),
             threadPool.executor(STREAM_READER),
-            new TransferNIOGroup(normalEventLoopThreads)
+            new AsyncTransferEventLoopGroup(normalEventLoopThreads)
         );
         return Collections.emptyList();
     }
@@ -166,7 +166,8 @@ public class S3RepositoryPlugin extends Plugin implements RepositoryPlugin, Relo
         final ClusterService clusterService,
         final RecoverySettings recoverySettings
     ) {
-        AsyncUploadUtils asyncUploadUtils = new AsyncUploadUtils(
+
+        AsyncTransferManager asyncUploadUtils = new AsyncTransferManager(
             S3Repository.PARALLEL_MULTIPART_UPLOAD_MINIMUM_PART_SIZE_SETTING.get(clusterService.getSettings()).getBytes(),
             normalExecutorBuilder.getStreamReader(),
             priorityExecutorBuilder.getStreamReader()
