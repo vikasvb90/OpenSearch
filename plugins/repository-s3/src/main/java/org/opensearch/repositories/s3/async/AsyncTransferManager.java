@@ -56,11 +56,12 @@ import java.util.stream.IntStream;
 /**
  * A helper class that automatically uses multipart upload based on the size of the source object
  */
-public final class AsyncUploadUtils {
-    private static final Logger log = LogManager.getLogger(AsyncUploadUtils.class);
+public final class AsyncTransferManager {
+    private static final Logger log = LogManager.getLogger(AsyncTransferManager.class);
     private final ExecutorService executorService;
     private final ExecutorService priorityExecutorService;
     private final long minimumPartSize;
+    private final S3AsyncClient s3AsyncClient;
 
     /**
      * The max number of parts on S3 side is 10,000
@@ -70,25 +71,26 @@ public final class AsyncUploadUtils {
     /**
      * Construct a new object of AsyncUploadUtils
      *
+     * @param s3AsyncClient The {@link S3AsyncClient} to use for uploads
      * @param minimumPartSize         The minimum part size for parallel multipart uploads
      * @param executorService         The stream reader {@link ExecutorService} for normal priority uploads
      * @param priorityExecutorService the stream read {@link ExecutorService} for high priority uploads
      */
-    public AsyncUploadUtils(long minimumPartSize, ExecutorService executorService, ExecutorService priorityExecutorService) {
+    public AsyncTransferManager(S3AsyncClient s3AsyncClient, long minimumPartSize, ExecutorService executorService, ExecutorService priorityExecutorService) {
         this.executorService = executorService;
         this.priorityExecutorService = priorityExecutorService;
         this.minimumPartSize = minimumPartSize;
+        this.s3AsyncClient = s3AsyncClient;
     }
 
     /**
      * Upload an object to S3 using the async client
      *
-     * @param s3AsyncClient The {@link S3AsyncClient} to use for uploads
      * @param uploadRequest The {@link UploadRequest} object encapsulating all relevant details for upload
      * @param streamContext The {@link StreamContext} to supply streams during upload
      * @return A {@link CompletableFuture} to listen for upload completion
      */
-    public CompletableFuture<Void> uploadObject(S3AsyncClient s3AsyncClient, UploadRequest uploadRequest, StreamContext streamContext) {
+    public CompletableFuture<Void> uploadObject(UploadRequest uploadRequest, StreamContext streamContext) {
 
         CompletableFuture<Void> returnFuture = new CompletableFuture<>();
         try {
