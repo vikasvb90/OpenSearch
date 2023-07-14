@@ -8,8 +8,6 @@
 
 apply plugin: 'opensearch.opensearchplugin'
 apply plugin: 'opensearch.pluginzip'
-apply plugin: 'opensearch.build'
-apply plugin: 'opensearch.publish'
 
 opensearchplugin {
   description 'Sample plugin that extends OpenSearch Crypto plugin'
@@ -27,4 +25,15 @@ testingConventions.enabled = false
 ext {
   // Do not fail on `javadoc` warning (ANTLR generated code)
   failOnJavadocWarning = false
+}
+
+publishing {
+  publications {
+    pluginZip(MavenPublication) { publication ->
+      pom {
+        name = "crypto-sample-key-provider-extension"
+        description = "Sample key provider extension"
+      }
+    }
+  }
 }
