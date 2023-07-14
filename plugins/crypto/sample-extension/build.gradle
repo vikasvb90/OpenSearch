@@ -6,6 +6,8 @@
  * compatible open source license.
  */
 
+apply plugin: 'opensearch.opensearchplugin'
+apply plugin: 'opensearch.pluginzip'
 apply plugin: 'opensearch.build'
 apply plugin: 'opensearch.publish'
 
@@ -14,6 +16,11 @@ opensearchplugin {
   classname 'org.opensearch.crypto.sampleextension.SampleExtensionPlugin'
   extendedPlugins = ['crypto']
 }
+
+dependencies {
+  compileOnly project(':plugins:crypto')
+}
+
 
 testingConventions.enabled = false
 

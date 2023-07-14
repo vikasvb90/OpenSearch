@@ -11,9 +11,9 @@ package org.opensearch.crypto.sampleextension;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.common.settings.Settings;
-import org.opensearch.crypto.spi.CryptoKeyProviderExtension;
-import org.opensearch.crypto.spi.DataKeyPair;
-import org.opensearch.crypto.spi.MasterKeyProvider;
+import org.opensearch.cryptospi.CryptoKeyProviderExtension;
+import org.opensearch.cryptospi.DataKeyPair;
+import org.opensearch.cryptospi.MasterKeyProvider;
 import org.opensearch.plugins.Plugin;
 
 import java.io.BufferedReader;
@@ -27,6 +27,13 @@ import java.nio.charset.StandardCharsets;
 public class SampleExtensionPlugin extends Plugin implements CryptoKeyProviderExtension {
     private static final Logger logger = LogManager.getLogger(SampleExtensionPlugin.class);
 
+    /**
+     * Constructs a sample extension plugin
+     */
+    public SampleExtensionPlugin() {
+
+    }
+
     private static byte[] loadFile(String file) {
         byte[] content;
         try {
@@ -38,7 +45,7 @@ public class SampleExtensionPlugin extends Plugin implements CryptoKeyProviderEx
             }
             content = stringBuilder.toString().getBytes(StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new IllegalArgumentException("File " + file + " cannot be read correctly.");
+            throw new IllegalArgumentException("File " + file + " cannot be read correctly.", e);
         }
         String text = new String(content, StandardCharsets.UTF_8);
 
@@ -57,6 +64,7 @@ public class SampleExtensionPlugin extends Plugin implements CryptoKeyProviderEx
 
     /**
      * Insecure key provider consisting of hardcoded keys. To be used for reference only.
+     * @param settings used to build key provider
      */
     @Override
     public MasterKeyProvider createKeyProvider(Settings settings) {
@@ -84,6 +92,10 @@ public class SampleExtensionPlugin extends Plugin implements CryptoKeyProviderEx
         };
     }
 
+    /**
+     * To provide extension type
+     * @return Extension type
+     */
     @Override
     public String type() {
         return "sample-key-provider-extension";

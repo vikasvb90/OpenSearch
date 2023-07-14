@@ -13,7 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.opensearch.client.Client;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.service.ClusterService;
-import org.opensearch.common.io.stream.NamedWriteableRegistry;
+import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.cryptospi.CryptoKeyProviderExtension;
@@ -49,7 +49,7 @@ public class CryptoBasePlugin extends Plugin implements CryptoPlugin, Extensible
     private static final Logger logger = LogManager.getLogger(CryptoBasePlugin.class);
     private static final String NAME = "crypto";
     private final Map<String, CryptoKeyProviderExtension> keyProviderExtensions;
-    protected final Map<String, Map<String, CryptoStore>> keyProviderCryptoClients;
+    protected final Map<String, Map<String, CryptoStore>> keyProviderCryptoManagers;
     private final long cacheTTL = TimeUnit.DAYS.toMillis(7);
     private CacheRefresher cacheRefresher;
     private static final String CRYPTO_ASYNC_REFRESH_THREADPOOL = "crypto_async_refresh";
@@ -59,7 +59,7 @@ public class CryptoBasePlugin extends Plugin implements CryptoPlugin, Extensible
      */
     public CryptoBasePlugin() {
         keyProviderExtensions = new HashMap<>();
-        keyProviderCryptoClients = new HashMap<>();
+        keyProviderCryptoManagers = new HashMap<>();
     }
 
     @Override
@@ -93,7 +93,7 @@ public class CryptoBasePlugin extends Plugin implements CryptoPlugin, Extensible
     }
 
     @Override
-    public CryptoClient.Factory createClientFactory(String keyProviderType) {
+    public CryptoManager.Factory createClientFactory(String keyProviderType) {
         return (cryptoSettings, keyProviderName) -> {
             if (!keyProviderExtensions.containsKey(keyProviderType)) {
                 throw new IllegalArgumentException(
@@ -101,8 +101,8 @@ public class CryptoBasePlugin extends Plugin implements CryptoPlugin, Extensible
                 );
             }
 
-            synchronized (keyProviderCryptoClients) {
-                Map<String, CryptoStore> existingCryptoStores = keyProviderCryptoClients.get(keyProviderType);
+            synchronized (keyProviderCryptoManagers) {
+                Map<String, CryptoStore> existingCryptoStores = keyProviderCryptoManagers.get(keyProviderType);
                 if (existingCryptoStores != null && existingCryptoStores.containsKey(keyProviderName)) {
                     existingCryptoStores.get(keyProviderName).incRef();
                     return existingCryptoStores.get(keyProviderName);
@@ -121,16 +121,16 @@ public class CryptoBasePlugin extends Plugin implements CryptoPlugin, Extensible
                 cacheRefresher.register(masterKeyCache);
                 CryptoStore cryptoStore = new CryptoStore(keyProviderName, keyProviderType, () -> {
                     cacheRefresher.deregister(masterKeyCache);
-                    keyProviderCryptoClients.get(keyProviderType).remove(keyProviderName);
-                    if (keyProviderCryptoClients.get(keyProviderType).isEmpty() == true) {
-                        keyProviderCryptoClients.remove(keyProviderType);
+                    keyProviderCryptoManagers.get(keyProviderType).remove(keyProviderName);
+                    if (keyProviderCryptoManagers.get(keyProviderType).isEmpty() == true) {
+                        keyProviderCryptoManagers.remove(keyProviderType);
                     }
                 }, masterKeyCache, encryptionContext, cryptoAlgorithm);
                 cryptoStore.incRef();
-                keyProviderCryptoClients.putIfAbsent(keyProviderType, new HashMap<>());
-                keyProviderCryptoClients.get(keyProviderType).put(keyProviderName, cryptoStore);
+                keyProviderCryptoManagers.putIfAbsent(keyProviderType, new HashMap<>());
+                keyProviderCryptoManagers.get(keyProviderType).put(keyProviderName, cryptoStore);
             }
-            return keyProviderCryptoClients.get(keyProviderType).get(keyProviderName);
+            return keyProviderCryptoManagers.get(keyProviderType).get(keyProviderName);
         };
     }
 

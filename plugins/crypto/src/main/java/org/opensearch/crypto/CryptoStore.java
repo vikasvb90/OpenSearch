@@ -27,7 +27,7 @@ import java.security.SecureRandom;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-public class CryptoStore extends AbstractRefCounted implements CryptoClient {
+public class CryptoStore extends AbstractRefCounted implements CryptoManager {
 
     private static final Logger logger = LogManager.getLogger(CryptoStore.class);
     private static final int cryptoCacheSize = 500;

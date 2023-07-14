@@ -12,6 +12,7 @@ import org.junit.Assert;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.cryptospi.CryptoKeyProviderExtension;
 import org.opensearch.plugins.ExtensiblePlugin;
+import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.threadpool.Scheduler;
 import org.opensearch.threadpool.ThreadPool;
 
@@ -22,11 +23,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class CryptoBasePluginTests {
+public class CryptoBasePluginTests extends OpenSearchTestCase {
 
     public void testExtensionNotAvailableFailure() {
         CryptoBasePlugin cryptoBasePlugin = new CryptoBasePlugin();
-        CryptoClient.Factory factory = cryptoBasePlugin.createClientFactory("unavailable-extension");
+        CryptoManager.Factory factory = cryptoBasePlugin.createClientFactory("unavailable-extension");
         Assert.assertThrows(IllegalArgumentException.class, () -> factory.create(Settings.EMPTY, "unavailable-name"));
     }
 
@@ -41,29 +42,29 @@ public class CryptoBasePluginTests {
         CryptoKeyProviderExtension keyProviderExtension = new MockExtensionPlugin();
         CryptoBasePlugin cryptoBasePlugin = new CryptoBasePlugin();
         String keyProviderName = "test-1";
-        CryptoClient cryptoClient1 = createTestCryptoClient(keyProviderExtension, cryptoBasePlugin, keyProviderName);
-        CryptoClient cryptoClient2 = createTestCryptoClient(keyProviderExtension, cryptoBasePlugin, keyProviderName);
+        CryptoManager cryptoClient1 = createTestCryptoManager(keyProviderExtension, cryptoBasePlugin, keyProviderName);
+        CryptoManager cryptoClient2 = createTestCryptoManager(keyProviderExtension, cryptoBasePlugin, keyProviderName);
         Assert.assertEquals(cryptoClient1, cryptoClient2);
 
         String keyProviderName2 = "test-2";
-        CryptoClient cryptoClient3 = createTestCryptoClient(keyProviderExtension, cryptoBasePlugin, keyProviderName2);
+        CryptoManager cryptoClient3 = createTestCryptoManager(keyProviderExtension, cryptoBasePlugin, keyProviderName2);
         Assert.assertNotEquals(cryptoClient3, cryptoClient2);
 
-        CryptoStore cryptoStore = cryptoBasePlugin.keyProviderCryptoClients.get(keyProviderExtension.type()).get(keyProviderName);
+        CryptoStore cryptoStore = cryptoBasePlugin.keyProviderCryptoManagers.get(keyProviderExtension.type()).get(keyProviderName);
         cryptoStore.closeInternal();
-        Assert.assertEquals(1, cryptoBasePlugin.keyProviderCryptoClients.get(keyProviderExtension.type()).size());
-        CryptoClient cryptoClient4 = createTestCryptoClient(keyProviderExtension, cryptoBasePlugin, keyProviderName);
+        Assert.assertEquals(1, cryptoBasePlugin.keyProviderCryptoManagers.get(keyProviderExtension.type()).size());
+        CryptoManager cryptoClient4 = createTestCryptoManager(keyProviderExtension, cryptoBasePlugin, keyProviderName);
         Assert.assertNotEquals(cryptoClient4, cryptoClient2);
 
-        cryptoStore = cryptoBasePlugin.keyProviderCryptoClients.get(keyProviderExtension.type()).get(keyProviderName);
+        cryptoStore = cryptoBasePlugin.keyProviderCryptoManagers.get(keyProviderExtension.type()).get(keyProviderName);
         cryptoStore.closeInternal();
-        Assert.assertEquals(1, cryptoBasePlugin.keyProviderCryptoClients.get(keyProviderExtension.type()).size());
-        cryptoStore = cryptoBasePlugin.keyProviderCryptoClients.get(keyProviderExtension.type()).get(keyProviderName2);
+        Assert.assertEquals(1, cryptoBasePlugin.keyProviderCryptoManagers.get(keyProviderExtension.type()).size());
+        cryptoStore = cryptoBasePlugin.keyProviderCryptoManagers.get(keyProviderExtension.type()).get(keyProviderName2);
         cryptoStore.closeInternal();
-        Assert.assertEquals(0, cryptoBasePlugin.keyProviderCryptoClients.size());
+        Assert.assertEquals(0, cryptoBasePlugin.keyProviderCryptoManagers.size());
     }
 
-    public static CryptoClient createTestCryptoClient(
+    public static CryptoManager createTestCryptoManager(
         CryptoKeyProviderExtension keyProviderExtension,
         CryptoBasePlugin cryptoBasePlugin,
         String keyProviderName
@@ -75,7 +76,7 @@ public class CryptoBasePluginTests {
         ThreadPool threadPool = mock(ThreadPool.class);
         when(threadPool.scheduler()).thenReturn(new Scheduler.SafeScheduledThreadPoolExecutor(4));
         cryptoBasePlugin.createComponents(null, null, threadPool, null, null, null, null, null, null, null, null);
-        CryptoClient.Factory factory = cryptoBasePlugin.createClientFactory(keyProviderExtension.type());
+        CryptoManager.Factory factory = cryptoBasePlugin.createClientFactory(keyProviderExtension.type());
         return factory.create(Settings.EMPTY, keyProviderName);
     }
 }

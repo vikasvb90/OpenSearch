@@ -146,7 +146,7 @@ public class DecryptionHandler<K extends MasterKey<K>> implements MessageCryptoH
         final SignaturePolicy signaturePolicy,
         final int maxEncryptedDataKeys
     ) throws AwsCryptoException {
-        return new DecryptionHandler(materialsManager, commitmentPolicy, signaturePolicy, maxEncryptedDataKeys);
+        return new DecryptionHandler<>(materialsManager, commitmentPolicy, signaturePolicy, maxEncryptedDataKeys);
     }
 
     /**
@@ -181,7 +181,7 @@ public class DecryptionHandler<K extends MasterKey<K>> implements MessageCryptoH
         final int maxEncryptedDataKeys,
         final int frameStartNum
     ) throws AwsCryptoException {
-        return new DecryptionHandler(materialsManager, headers, commitmentPolicy, signaturePolicy, maxEncryptedDataKeys, frameStartNum);
+        return new DecryptionHandler<>(materialsManager, headers, commitmentPolicy, signaturePolicy, maxEncryptedDataKeys, frameStartNum);
     }
 
     /**
@@ -211,7 +211,7 @@ public class DecryptionHandler<K extends MasterKey<K>> implements MessageCryptoH
         final int maxEncryptedDataKeys,
         final int frameStartNum
     ) throws AwsCryptoException {
-        return new DecryptionHandler(materialsManager, headers, commitmentPolicy, signaturePolicy, maxEncryptedDataKeys, frameStartNum);
+        return new DecryptionHandler<>(materialsManager, headers, commitmentPolicy, signaturePolicy, maxEncryptedDataKeys, frameStartNum);
     }
 
     /**
