@@ -24,17 +24,21 @@ import org.apache.lucene.tests.util.LuceneTestCase;
 import org.junit.After;
 import org.junit.Before;
 import org.mockito.Mockito;
+import org.mockito.stubbing.Answer;
 import org.opensearch.action.ActionListener;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.UUIDs;
+import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.blobstore.VerifyingMultiStreamBlobContainer;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
+import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.io.stream.BytesStreamOutput;
 import org.opensearch.common.lucene.store.ByteArrayIndexInput;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.core.common.bytes.BytesReference;
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.index.engine.NRTReplicationEngineFactory;
 import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.shard.IndexShard;
@@ -53,22 +57,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.HashMap;
-import java.util.Collection;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.startsWith;
-import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.doReturn;
 import static org.hamcrest.CoreMatchers.is;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.startsWith;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
     private RemoteDirectory remoteDataDirectory;
@@ -87,7 +94,9 @@ public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
 
     @Before
     public void setup() throws IOException {
-        remoteDataDirectory = mock(RemoteDirectory.class);
+        BlobContainer blobContainer = mock(BlobContainer.class);
+        doNothing().when(blobContainer).writeBlob(anyString(), any(), anyLong(), anyBoolean());
+        remoteDataDirectory = Mockito.spy(new RemoteDirectory(blobContainer));
         remoteMetadataDirectory = mock(RemoteDirectory.class);
         mdLockManager = mock(RemoteStoreMetadataLockManager.class);
         threadPool = mock(ThreadPool.class);
@@ -96,7 +105,8 @@ public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
             remoteDataDirectory,
             remoteMetadataDirectory,
             mdLockManager,
-            threadPool
+            threadPool,
+            null
         );
         testUploadTracker = new TestUploadListener();
 
@@ -375,7 +385,7 @@ public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
         remoteSegmentStoreDirectory.init();
 
         IndexInput indexInput = mock(IndexInput.class);
-        when(remoteDataDirectory.openInput(startsWith("_0.si"), eq(IOContext.DEFAULT))).thenReturn(indexInput);
+        Mockito.doReturn(indexInput).when(remoteDataDirectory).openInput(startsWith("_0.si"), eq(IOContext.DEFAULT));
 
         assertEquals(indexInput, remoteSegmentStoreDirectory.openInput("_0.si", IOContext.DEFAULT));
     }
@@ -388,7 +398,7 @@ public class RemoteSegmentStoreDirectoryTests extends IndexShardTestCase {
         populateMetadata();
         remoteSegmentStoreDirectory.init();
 
-        when(remoteDataDirectory.openInput(startsWith("_0.si"), eq(IOContext.DEFAULT))).thenThrow(new IOException("Error"));
+        doThrow(new IOException("Error")).when(remoteDataDirectory).openInput(startsWith("_0.si"), eq(IOContext.DEFAULT));
 
         assertThrows(IOException.class, () -> remoteSegmentStoreDirectory.openInput("_0.si", IOContext.DEFAULT));
     }

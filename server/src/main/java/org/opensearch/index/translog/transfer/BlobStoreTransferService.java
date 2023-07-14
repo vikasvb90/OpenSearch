@@ -21,7 +21,9 @@ import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
 import org.opensearch.common.blobstore.transfer.RemoteTransferContainer;
 import org.opensearch.common.blobstore.transfer.stream.OffsetRangeFileInputStream;
+import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.index.translog.ChannelFactory;
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.index.translog.transfer.FileSnapshot.TransferFileSnapshot;
 import org.opensearch.threadpool.ThreadPool;
 
@@ -45,12 +47,13 @@ public class BlobStoreTransferService implements TransferService {
 
     private final BlobStore blobStore;
     private final ThreadPool threadPool;
-
+    private final CryptoManager cryptoManager;
     private static final Logger logger = LogManager.getLogger(BlobStoreTransferService.class);
 
-    public BlobStoreTransferService(BlobStore blobStore, ThreadPool threadPool) {
+    public BlobStoreTransferService(BlobStore blobStore, ThreadPool threadPool, CryptoManager cryptoManager) {
         this.blobStore = blobStore;
         this.threadPool = threadPool;
+        this.cryptoManager = cryptoManager;
     }
 
     @Override
@@ -59,13 +62,12 @@ public class BlobStoreTransferService implements TransferService {
         final TransferFileSnapshot fileSnapshot,
         Iterable<String> remoteTransferPath,
         ActionListener<TransferFileSnapshot> listener,
-        WritePriority writePriority
+        TransferContentType transferContentType
     ) {
         assert remoteTransferPath instanceof BlobPath;
-        BlobPath blobPath = (BlobPath) remoteTransferPath;
         threadPool.executor(threadPoolName).execute(ActionRunnable.wrap(listener, l -> {
             try {
-                uploadBlob(fileSnapshot, blobPath, writePriority);
+                uploadBlob(fileSnapshot, remoteTransferPath, WritePriority.NORMAL, transferContentType);
                 l.onResponse(fileSnapshot);
             } catch (Exception e) {
                 logger.error(() -> new ParameterizedMessage("Failed to upload blob {}", fileSnapshot.getName()), e);
@@ -75,11 +77,19 @@ public class BlobStoreTransferService implements TransferService {
     }
 
     @Override
-    public void uploadBlob(final TransferFileSnapshot fileSnapshot, Iterable<String> remoteTransferPath, WritePriority writePriority)
+    public void uploadBlob(final TransferFileSnapshot fileSnapshot, Iterable<String> remoteTransferPath, WritePriority writePriority, TransferContentType transferContentType)
         throws IOException {
         BlobPath blobPath = (BlobPath) remoteTransferPath;
         try (InputStream inputStream = fileSnapshot.inputStream()) {
-            blobStore.blobContainer(blobPath).writeBlobAtomic(fileSnapshot.getName(), inputStream, fileSnapshot.getContentLength(), true);
+            long transferContentLength = fileSnapshot.getContentLength();
+            InputStream transferStream = inputStream;
+            if (cryptoManager != null && transferContentType == TransferContentType.DATA) {
+                Object cryptoContext = cryptoManager.initCryptoContext();
+                InputStreamContainer stream = cryptoManager.createEncryptingStream(cryptoContext, new InputStreamContainer(inputStream, transferContentLength, 0));
+                transferStream = stream.getInputStream();
+                transferContentLength = stream.getContentLength();
+            }
+            blobStore.blobContainer(blobPath).writeBlobAtomic(fileSnapshot.getName(), transferStream, transferContentLength, true);
         }
     }
 
@@ -88,14 +98,15 @@ public class BlobStoreTransferService implements TransferService {
         Set<TransferFileSnapshot> fileSnapshots,
         final Map<Long, BlobPath> blobPaths,
         ActionListener<TransferFileSnapshot> listener,
-        WritePriority writePriority
+        WritePriority writePriority,
+        TransferContentType transferContentType
     ) {
         fileSnapshots.forEach(fileSnapshot -> {
             BlobPath blobPath = blobPaths.get(fileSnapshot.getPrimaryTerm());
             if (!(blobStore.blobContainer(blobPath) instanceof VerifyingMultiStreamBlobContainer)) {
-                uploadBlob(ThreadPool.Names.TRANSLOG_TRANSFER, fileSnapshot, blobPath, listener, writePriority);
+                uploadBlob(ThreadPool.Names.TRANSLOG_TRANSFER, fileSnapshot, blobPath, listener, transferContentType);
             } else {
-                uploadBlob(fileSnapshot, listener, blobPath, writePriority);
+                uploadBlob(fileSnapshot, listener, blobPath, writePriority, transferContentType);
             }
         });
 
@@ -105,7 +116,8 @@ public class BlobStoreTransferService implements TransferService {
         TransferFileSnapshot fileSnapshot,
         ActionListener<TransferFileSnapshot> listener,
         BlobPath blobPath,
-        WritePriority writePriority
+        WritePriority writePriority,
+        TransferContentType transferContentType
     ) {
 
         try {
@@ -114,6 +126,7 @@ public class BlobStoreTransferService implements TransferService {
             try (FileChannel channel = channelFactory.open(fileSnapshot.getPath(), StandardOpenOption.READ)) {
                 contentLength = channel.size();
             }
+            CryptoManager transferCryptoManager = transferContentType == TransferContentType.DATA ? cryptoManager : null;
             RemoteTransferContainer remoteTransferContainer = new RemoteTransferContainer(
                 fileSnapshot.getName(),
                 fileSnapshot.getName(),
@@ -122,7 +135,8 @@ public class BlobStoreTransferService implements TransferService {
                 writePriority,
                 (size, position) -> new OffsetRangeFileInputStream(fileSnapshot.getPath(), size, position),
                 Objects.requireNonNull(fileSnapshot.getChecksum()),
-                blobStore.blobContainer(blobPath) instanceof VerifyingMultiStreamBlobContainer
+                blobStore.blobContainer(blobPath) instanceof VerifyingMultiStreamBlobContainer,
+                transferCryptoManager
             );
             ActionListener<Void> completionListener = ActionListener.wrap(resp -> listener.onResponse(fileSnapshot), ex -> {
                 logger.error(() -> new ParameterizedMessage("Failed to upload blob {}", fileSnapshot.getName()), ex);

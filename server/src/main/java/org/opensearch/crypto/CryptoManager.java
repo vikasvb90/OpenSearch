@@ -56,8 +56,7 @@ public interface CryptoManager extends RefCounted {
 
     /**
      * In scenarios where content is divided into multiple parts and streams are emitted against each part,
-     * it is sometimes required to adjust the size of a part. For e.g. in case of frame encryption, content should
-     * line up exactly along frame boundaries.
+     * it is sometimes required to adjust the size of a part.
      *
      * @param cryptoContextObj crypto context instance
      * @param streamSize Size of the raw stream
@@ -66,7 +65,7 @@ public interface CryptoManager extends RefCounted {
     long adjustEncryptedStreamSize(Object cryptoContextObj, long streamSize);
 
     /**
-     * Used where length of the encrypted content is required before actual encryption begins.
+     * Estimate length of the encrypted stream.
      *
      * @param cryptoContextObj crypto context instance
      * @param contentLength Size of the raw content
@@ -78,26 +77,21 @@ public interface CryptoManager extends RefCounted {
      * Wraps a raw InputStream with encrypting stream
      *
      * @param cryptoContext created earlier to set the crypto context.
-     * @param streamContainer consisting of raw InputStream to encrypt
-     * @return stream container consisting of encrypting stream wrapped around raw InputStream.
+     * @param stream Raw InputStream to encrypt
+     * @return encrypting stream wrapped around raw InputStream.
      */
-    InputStreamContainer createEncryptingStream(Object cryptoContext, InputStreamContainer streamContainer);
+    InputStreamContainer createEncryptingStream(Object cryptoContext, InputStreamContainer stream);
 
     /**
      * Provides encrypted stream for a raw stream emitted for a part of content.
      *
      * @param cryptoContextObj crypto context instance.
-     * @param streamContainer raw stream container for which encrypted stream has to be created.
+     * @param stream raw stream for which encrypted stream has to be created.
      * @param totalStreams Number of streams being used for the entire content.
      * @param streamIdx Index of the current stream.
      * @return Encrypted stream for the provided raw stream.
      */
-    InputStreamContainer createEncryptingStreamOfPart(
-        Object cryptoContextObj,
-        InputStreamContainer streamContainer,
-        int totalStreams,
-        int streamIdx
-    );
+    InputStreamContainer createEncryptingStreamOfPart(Object cryptoContextObj, InputStreamContainer stream, int totalStreams, int streamIdx);
 
     /**
      * This method accepts an encrypted stream and provides a decrypting wrapper.

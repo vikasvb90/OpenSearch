@@ -8,13 +8,16 @@
 
 package org.opensearch.index.translog.transfer;
 
+import org.mockito.stubbing.Answer;
 import org.opensearch.action.ActionListener;
 import org.opensearch.action.LatchedActionListener;
 import org.opensearch.cluster.metadata.RepositoryMetadata;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.blobstore.stream.write.WritePriority;
+import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.env.Environment;
 import org.opensearch.env.TestEnvironment;
 import org.opensearch.indices.recovery.RecoverySettings;
@@ -33,6 +36,13 @@ import java.nio.file.StandardOpenOption;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class BlobStoreTransferServiceTests extends OpenSearchTestCase {
 
@@ -55,8 +65,8 @@ public class BlobStoreTransferServiceTests extends OpenSearchTestCase {
             randomNonNegativeLong(),
             null
         );
-        TransferService transferService = new BlobStoreTransferService(repository.blobStore(), threadPool);
-        transferService.uploadBlob(transferFileSnapshot, repository.basePath(), WritePriority.HIGH);
+        TransferService transferService = new BlobStoreTransferService(repository.blobStore(), threadPool, null);
+        transferService.uploadBlob(transferFileSnapshot, repository.basePath(), WritePriority.HIGH, TransferContentType.DATA);
     }
 
     public void testUploadBlobFromByteArray() throws IOException {
@@ -65,8 +75,8 @@ public class BlobStoreTransferServiceTests extends OpenSearchTestCase {
             randomByteArrayOfLength(128),
             1
         );
-        TransferService transferService = new BlobStoreTransferService(repository.blobStore(), threadPool);
-        transferService.uploadBlob(transferFileSnapshot, repository.basePath(), WritePriority.NORMAL);
+        TransferService transferService = new BlobStoreTransferService(repository.blobStore(), threadPool, null);
+        transferService.uploadBlob(transferFileSnapshot, repository.basePath(), WritePriority.NORMAL, TransferContentType.DATA);
     }
 
     public void testUploadBlobAsync() throws IOException, InterruptedException {
@@ -79,7 +89,7 @@ public class BlobStoreTransferServiceTests extends OpenSearchTestCase {
             null
         );
         CountDownLatch latch = new CountDownLatch(1);
-        TransferService transferService = new BlobStoreTransferService(repository.blobStore(), threadPool);
+        TransferService transferService = new BlobStoreTransferService(repository.blobStore(), threadPool, null);
         transferService.uploadBlob(
             ThreadPool.Names.TRANSLOG_TRANSFER,
             transferFileSnapshot,
@@ -97,10 +107,46 @@ public class BlobStoreTransferServiceTests extends OpenSearchTestCase {
                     throw new AssertionError("Failed to perform uploadBlobAsync", e);
                 }
             }, latch),
-            WritePriority.HIGH
+            TransferContentType.DATA
         );
         assertTrue(latch.await(1000, TimeUnit.MILLISECONDS));
         assertTrue(succeeded.get());
+    }
+
+    public void testUploadBlobAsyncWithEncryptionEnabled() throws IOException, InterruptedException {
+        BlobStoreRepository repository = createRepository(true);
+        Path testFile = createTempFile();
+        Files.write(testFile, randomByteArrayOfLength(128), StandardOpenOption.APPEND);
+        AtomicBoolean succeeded = new AtomicBoolean(false);
+        FileSnapshot.TransferFileSnapshot transferFileSnapshot = new FileSnapshot.TransferFileSnapshot(testFile, randomNonNegativeLong(), null);
+        CountDownLatch latch = new CountDownLatch(1);
+        CryptoManager cryptoManager = mock(CryptoManager.class);
+        when(cryptoManager.initCryptoContext()).thenReturn(mock(Object.class));
+        doAnswer((Answer<InputStreamContainer>) invocation -> (InputStreamContainer) invocation.getArgument(1)).when(cryptoManager)
+            .createEncryptingStream(any(), any(InputStreamContainer.class));
+        TransferService transferService = new BlobStoreTransferService(repository.blobStore(), threadPool, cryptoManager);
+        transferService.uploadBlob(
+            ThreadPool.Names.TRANSLOG_TRANSFER,
+            transferFileSnapshot,
+            repository.basePath(),
+            new LatchedActionListener<>(new ActionListener<>() {
+                @Override
+                public void onResponse(FileSnapshot.TransferFileSnapshot fileSnapshot) {
+                    assert succeeded.compareAndSet(false, true);
+                    assertEquals(transferFileSnapshot.getPrimaryTerm(), fileSnapshot.getPrimaryTerm());
+                    assertEquals(transferFileSnapshot.getName(), fileSnapshot.getName());
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    throw new AssertionError("Failed to perform uploadBlobAsync", e);
+                }
+            }, latch),
+            TransferContentType.DATA
+        );
+        assertTrue(latch.await(1000, TimeUnit.MILLISECONDS));
+        assertTrue(succeeded.get());
+        verify(cryptoManager, times(1)).createEncryptingStream(any(), any(InputStreamContainer.class));
     }
 
     @Override
@@ -110,10 +156,14 @@ public class BlobStoreTransferServiceTests extends OpenSearchTestCase {
         ThreadPool.terminate(threadPool, 10, TimeUnit.SECONDS);
     }
 
-    /** Create a {@link Repository} with a random name **/
     private BlobStoreRepository createRepository() {
+        return createRepository(null);
+    }
+
+    /** Create a {@link Repository} with a random name **/
+    private BlobStoreRepository createRepository(Boolean encrypted) {
         Settings settings = Settings.builder().put("location", randomAlphaOfLength(10)).build();
-        RepositoryMetadata repositoryMetadata = new RepositoryMetadata(randomAlphaOfLength(10), FsRepository.TYPE, settings);
+        RepositoryMetadata repositoryMetadata = new RepositoryMetadata(randomAlphaOfLength(10), FsRepository.TYPE, settings, encrypted);
         final ClusterService clusterService = BlobStoreTestUtil.mockClusterService(repositoryMetadata);
         final FsRepository repository = new FsRepository(
             repositoryMetadata,

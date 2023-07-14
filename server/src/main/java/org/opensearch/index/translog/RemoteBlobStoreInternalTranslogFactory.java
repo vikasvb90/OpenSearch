@@ -8,6 +8,7 @@
 
 package org.opensearch.index.translog;
 
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.repositories.Repository;
 import org.opensearch.repositories.RepositoryMissingException;
@@ -28,6 +29,7 @@ import java.util.function.Supplier;
 public class RemoteBlobStoreInternalTranslogFactory implements TranslogFactory {
 
     private final Repository repository;
+    private final CryptoManager cryptoManager;
 
     private final ThreadPool threadPool;
 
@@ -41,6 +43,11 @@ public class RemoteBlobStoreInternalTranslogFactory implements TranslogFactory {
             repository = repositoriesServiceSupplier.get().repository(repositoryName);
         } catch (RepositoryMissingException ex) {
             throw new IllegalArgumentException("Repository should be created before creating index with remote_store enabled setting", ex);
+        }
+        if (repository.getMetadata() != null && Boolean.TRUE.equals(repository.getMetadata().encrypted())) {
+            this.cryptoManager = repositoriesServiceSupplier.get().cryptoManager(repository.getMetadata());
+        } else {
+            this.cryptoManager = null;
         }
         this.repository = repository;
         this.threadPool = threadPool;
@@ -68,7 +75,8 @@ public class RemoteBlobStoreInternalTranslogFactory implements TranslogFactory {
             persistedSequenceNumberConsumer,
             blobStoreRepository,
             threadPool,
-            primaryModeSupplier
+            primaryModeSupplier,
+            cryptoManager
         );
     }
 

@@ -531,6 +531,15 @@ public class RepositoriesService extends AbstractLifecycleComponent implements C
     }
 
     /**
+     * Returns registered crypto client
+     * @param repositoryMetadata repository metadata for which crypto client needs to be returned.
+     * @return crypto client
+     */
+    public CryptoManager cryptoManager(RepositoryMetadata repositoryMetadata) {
+        return cryptoManagers.get(getCryptoManagerKey(repositoryMetadata));
+    }
+
+    /**
      * Gets the {@link RepositoryData} for the given repository.
      *
      * @param repositoryName repository name
