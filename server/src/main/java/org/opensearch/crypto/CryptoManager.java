@@ -21,8 +21,6 @@ public interface CryptoManager extends RefCounted {
 
     /**
      * A factory interface for constructing crypto client.
-     *
-     * See {@link org.opensearch.plugins.CryptoPlugin}.
      */
     interface Factory {
 

@@ -566,7 +566,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     }
 
     private InputStream maybeCreateEncryptedRemoteInputStream(String file) throws IOException {
-        String remoteFilename = getNewRemoteSegmentFilename(file);
+        String remoteFilename = getExistingRemoteFilename(file);
         InputStream inputStream = remoteDataDirectory.blobContainer.readBlob(remoteFilename);
         if (cryptoManager != null) {
             inputStream = cryptoManager.createDecryptingStream(inputStream);
