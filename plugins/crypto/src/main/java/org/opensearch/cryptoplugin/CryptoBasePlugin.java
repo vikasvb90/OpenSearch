@@ -5,7 +5,7 @@
  * this file be licensed under the Apache-2.0 license or a
  * compatible open source license.
  */
-package org.opensearch.crypto;
+package org.opensearch.cryptoplugin;
 
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import org.apache.logging.log4j.LogManager;
@@ -20,8 +20,9 @@ import org.opensearch.cryptospi.CryptoKeyProviderExtension;
 import org.opensearch.cryptospi.MasterKeyProvider;
 import org.opensearch.env.Environment;
 import org.opensearch.env.NodeEnvironment;
-import org.opensearch.crypto.cache.CacheRefresher;
-import org.opensearch.crypto.cache.MasterKeyCache;
+import org.opensearch.cryptoplugin.cache.CacheRefresher;
+import org.opensearch.cryptoplugin.cache.MasterKeyCache;
+import org.opensearch.crypto.CryptoManager;
 import org.opensearch.plugins.CryptoPlugin;
 import org.opensearch.plugins.ExtensiblePlugin;
 import org.opensearch.plugins.Plugin;

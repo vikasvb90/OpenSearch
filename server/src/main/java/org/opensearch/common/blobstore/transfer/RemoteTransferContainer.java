@@ -102,7 +102,7 @@ public class RemoteTransferContainer implements Closeable {
         return new WriteContext(
             remoteFileName,
             this::supplyStreamContext,
-            contentLength,
+            remoteContentLength,
             failTransferIfFileExists,
             writePriority,
             this::finalizeUpload,

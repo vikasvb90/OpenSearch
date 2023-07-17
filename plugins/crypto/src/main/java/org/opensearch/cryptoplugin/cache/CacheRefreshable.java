@@ -6,7 +6,7 @@
  * this file be licensed under the Apache-2.0 license or a
  * compatible open source license.
  */
-package org.opensearch.crypto.cache;
+package org.opensearch.cryptoplugin.cache;
 
 public interface CacheRefreshable {
     /**

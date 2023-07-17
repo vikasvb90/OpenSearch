@@ -6,8 +6,10 @@
  * this file be licensed under the Apache-2.0 license or a
  * compatible open source license.
  */
-package org.opensearch.crypto;
+package org.opensearch.cryptoplugin.sampleextension;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.cryptospi.CryptoKeyProviderExtension;
 import org.opensearch.cryptospi.DataKeyPair;
@@ -19,12 +21,23 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
-public class MockExtensionPlugin extends Plugin implements CryptoKeyProviderExtension {
+/**
+ * Note that this class is only for reference purpose and should not be used in production.
+ */
+public class SampleExtensionPlugin extends Plugin implements CryptoKeyProviderExtension {
+    private static final Logger logger = LogManager.getLogger(SampleExtensionPlugin.class);
 
-    public static byte[] loadFile(String file) {
+    /**
+     * Constructs a sample extension plugin
+     */
+    public SampleExtensionPlugin() {
+
+    }
+
+    private static byte[] loadFile(String file) {
         byte[] content;
         try {
-            InputStream in = MockExtensionPlugin.class.getResourceAsStream(file);
+            InputStream in = SampleExtensionPlugin.class.getResourceAsStream(file);
             StringBuilder stringBuilder = new StringBuilder();
             BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
             for (String line; (line = bufferedReader.readLine()) != null;) {
@@ -32,7 +45,7 @@ public class MockExtensionPlugin extends Plugin implements CryptoKeyProviderExte
             }
             content = stringBuilder.toString().getBytes(StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new IllegalArgumentException("File " + file + " cannot be read correctly.");
+            throw new IllegalArgumentException("File " + file + " cannot be read correctly.", e);
         }
         String text = new String(content, StandardCharsets.UTF_8);
 
@@ -46,14 +59,19 @@ public class MockExtensionPlugin extends Plugin implements CryptoKeyProviderExte
         return bytes;
     }
 
-    private static final byte[] rawKey = loadFile("/raw_key");
-    private static final byte[] encryptedKey = loadFile("/encrypted_key");
+    private static final byte[] rawKey = loadFile("raw_key");
+    private static final byte[] encryptedKey = loadFile("encrypted_key");
 
+    /**
+     * Insecure key provider consisting of hardcoded keys. To be used for reference only.
+     * @param settings used to build key provider
+     */
     @Override
     public MasterKeyProvider createKeyProvider(Settings settings) {
         return new MasterKeyProvider() {
             @Override
             public DataKeyPair generateDataPair() {
+                logger.warn("Call to insecure extension made to generate data key pair. This shouldn't be used in production");
                 return new DataKeyPair(rawKey, encryptedKey);
             }
 
@@ -74,6 +92,10 @@ public class MockExtensionPlugin extends Plugin implements CryptoKeyProviderExte
         };
     }
 
+    /**
+     * To provide extension type
+     * @return Extension type
+     */
     @Override
     public String type() {
         return "sample-key-provider-extension";

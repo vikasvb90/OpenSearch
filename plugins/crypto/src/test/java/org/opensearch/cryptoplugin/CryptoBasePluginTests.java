@@ -6,7 +6,7 @@
  * this file be licensed under the Apache-2.0 license or a
  * compatible open source license.
  */
-package org.opensearch.crypto;
+package org.opensearch.cryptoplugin;
 
 import org.junit.Assert;
 import org.opensearch.common.settings.Settings;
@@ -15,6 +15,7 @@ import org.opensearch.plugins.ExtensiblePlugin;
 import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.threadpool.Scheduler;
 import org.opensearch.threadpool.ThreadPool;
+import org.opensearch.crypto.CryptoManager;
 
 import java.util.Collections;
 import java.util.List;

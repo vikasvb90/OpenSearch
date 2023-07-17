@@ -8,6 +8,6 @@
  */
 
 /**
- * Caching layer for generated data keys
+ * Sample crypto extension for reference.
  */
-package org.opensearch.crypto.cache;
+package org.opensearch.cryptoplugin.sampleextension;

@@ -6,7 +6,7 @@
  * compatible open source license.
  */
 
-package org.opensearch.crypto;
+package org.opensearch.cryptoplugin;
 
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.caching.CachingCryptoMaterialsManager;
@@ -17,10 +17,11 @@ import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.common.unit.ByteSizeValue;
 import org.opensearch.common.util.concurrent.AbstractRefCounted;
-import org.opensearch.crypto.cache.MasterKeyCache;
+import org.opensearch.cryptoplugin.cache.MasterKeyCache;
 import org.opensearch.encryption.CryptoUtils;
 import org.opensearch.encryption.core.AwsCrypto;
 import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.opensearch.crypto.CryptoManager;
 
 import java.io.InputStream;
 import java.security.SecureRandom;

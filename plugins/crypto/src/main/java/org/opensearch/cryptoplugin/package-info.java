@@ -1,5 +1,4 @@
 /*
- * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
  *
  * The OpenSearch Contributors require contributions made to
@@ -8,6 +7,6 @@
  */
 
 /**
- * Sample crypto extension for reference.
+ * Crypto plugin to for encryption and decryption use cases.
  */
-package org.opensearch.crypto.sampleextension;
+package org.opensearch.cryptoplugin;

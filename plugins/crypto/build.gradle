@@ -32,7 +32,7 @@ apply plugin: 'opensearch.publish'
 
 opensearchplugin {
   description 'Provides encryption and decryption capabilities for OpenSearch'
-  classname 'org.opensearch.crypto.CryptoBasePlugin'
+  classname 'org.opensearch.cryptoplugin.CryptoBasePlugin'
 }
 
 ext {
@@ -50,4 +50,3 @@ dependencies {
 
 thirdPartyAudit.enabled = false
 testingConventions.enabled = false
-

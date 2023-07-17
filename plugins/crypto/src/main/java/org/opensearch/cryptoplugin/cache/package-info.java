@@ -8,6 +8,6 @@
  */
 
 /**
- * Key provider package
+ * Caching layer for generated data keys
  */
-package org.opensearch.crypto.keyprovider;
+package org.opensearch.cryptoplugin.cache;
