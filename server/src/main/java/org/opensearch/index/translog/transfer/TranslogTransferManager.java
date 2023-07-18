@@ -186,7 +186,7 @@ public class TranslogTransferManager {
             Files.delete(filePath);
         }
 
-        try (InputStream inputStream = transferService.downloadBlob(remoteBaseTransferPath.add(primaryTerm), fileName)) {
+        try (InputStream inputStream = transferService.downloadBlob(remoteDataTransferPath.add(primaryTerm), fileName)) {
             InputStream transferInputStream = inputStream;
             if (transferContentType == TransferContentType.DATA && cryptoManager != null) {
                 transferInputStream = cryptoManager.createDecryptingStream(inputStream);
