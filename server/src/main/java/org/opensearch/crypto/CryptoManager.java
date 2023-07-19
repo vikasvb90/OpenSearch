@@ -45,7 +45,7 @@ public interface CryptoManager extends RefCounted {
     String name();
 
     /**
-     * To Initialise a crypto context used in encryption. This might be needed to set the context before beginning
+     * To Initialise a crypto context used in encryption. This is needed to set the context before beginning
      * encryption.
      *
      * @return crypto context instance

@@ -41,6 +41,7 @@ import org.opensearch.index.store.lockmanager.RemoteStoreCommitLevelLockManager;
 import org.opensearch.index.store.lockmanager.RemoteStoreLockManager;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadataHandler;
+import org.opensearch.index.translog.transfer.TransferContentType;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.common.unit.ByteSizeUnit;
 import org.opensearch.crypto.CryptoManager;
@@ -389,7 +390,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      * @param context         IOContext to be used to open IndexInput of file during remote upload
      * @param listener        Listener to handle upload callback events
      */
-    public void copyFrom(Directory from, String src, IOContext context, ActionListener<Void> listener) {
+    public void copyFrom(Directory from, String src, IOContext context, ActionListener<Void> listener, TransferContentType transferContentType) {
         if (remoteDataDirectory.getBlobContainer() instanceof VerifyingMultiStreamBlobContainer) {
             try {
                 String remoteFilename = getNewRemoteSegmentFilename(src);
@@ -399,7 +400,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
             }
         } else {
             try {
-                copyFrom(from, src, src, context);
+                copyFrom(from, src, src, context, getChecksumOfLocalFile(from, src), transferContentType);
                 listener.onResponse(null);
             } catch (Exception e) {
                 logger.warn(() -> new ParameterizedMessage("Exception while uploading file {} to the remote segment store", src), e);
@@ -534,7 +535,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
         return metadataFiles.get(0);
     }
 
-    public void copyFrom(Directory from, String src, String dest, IOContext context, String checksum) throws IOException {
+    public void copyFrom(Directory from, String src, String dest, IOContext context, String checksum, TransferContentType transferContentType) throws IOException {
         String remoteFilename;
         remoteFilename = getNewRemoteSegmentFilename(dest);
         remoteDataDirectory.copyFrom(from, src, remoteFilename, context);
@@ -580,7 +581,7 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
      */
     @Override
     public void copyFrom(Directory from, String src, String dest, IOContext context) throws IOException {
-        copyFrom(from, src, dest, context, getChecksumOfLocalFile(from, src));
+        copyFrom(from, src, dest, context, getChecksumOfLocalFile(from, src), TransferContentType.DATA);
     }
 
     /**
