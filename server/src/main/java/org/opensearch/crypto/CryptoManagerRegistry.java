@@ -119,7 +119,7 @@ public class CryptoManagerRegistry {
             cryptoFactories.put(cryptoPlugin.type(), cryptoPlugin);
         }
 
-        return cryptoFactories;
+        return Map.copyOf(cryptoFactories);
     }
 
     /**
