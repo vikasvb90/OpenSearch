@@ -8,6 +8,7 @@
 
 package org.opensearch.encryption.frame.core;
 
+import com.amazonaws.encryptionsdk.CommitmentPolicy;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.CryptoMaterialsManager;
 import com.amazonaws.encryptionsdk.ParsedCiphertext;
@@ -35,8 +36,10 @@ public class AwsCrypto {
         Utils.assertNonNull(encryptionContext, "encryptionContext");
 
         EncryptionMaterialsRequest.Builder requestBuilder = EncryptionMaterialsRequest.newBuilder()
-            .setContext(encryptionContext)
-            .setRequestedAlgorithm(cryptoAlgorithm);// To avoid skipping cache
+                .setContext(encryptionContext)
+                .setRequestedAlgorithm(cryptoAlgorithm)
+                .setPlaintextSize(0) // To avoid skipping cache
+                .setCommitmentPolicy(CommitmentPolicy.ForbidEncryptAllowDecrypt);
 
         return new EncryptionMetadata(frameSize, materialsManager.getMaterialsForEncrypt(requestBuilder.build()));
     }

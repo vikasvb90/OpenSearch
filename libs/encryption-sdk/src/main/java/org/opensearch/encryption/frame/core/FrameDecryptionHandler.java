@@ -95,6 +95,11 @@ class FrameDecryptionHandler implements CryptoHandler {
     @Override
     public ProcessingSummary processBytes(final byte[] in, final int off, final int len, final byte[] out, final int outOff)
         throws AwsCryptoException {
+
+        if (complete_) {
+            throw new AwsCryptoException("Ciphertext has already been processed.");
+        }
+
         final long totalBytesToParse = unparsedBytes_.length + (long) len;
         if (totalBytesToParse > Integer.MAX_VALUE) {
             throw new AwsCryptoException("Integer overflow of the total bytes to parse and decrypt occured.");
@@ -131,6 +136,11 @@ class FrameDecryptionHandler implements CryptoHandler {
                 int protectedContentLen = -1;
                 if (currentFrameHeaders_.isFinalFrame()) {
                     protectedContentLen = currentFrameHeaders_.getFrameContentLength();
+
+                    // The final frame should not be able to exceed the frameLength
+                    if (frameSize_ > 0 && protectedContentLen > frameSize_) {
+                        throw new BadCiphertextException("Final frame length exceeds frame length.");
+                    }
                 } else {
                     protectedContentLen = frameSize_;
                 }
@@ -191,6 +201,10 @@ class FrameDecryptionHandler implements CryptoHandler {
      */
     @Override
     public int doFinal(final byte[] out, final int outOff) {
+        if (!complete_) {
+            throw new BadCiphertextException("Unable to process entire ciphertext.");
+        }
+
         return 0;
     }
 

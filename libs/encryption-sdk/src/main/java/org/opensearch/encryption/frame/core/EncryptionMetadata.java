@@ -26,12 +26,12 @@ import com.amazonaws.encryptionsdk.MasterKey;
 import com.amazonaws.encryptionsdk.exception.AwsCryptoException;
 import com.amazonaws.encryptionsdk.internal.EncryptionContextSerializer;
 import com.amazonaws.encryptionsdk.internal.TrailingSignatureAlgorithm;
-import com.amazonaws.encryptionsdk.internal.VersionInfo;
 import com.amazonaws.encryptionsdk.model.CiphertextHeaders;
 import com.amazonaws.encryptionsdk.model.CiphertextType;
 import com.amazonaws.encryptionsdk.model.ContentType;
 import com.amazonaws.encryptionsdk.model.EncryptionMaterials;
 import com.amazonaws.encryptionsdk.model.KeyBlob;
+import com.amazonaws.encryptionsdk.CommitmentPolicy;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -95,7 +95,15 @@ public class EncryptionMetadata {
         }
 
         // set default values
-        version = VersionInfo.CURRENT_CIPHERTEXT_VERSION;
+        version = cryptoAlgo.getMessageFormatVersion();
+
+        // only allow to encrypt with version 1 crypto algorithms
+        if (version != 1) {
+            throw new AwsCryptoException("Configuration conflict. Cannot encrypt due to CommitmentPolicy " +
+                    CommitmentPolicy.ForbidEncryptAllowDecrypt + " requiring only non-committed messages. Algorithm ID was " +
+                    cryptoAlgo + ". See: https://docs.aws.amazon.com/encryption-sdk/latest/developer-guide/troubleshooting-migration.html");
+        }
+
         type = CIPHERTEXT_TYPE;
         nonceLen = cryptoAlgo.getNonceLen();
 
@@ -140,7 +148,6 @@ public class EncryptionMetadata {
 
         final byte[] encryptionContextBytes = EncryptionContextSerializer.serialize(encryptionContext_);
         final CiphertextHeaders ciphertextHeaders = new CiphertextHeaders(
-            version,
             type,
             cryptoAlgo,
             encryptionContextBytes,
