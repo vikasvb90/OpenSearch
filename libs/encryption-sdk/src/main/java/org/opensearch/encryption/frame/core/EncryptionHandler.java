@@ -1,12 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
- * The OpenSearch Contributors require contributions made to
- * this file be licensed under the Apache-2.0 license or a
- * compatible open source license.
- */
-
-/*
  * Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may not use this file except
@@ -31,13 +23,13 @@ import com.amazonaws.encryptionsdk.internal.ProcessingSummary;
 import com.amazonaws.encryptionsdk.model.CiphertextFooters;
 import com.amazonaws.encryptionsdk.model.CiphertextHeaders;
 import com.amazonaws.encryptionsdk.model.CiphertextType;
+import com.amazonaws.encryptionsdk.model.ContentType;
 import com.amazonaws.encryptionsdk.model.KeyBlob;
 import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.DERSequence;
 
-import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
@@ -52,8 +44,8 @@ import java.util.Map;
  * This class implements the CryptoHandler interface by providing methods for the encryption of
  * plaintext data.
  *
- * <p>This class creates the ciphertext headers and delegates the encryption of the plaintext to the
- * {@link FrameEncryptionHandler}.
+ * <p>
+ * This class creates the ciphertext headers and delegates the encryption of the plaintext to the
  */
 @SuppressWarnings({ "rawtypes", "unchecked" })
 public class EncryptionHandler implements MessageCryptoHandler {
@@ -62,10 +54,12 @@ public class EncryptionHandler implements MessageCryptoHandler {
     private final CryptoAlgorithm cryptoAlgo_;
     private final List<MasterKey> masterKeys_;
     private final List<KeyBlob> keyBlobs_;
-    private final SecretKey encryptionKey_;
     private final byte version_;
     private final CiphertextType type_;
     private final byte nonceLen_;
+    private final PrivateKey trailingSignaturePrivateKey_;
+    private final MessageDigest trailingDigest_;
+    private final Signature trailingSig_;
 
     private final CiphertextHeaders ciphertextHeaders_;
     private final byte[] ciphertextHeaderBytes_;
@@ -77,10 +71,6 @@ public class EncryptionHandler implements MessageCryptoHandler {
     private long plaintextBytes_ = 0;
     private long plaintextByteLimit_ = -1;
 
-    private final PrivateKey trailingSignaturePrivateKey;
-    private final MessageDigest trailingDigest;
-    private final Signature trailingSig;
-
     /**
      * Create an encryption handler using the provided master key and encryption context.
      * @param encryptionMetadata Context object created before encryption
@@ -89,50 +79,74 @@ public class EncryptionHandler implements MessageCryptoHandler {
      * @param frameStartNumber Number from which assignment has to start for new frames
      */
     public EncryptionHandler(EncryptionMetadata encryptionMetadata, boolean isFirstStream, int frameStartNumber) throws AwsCryptoException {
-        encryptionContext_ = encryptionMetadata.getEncryptionContext();
-        cryptoAlgo_ = encryptionMetadata.getCryptoAlgo();
-        masterKeys_ = encryptionMetadata.getMasterKeys();
-        keyBlobs_ = encryptionMetadata.getKeyBlobs();
-        encryptionKey_ = encryptionMetadata.getEncryptionKey();
+        this.encryptionContext_ = encryptionMetadata.getEncryptionContext();
+        this.cryptoAlgo_ = encryptionMetadata.getCryptoAlgo();
+        this.masterKeys_ = encryptionMetadata.getMasterKeys();
+        this.keyBlobs_ = encryptionMetadata.getKeyBlobs();
+        this.trailingSignaturePrivateKey_ = encryptionMetadata.getTrailingSignaturePrivateKey();
+
+        if (keyBlobs_.isEmpty()) {
+            throw new IllegalArgumentException("No encrypted data keys in materials result");
+        }
+
+        if (trailingSignaturePrivateKey_ != null) {
+            trailingDigest_ = encryptionMetadata.getTrailingDigest();
+            trailingSig_ = encryptionMetadata.getTrailingSig();
+        } else {
+            trailingDigest_ = null;
+            trailingSig_ = null;
+        }
+
         version_ = encryptionMetadata.getVersion();
         type_ = encryptionMetadata.getType();
         nonceLen_ = encryptionMetadata.getNonceLen();
         ciphertextHeaders_ = encryptionMetadata.getCiphertextHeaders();
         ciphertextHeaderBytes_ = encryptionMetadata.getCiphertextHeaderBytes();
         firstOperation_ = isFirstStream;
-        byte[] messageId = encryptionMetadata.getMessageId();
-        trailingSignaturePrivateKey = encryptionMetadata.getTrailingSignaturePrivateKey();
-        trailingDigest = encryptionMetadata.getTrailingDigest();
-        trailingSig = encryptionMetadata.getTrailingSig();
-        contentCryptoHandler_ = new FrameEncryptionHandler(
-            encryptionKey_,
-            nonceLen_,
-            cryptoAlgo_,
-            messageId,
-            encryptionMetadata.getFrameSize(),
-            frameStartNumber
-        );
+
+        byte[] messageId_ = encryptionMetadata.getMessageId();
+
+        if (encryptionMetadata.getContentType() == ContentType.FRAME) {
+            contentCryptoHandler_ = new FrameEncryptionHandler(
+                encryptionMetadata.getEncryptionKey(),
+                nonceLen_,
+                cryptoAlgo_,
+                messageId_,
+                encryptionMetadata.getFrameSize(),
+                frameStartNumber
+            );
+        } else {// should never get here because a valid content type is always
+            // set above based on the frame size.
+            throw new AwsCryptoException("Unknown content type.");
+        }
     }
 
     /**
      * Encrypt a block of bytes from {@code in} putting the plaintext result into {@code out}.
      *
-     * <p>It encrypts by performing the following operations:
-     *
+     * <p>
+     * It encrypts by performing the following operations:
      * <ol>
-     *   <li>if this is the first call to encrypt, write the ciphertext headers to the output being
-     *       returned.
-     *   <li>else, pass off the input data to underlying content cryptohandler.
+     * <li>if this is the first call to encrypt, write the ciphertext headers to the output being
+     * returned.</li>
+     * <li>else, pass off the input data to underlying content cryptohandler.</li>
      * </ol>
      *
-     * @param in the input byte array.
-     * @param off the offset into the in array where the data to be encrypted starts.
-     * @param len the number of bytes to be encrypted.
-     * @param out the output buffer the encrypted bytes go into.
-     * @param outOff the offset into the output byte array the encrypted data starts at.
+     * @param in
+     *            the input byte array.
+     * @param off
+     *            the offset into the in array where the data to be encrypted starts.
+     * @param len
+     *            the number of bytes to be encrypted.
+     * @param out
+     *            the output buffer the encrypted bytes go into.
+     * @param outOff
+     *            the offset into the output byte array the encrypted data starts at.
      * @return the number of bytes written to out and processed
-     * @throws AwsCryptoException if len or offset values are negative.
-     * @throws BadCiphertextException thrown by the underlying cipher handler.
+     * @throws AwsCryptoException
+     *             if len or offset values are negative.
+     * @throws BadCiphertextException
+     *             thrown by the underlying cipher handler.
      */
     @Override
     public ProcessingSummary processBytes(final byte[] in, final int off, final int len, final byte[] out, final int outOff)
@@ -147,7 +161,7 @@ public class EncryptionHandler implements MessageCryptoHandler {
 
         int actualOutLen = 0;
 
-        if (firstOperation_) {
+        if (firstOperation_ == true) {
             System.arraycopy(ciphertextHeaderBytes_, 0, out, outOff, ciphertextHeaderBytes_.length);
             actualOutLen += ciphertextHeaderBytes_.length;
 
@@ -164,10 +178,13 @@ public class EncryptionHandler implements MessageCryptoHandler {
     /**
      * Finish encryption of the plaintext bytes.
      *
-     * @param out space for any resulting output data.
-     * @param outOff offset into out to start copying the data at.
+     * @param out
+     *            space for any resulting output data.
+     * @param outOff
+     *            offset into out to start copying the data at.
      * @return number of bytes written into out.
-     * @throws BadCiphertextException thrown by the underlying cipher handler.
+     * @throws BadCiphertextException
+     *             thrown by the underlying cipher handler.
      */
     @Override
     public int doFinal(final byte[] out, final int outOff) throws BadCiphertextException {
@@ -196,14 +213,14 @@ public class EncryptionHandler implements MessageCryptoHandler {
     }
 
     private byte[] signContent() throws SignatureException {
-        if (trailingDigest != null) {
-            if (!trailingSig.getAlgorithm().contains("ECDSA")) {
+        if (trailingDigest_ != null) {
+            if (!trailingSig_.getAlgorithm().contains("ECDSA")) {
                 throw new UnsupportedOperationException("Signatures calculated in pieces is only supported for ECDSA.");
             }
-            final byte[] digest = trailingDigest.digest();
+            final byte[] digest = trailingDigest_.digest();
             return generateEcdsaFixedLengthSignature(digest);
         }
-        return trailingSig.sign();
+        return trailingSig_.sign();
     }
 
     private byte[] generateEcdsaFixedLengthSignature(final byte[] digest) throws SignatureException {
@@ -211,15 +228,15 @@ public class EncryptionHandler implements MessageCryptoHandler {
         // Unfortunately, we need deterministic lengths some signatures are non-deterministic in length.
         // So, retry until we get the right length :-(
         do {
-            trailingSig.update(digest);
-            signature = trailingSig.sign();
+            trailingSig_.update(digest);
+            signature = trailingSig_.sign();
             if (signature.length != cryptoAlgo_.getTrailingSignatureLength()) {
                 // Most of the time, a signature of the wrong length can be fixed
                 // be negating s in the signature relative to the group order.
                 ASN1Sequence seq = ASN1Sequence.getInstance(signature);
                 ASN1Integer r = (ASN1Integer) seq.getObjectAt(0);
                 ASN1Integer s = (ASN1Integer) seq.getObjectAt(1);
-                ECPrivateKey ecKey = (ECPrivateKey) trailingSignaturePrivateKey;
+                ECPrivateKey ecKey = (ECPrivateKey) trailingSignaturePrivateKey_;
                 s = new ASN1Integer(ecKey.getParams().getOrder().subtract(s.getPositiveValue()));
                 seq = new DERSequence(new ASN1Encodable[] { r, s });
                 try {
@@ -233,12 +250,13 @@ public class EncryptionHandler implements MessageCryptoHandler {
     }
 
     /**
-     * Return the size of the output buffer required for a {@code processBytes} plus a {@code doFinal}
-     * with an input of inLen bytes.
+     * Return the size of the output buffer required for a {@code processBytes} plus a
+     * {@code doFinal} with an input of inLen bytes.
      *
-     * @param inLen the length of the input.
-     * @return the space required to accommodate a call to processBytes and doFinal with len bytes of
-     *     input.
+     * @param inLen
+     *            the length of the input.
+     * @return the space required to accommodate a call to processBytes and doFinal with len bytes
+     *         of input.
      */
     @Override
     public int estimateOutputSize(final int inLen) {
@@ -322,13 +340,13 @@ public class EncryptionHandler implements MessageCryptoHandler {
     }
 
     private void updateTrailingSignature(byte[] input, int offset, int len) {
-        if (this.trailingDigest != null) {
-            this.trailingDigest.update(input, offset, len);
-        } else if (this.trailingSig != null) {
+        if (trailingDigest_ != null) {
+            trailingDigest_.update(input, offset, len);
+        } else if (trailingSig_ != null) {
             try {
-                this.trailingSig.update(input, offset, len);
-            } catch (SignatureException var5) {
-                throw new AwsCryptoException(var5);
+                trailingSig_.update(input, offset, len);
+            } catch (final SignatureException ex) {
+                throw new AwsCryptoException(ex);
             }
         }
 

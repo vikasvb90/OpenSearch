@@ -8,14 +8,12 @@
 
 package org.opensearch.encryption.frame.core;
 
-import com.amazonaws.encryptionsdk.CommitmentPolicy;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.CryptoMaterialsManager;
 import com.amazonaws.encryptionsdk.ParsedCiphertext;
 import com.amazonaws.encryptionsdk.exception.AwsCryptoException;
 import com.amazonaws.encryptionsdk.internal.LazyMessageCryptoHandler;
 import com.amazonaws.encryptionsdk.internal.MessageCryptoHandler;
-import com.amazonaws.encryptionsdk.internal.SignaturePolicy;
 import com.amazonaws.encryptionsdk.model.EncryptionMaterialsRequest;
 import org.opensearch.common.io.InputStreamContainer;
 
@@ -24,7 +22,6 @@ import java.util.Map;
 
 public class AwsCrypto {
     private final CryptoMaterialsManager materialsManager;
-    private static final CommitmentPolicy DEFAULT_COMMITMENT_POLICY = CommitmentPolicy.RequireEncryptRequireDecrypt;
     private final CryptoAlgorithm cryptoAlgorithm;
 
     public AwsCrypto(final CryptoMaterialsManager materialsManager, final CryptoAlgorithm cryptoAlgorithm) {
@@ -36,17 +33,12 @@ public class AwsCrypto {
 
     public EncryptionMetadata createCryptoContext(final Map<String, String> encryptionContext, int frameSize) {
         Utils.assertNonNull(encryptionContext, "encryptionContext");
+
         EncryptionMaterialsRequest.Builder requestBuilder = EncryptionMaterialsRequest.newBuilder()
             .setContext(encryptionContext)
-            .setRequestedAlgorithm(cryptoAlgorithm)
-            .setPlaintextSize(0) // To avoid skipping cache
-            .setCommitmentPolicy(DEFAULT_COMMITMENT_POLICY);
+            .setRequestedAlgorithm(cryptoAlgorithm);// To avoid skipping cache
 
-        return new EncryptionMetadata(
-            frameSize,
-            materialsManager.getMaterialsForEncrypt(requestBuilder.build()),
-            DEFAULT_COMMITMENT_POLICY
-        );
+        return new EncryptionMetadata(frameSize, materialsManager.getMaterialsForEncrypt(requestBuilder.build()));
     }
 
     public InputStreamContainer createEncryptingStream(
@@ -123,12 +115,7 @@ public class AwsCrypto {
 
     public CryptoInputStream<?> createDecryptingStream(final InputStream inputStream) {
 
-        final MessageCryptoHandler cryptoHandler = DecryptionHandler.create(
-            materialsManager,
-            DEFAULT_COMMITMENT_POLICY,
-            SignaturePolicy.AllowEncryptAllowDecrypt,
-            1
-        );
+        final MessageCryptoHandler cryptoHandler = DecryptionHandler.create(materialsManager);
         return new CryptoInputStream<>(inputStream, cryptoHandler, true);
     }
 
@@ -140,14 +127,7 @@ public class AwsCrypto {
         boolean isLastPart
     ) {
 
-        final MessageCryptoHandler cryptoHandler = DecryptionHandler.create(
-            materialsManager,
-            parsedCiphertext,
-            DEFAULT_COMMITMENT_POLICY,
-            SignaturePolicy.AllowEncryptAllowDecrypt,
-            1,
-            frameStartNum
-        );
+        final MessageCryptoHandler cryptoHandler = DecryptionHandler.create(materialsManager, parsedCiphertext, frameStartNum);
         CryptoInputStream<?> cryptoInputStream = new CryptoInputStream<>(inputStream, cryptoHandler, isLastPart);
         cryptoInputStream.setMaxInputLength(size);
         return cryptoInputStream;

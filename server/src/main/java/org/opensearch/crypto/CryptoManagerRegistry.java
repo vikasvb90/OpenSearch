@@ -49,7 +49,7 @@ public class CryptoManagerRegistry {
      */
     public static final Setting<String> CRYPTO_ALGORITHM = new Setting<>(
         "crypto.algorithm",
-        "ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY",
+        "ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256",
         Function.identity(),
         Setting.Property.NodeScope
     );

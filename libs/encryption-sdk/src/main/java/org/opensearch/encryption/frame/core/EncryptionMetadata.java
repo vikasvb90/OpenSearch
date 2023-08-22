@@ -21,13 +21,12 @@
 
 package org.opensearch.encryption.frame.core;
 
-import com.amazonaws.encryptionsdk.CommitmentPolicy;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.MasterKey;
 import com.amazonaws.encryptionsdk.exception.AwsCryptoException;
-import com.amazonaws.encryptionsdk.internal.CommittedKey;
 import com.amazonaws.encryptionsdk.internal.EncryptionContextSerializer;
 import com.amazonaws.encryptionsdk.internal.TrailingSignatureAlgorithm;
+import com.amazonaws.encryptionsdk.internal.VersionInfo;
 import com.amazonaws.encryptionsdk.model.CiphertextHeaders;
 import com.amazonaws.encryptionsdk.model.CiphertextType;
 import com.amazonaws.encryptionsdk.model.ContentType;
@@ -64,29 +63,12 @@ public class EncryptionMetadata {
     private final PrivateKey trailingSignaturePrivateKey;
     private final MessageDigest trailingDigest;
     private final Signature trailingSig;
+    private final ContentType contentType;
 
-    public EncryptionMetadata(int frameSize, EncryptionMaterials result, CommitmentPolicy commitmentPolicy) throws AwsCryptoException {
+    public EncryptionMetadata(int frameSize, EncryptionMaterials result) throws AwsCryptoException {
         Utils.assertNonNull(result, "result");
-        Utils.assertNonNull(commitmentPolicy, "commitmentPolicy");
 
         this.encryptionContext_ = result.getEncryptionContext();
-        if (!commitmentPolicy.algorithmAllowedForEncrypt(result.getAlgorithm())) {
-            if (commitmentPolicy == CommitmentPolicy.ForbidEncryptAllowDecrypt) {
-                throw new AwsCryptoException(
-                    "Configuration conflict. Cannot encrypt due to CommitmentPolicy "
-                        + commitmentPolicy
-                        + " requiring only non-committed messages. Algorithm ID was "
-                        + result.getAlgorithm()
-                );
-            } else {
-                throw new AwsCryptoException(
-                    "Configuration conflict. Cannot encrypt due to CommitmentPolicy "
-                        + commitmentPolicy
-                        + " requiring only committed messages. Algorithm ID was "
-                        + result.getAlgorithm()
-                );
-            }
-        }
 
         this.cryptoAlgo = result.getAlgorithm();
         this.masterKeys = result.getMasterKeys();
@@ -103,7 +85,7 @@ public class EncryptionMetadata {
                 trailingDigest = MessageDigest.getInstance(algorithm.getMessageDigestAlgorithm());
                 trailingSig = Signature.getInstance(algorithm.getRawSignatureAlgorithm());
 
-                trailingSig.initSign(trailingSignaturePrivateKey, Utils.getSecureRandom());
+                trailingSig.initSign(trailingSignaturePrivateKey, com.amazonaws.encryptionsdk.internal.Utils.getSecureRandom());
             } catch (final GeneralSecurityException ex) {
                 throw new AwsCryptoException(ex);
             }
@@ -113,11 +95,10 @@ public class EncryptionMetadata {
         }
 
         // set default values
-        version = cryptoAlgo.getMessageFormatVersion();
+        version = VersionInfo.CURRENT_CIPHERTEXT_VERSION;
         type = CIPHERTEXT_TYPE;
         nonceLen = cryptoAlgo.getNonceLen();
 
-        ContentType contentType;
         if (frameSize > 0) {
             contentType = ContentType.FRAME;
         } else if (frameSize == 0) {
@@ -126,11 +107,40 @@ public class EncryptionMetadata {
             throw Utils.cannotBeNegative("Frame size");
         }
 
-        // Construct the headers
-        // Included here rather than as a sub-routine so we can set final variables.
-        // This way we can avoid calculating the keys more times than we need.
+        final CiphertextHeaders unsignedHeaders = createCiphertextHeaders(contentType, frameSize);
+        try {
+            encryptionKey = cryptoAlgo.getEncryptionKeyFromDataKey(result.getCleartextDataKey(), unsignedHeaders);
+        } catch (final InvalidKeyException ex) {
+            throw new AwsCryptoException(ex);
+        }
+        ciphertextHeaders = signCiphertextHeaders(unsignedHeaders);
+        ciphertextHeaderBytes = ciphertextHeaders.toByteArray();
+        messageId = ciphertextHeaders.getMessageId();
+        this.frameSize = frameSize;
+    }
+
+    public ContentType getContentType() {
+        return contentType;
+    }
+
+    /**
+     * Create ciphertext headers using the instance variables, and the provided content type and
+     * frame size.
+     *
+     * @param contentType
+     *            the content type to set in the ciphertext headers.
+     * @param frameSize
+     *            the frame size to set in the ciphertext headers.
+     * @return the bytes containing the ciphertext headers.
+     */
+    private CiphertextHeaders createCiphertextHeaders(final ContentType contentType, final int frameSize) {
+        // create the ciphertext headers
+        final byte[] headerNonce = new byte[nonceLen];
+        // We use a deterministic IV of zero for the header authentication.
+
         final byte[] encryptionContextBytes = EncryptionContextSerializer.serialize(encryptionContext_);
-        final CiphertextHeaders unsignedHeaders = new CiphertextHeaders(
+        final CiphertextHeaders ciphertextHeaders = new CiphertextHeaders(
+            version,
             type,
             cryptoAlgo,
             encryptionContextBytes,
@@ -138,31 +148,9 @@ public class EncryptionMetadata {
             contentType,
             frameSize
         );
-        // We use a deterministic IV of zero for the header authentication.
-        unsignedHeaders.setHeaderNonce(new byte[nonceLen]);
+        ciphertextHeaders.setHeaderNonce(headerNonce);
 
-        // If using a committing crypto algorithm, we also need to calculate the commitment value along
-        // with the key derivation
-        if (cryptoAlgo.isCommitting()) {
-            final CommittedKey committedKey = CommittedKey.generate(
-                cryptoAlgo,
-                result.getCleartextDataKey(),
-                unsignedHeaders.getMessageId()
-            );
-            unsignedHeaders.setSuiteData(committedKey.getCommitment());
-            encryptionKey = committedKey.getKey();
-        } else {
-            try {
-                encryptionKey = cryptoAlgo.getEncryptionKeyFromDataKey(result.getCleartextDataKey(), unsignedHeaders);
-            } catch (final InvalidKeyException ex) {
-                throw new AwsCryptoException(ex);
-            }
-        }
-
-        ciphertextHeaders = signCiphertextHeaders(unsignedHeaders);
-        ciphertextHeaderBytes = ciphertextHeaders.toByteArray();
-        messageId = ciphertextHeaders.getMessageId();
-        this.frameSize = frameSize;
+        return ciphertextHeaders;
     }
 
     private CiphertextHeaders signCiphertextHeaders(final CiphertextHeaders unsignedHeaders) {
@@ -178,8 +166,10 @@ public class EncryptionMetadata {
      * Compute the MAC tag of the header bytes using the provided key, nonce, AAD, and crypto
      * algorithm identifier.
      *
-     * @param nonce the nonce to use in computing the MAC tag.
-     * @param aad the AAD to use in computing the MAC tag.
+     * @param nonce
+     *            the nonce to use in computing the MAC tag.
+     * @param aad
+     *            the AAD to use in computing the MAC tag.
      * @return the bytes containing the computed MAC tag.
      */
     private byte[] computeHeaderTag(final byte[] nonce, final byte[] aad) {

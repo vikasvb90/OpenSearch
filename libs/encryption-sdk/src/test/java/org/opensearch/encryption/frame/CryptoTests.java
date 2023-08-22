@@ -7,14 +7,12 @@
  */
 package org.opensearch.encryption.frame;
 
-import com.amazonaws.encryptionsdk.CommitmentPolicy;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.CryptoMaterialsManager;
 import com.amazonaws.encryptionsdk.ParsedCiphertext;
 import com.amazonaws.encryptionsdk.caching.CachingCryptoMaterialsManager;
 import com.amazonaws.encryptionsdk.caching.LocalCryptoMaterialsCache;
 import com.amazonaws.encryptionsdk.exception.BadCiphertextException;
-import com.amazonaws.encryptionsdk.internal.SignaturePolicy;
 import org.junit.Assert;
 import org.junit.Before;
 import org.mockito.Mockito;
@@ -66,12 +64,12 @@ public class CryptoTests extends OpenSearchTestCase {
     @Before
     public void setupResources() {
         frameCryptoProvider = new CustomFrameCryptoProviderTest(
-            createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
+            createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256),
             new HashMap<>(),
             100
         );
         frameCryptoProviderTrailingAlgo = new CustomFrameCryptoProviderTest(
-            createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384),
+            createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384),
             new HashMap<>(),
             100
         );
@@ -88,18 +86,18 @@ public class CryptoTests extends OpenSearchTestCase {
         return new AwsCrypto(cachingMaterialsManager, cryptoAlgorithm);
     }
 
-    static class EncryptedStore {
+    static class EncryptedStoreTest {
         byte[] encryptedContent;
         long rawLength;
         int encryptedLength;
         File file;
     }
 
-    private EncryptedStore verifyAndGetEncryptedContent() throws IOException, URISyntaxException {
+    private EncryptedStoreTest verifyAndGetEncryptedContent() throws IOException, URISyntaxException {
         return verifyAndGetEncryptedContent(false, frameCryptoProvider);
     }
 
-    private EncryptedStore verifyAndGetEncryptedContent(boolean truncateRemainderPart, FrameCryptoProvider frameCryptoProvider)
+    private EncryptedStoreTest verifyAndGetEncryptedContent(boolean truncateRemainderPart, FrameCryptoProvider frameCryptoProvider)
         throws IOException, URISyntaxException {
         String path = CryptoTests.class.getResource("/raw_content_for_crypto_test").toURI().getPath();
         File file = new File(path);
@@ -128,12 +126,12 @@ public class CryptoTests extends OpenSearchTestCase {
         long calculatedEncryptedLength = frameCryptoProvider.estimateEncryptedLengthOfEntireContent(cryptoContext, length);
         assertEquals(encLength, calculatedEncryptedLength);
 
-        EncryptedStore encryptedStore = new EncryptedStore();
-        encryptedStore.encryptedLength = encLength;
-        encryptedStore.encryptedContent = encryptedContent;
-        encryptedStore.rawLength = length;
-        encryptedStore.file = file;
-        return encryptedStore;
+        EncryptedStoreTest encryptedStoreTest = new EncryptedStoreTest();
+        encryptedStoreTest.encryptedLength = encLength;
+        encryptedStoreTest.encryptedContent = encryptedContent;
+        encryptedStoreTest.rawLength = length;
+        encryptedStoreTest.file = file;
+        return encryptedStoreTest;
     }
 
     public void testEncryptedDecryptedLengthEstimations() {
@@ -142,7 +140,7 @@ public class CryptoTests extends OpenSearchTestCase {
             // Raw content size cannot be max value as encrypted size will overflow for the same.
             long n = randomLongBetween(0, Integer.MAX_VALUE / 2);
             FrameCryptoProvider frameCryptoProvider = new CustomFrameCryptoProviderTest(
-                createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
+                createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384),
                 new HashMap<>(),
                 randomIntBetween(10, 10240)
             );
@@ -156,66 +154,67 @@ public class CryptoTests extends OpenSearchTestCase {
 
     public void testSingleStreamEncryption() throws IOException, URISyntaxException {
 
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(
-            encryptedStore.encryptedContent,
+            encryptedStoreTest.encryptedContent,
             0,
-            encryptedStore.encryptedLength
+            encryptedStoreTest.encryptedLength
         );
-        long decryptedRawBytes = decryptAndVerify(byteArrayInputStream, encryptedStore.encryptedLength, encryptedStore.file);
-        assertEquals(encryptedStore.rawLength, decryptedRawBytes);
+        long decryptedRawBytes = decryptAndVerify(byteArrayInputStream, encryptedStoreTest.encryptedLength, encryptedStoreTest.file);
+        assertEquals(encryptedStoreTest.rawLength, decryptedRawBytes);
     }
 
     public void testSingleStreamEncryptionTrailingSignatureAlgo() throws IOException, URISyntaxException {
 
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent(false, frameCryptoProviderTrailingAlgo);
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent(false, frameCryptoProviderTrailingAlgo);
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(
-            encryptedStore.encryptedContent,
+            encryptedStoreTest.encryptedContent,
             0,
-            encryptedStore.encryptedLength
+            encryptedStoreTest.encryptedLength
         );
-        long decryptedRawBytes = decryptAndVerify(byteArrayInputStream, encryptedStore.encryptedLength, encryptedStore.file);
-        assertEquals(encryptedStore.rawLength, decryptedRawBytes);
+        long decryptedRawBytes = decryptAndVerify(byteArrayInputStream, encryptedStoreTest.encryptedLength, encryptedStoreTest.file);
+        assertEquals(encryptedStoreTest.rawLength, decryptedRawBytes);
     }
 
     public void testDecryptionOfCorruptedContent() throws IOException, URISyntaxException {
 
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
-        encryptedStore.encryptedContent = "Corrupted content".getBytes(StandardCharsets.UTF_8);
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
+        encryptedStoreTest.encryptedContent = "Corrupted content".getBytes(StandardCharsets.UTF_8);
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(
-            encryptedStore.encryptedContent,
+            encryptedStoreTest.encryptedContent,
             0,
-            encryptedStore.encryptedLength
+            encryptedStoreTest.encryptedLength
         );
 
         Assert.assertThrows(
             BadCiphertextException.class,
-            () -> decryptAndVerify(byteArrayInputStream, encryptedStore.encryptedLength, encryptedStore.file)
+            () -> decryptAndVerify(byteArrayInputStream, encryptedStoreTest.encryptedLength, encryptedStoreTest.file)
         );
 
     }
 
     private long decryptAndVerify(InputStream encryptedStream, long encSize, File file) throws IOException {
-        FileInputStream inputStream = new FileInputStream(file);
-        long totalRawBytes = 0;
-        try (FileChannel channel = inputStream.getChannel()) {
-            channel.position(0);
+        try (FileInputStream inputStream = new FileInputStream(file)) {
+            long totalRawBytes = 0;
+            try (FileChannel channel = inputStream.getChannel()) {
+                channel.position(0);
 
-            InputStream decryptingStream = frameCryptoProvider.createDecryptingStream(encryptedStream);
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] decryptedBuffer = new byte[1024];
-                byte[] actualBuffer = new byte[1024];
-                int readActualBytes;
-                int readBytes;
-                while ((readBytes = decryptingStream.read(decryptedBuffer, 0, decryptedBuffer.length)) != -1) {
-                    readActualBytes = fis.read(actualBuffer, 0, actualBuffer.length);
-                    assertEquals(readActualBytes, readBytes);
-                    assertArrayEquals(actualBuffer, decryptedBuffer);
-                    totalRawBytes += readActualBytes;
+                InputStream decryptingStream = frameCryptoProvider.createDecryptingStream(encryptedStream);
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    byte[] decryptedBuffer = new byte[1024];
+                    byte[] actualBuffer = new byte[1024];
+                    int readActualBytes;
+                    int readBytes;
+                    while ((readBytes = decryptingStream.read(decryptedBuffer, 0, decryptedBuffer.length)) != -1) {
+                        readActualBytes = fis.read(actualBuffer, 0, actualBuffer.length);
+                        assertEquals(readActualBytes, readBytes);
+                        assertArrayEquals(actualBuffer, decryptedBuffer);
+                        totalRawBytes += readActualBytes;
+                    }
                 }
             }
+            return totalRawBytes;
         }
-        return totalRawBytes;
     }
 
     public void testMultiPartStreamsEncryption() throws IOException, URISyntaxException {
@@ -302,76 +301,71 @@ public class CryptoTests extends OpenSearchTestCase {
     }
 
     public void testBlockBasedDecryptionForEntireFile() throws Exception {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
         assertTrue(
             "This test is meant for file size not exactly divisible by frame size",
-            (encryptedStore.rawLength & frameCryptoProvider.getFrameSize()) != 0
+            (encryptedStoreTest.rawLength & frameCryptoProvider.getFrameSize()) != 0
         );
-        validateBlockDownload(encryptedStore, 0, (int) encryptedStore.rawLength - 1);
+        validateBlockDownload(encryptedStoreTest, 0, (int) encryptedStoreTest.rawLength - 1);
     }
 
     public void testBlockBasedDecryptionForEntireFileWithLinedUpFrameAlongFileBoundary() throws Exception {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent(true, frameCryptoProvider);
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent(true, frameCryptoProvider);
         assertEquals(
             "This test is meant for file size exactly divisible by frame size",
             0,
-            (encryptedStore.rawLength % frameCryptoProvider.getFrameSize())
+            (encryptedStoreTest.rawLength % frameCryptoProvider.getFrameSize())
         );
-        validateBlockDownload(encryptedStore, 0, (int) encryptedStore.rawLength - 1);
+        validateBlockDownload(encryptedStoreTest, 0, (int) encryptedStoreTest.rawLength - 1);
     }
 
     public void testCorruptedTrailingSignature() throws IOException, URISyntaxException {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent(false, frameCryptoProviderTrailingAlgo);
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent(false, frameCryptoProviderTrailingAlgo);
         byte[] trailingData = "corrupted".getBytes(StandardCharsets.UTF_8);
         byte[] corruptedTrailingContent = Arrays.copyOf(
-            encryptedStore.encryptedContent,
-            encryptedStore.encryptedContent.length + trailingData.length
+            encryptedStoreTest.encryptedContent,
+            encryptedStoreTest.encryptedContent.length + trailingData.length
         );
-        System.arraycopy(trailingData, 0, corruptedTrailingContent, encryptedStore.encryptedContent.length, trailingData.length);
-        encryptedStore.encryptedContent = corruptedTrailingContent;
-        encryptedStore.encryptedLength = corruptedTrailingContent.length;
+        System.arraycopy(trailingData, 0, corruptedTrailingContent, encryptedStoreTest.encryptedContent.length, trailingData.length);
+        encryptedStoreTest.encryptedContent = corruptedTrailingContent;
+        encryptedStoreTest.encryptedLength = corruptedTrailingContent.length;
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(
-            encryptedStore.encryptedContent,
+            encryptedStoreTest.encryptedContent,
             0,
-            encryptedStore.encryptedLength
+            encryptedStoreTest.encryptedLength
         );
         BadCiphertextException ex = Assert.assertThrows(
             BadCiphertextException.class,
-            () -> decryptAndVerify(byteArrayInputStream, encryptedStore.encryptedLength, encryptedStore.file)
+            () -> decryptAndVerify(byteArrayInputStream, encryptedStoreTest.encryptedLength, encryptedStoreTest.file)
         );
         Assert.assertEquals("Bad trailing signature", ex.getMessage());
     }
 
     public void testNoTrailingSignatureForTrailingAlgo() throws IOException, URISyntaxException {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent(false, frameCryptoProviderTrailingAlgo);
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent(false, frameCryptoProviderTrailingAlgo);
         Object cryptoContext = frameCryptoProviderTrailingAlgo.initEncryptionMetadata();
         int trailingLength = frameCryptoProvider.getTrailingSignatureLength(cryptoContext);
         byte[] removedTrailingContent = Arrays.copyOf(
-            encryptedStore.encryptedContent,
-            encryptedStore.encryptedContent.length - trailingLength
+            encryptedStoreTest.encryptedContent,
+            encryptedStoreTest.encryptedContent.length - trailingLength
         );
-        encryptedStore.encryptedContent = removedTrailingContent;
-        encryptedStore.encryptedLength = removedTrailingContent.length;
+        encryptedStoreTest.encryptedContent = removedTrailingContent;
+        encryptedStoreTest.encryptedLength = removedTrailingContent.length;
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(
-            encryptedStore.encryptedContent,
+            encryptedStoreTest.encryptedContent,
             0,
-            encryptedStore.encryptedLength
+            encryptedStoreTest.encryptedLength
         );
         BadCiphertextException ex = Assert.assertThrows(
             BadCiphertextException.class,
-            () -> decryptAndVerify(byteArrayInputStream, encryptedStore.encryptedLength, encryptedStore.file)
+            () -> decryptAndVerify(byteArrayInputStream, encryptedStoreTest.encryptedLength, encryptedStoreTest.file)
         );
         Assert.assertEquals("Bad trailing signature", ex.getMessage());
     }
 
     public void testOutputSizeEstimateWhenHandlerIsNull() {
         CryptoMaterialsManager cryptoMaterialsManager = Mockito.mock(CryptoMaterialsManager.class);
-        DecryptionHandler<?> decryptionHandler = DecryptionHandler.create(
-            cryptoMaterialsManager,
-            CommitmentPolicy.RequireEncryptRequireDecrypt,
-            SignaturePolicy.AllowEncryptAllowDecrypt,
-            1
-        );
+        DecryptionHandler<?> decryptionHandler = DecryptionHandler.create(cryptoMaterialsManager);
         int inputLen = 50;
         int len = decryptionHandler.estimateOutputSize(inputLen);
         assertEquals(inputLen, len);
@@ -387,49 +381,49 @@ public class CryptoTests extends OpenSearchTestCase {
     }
 
     public void testBlockBasedDecryptionForMiddleBlock() throws Exception {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
-        int maxBlockNum = (int) encryptedStore.rawLength / frameCryptoProvider.getFrameSize();
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
+        int maxBlockNum = (int) encryptedStoreTest.rawLength / frameCryptoProvider.getFrameSize();
         assert maxBlockNum > 5;
         validateBlockDownload(
-            encryptedStore,
+            encryptedStoreTest,
             randomIntBetween(5, maxBlockNum / 2) * frameCryptoProvider.getFrameSize(),
             randomIntBetween(maxBlockNum / 2 + 1, maxBlockNum) * frameCryptoProvider.getFrameSize() - 1
         );
     }
 
     public void testRandomRangeDecryption() throws Exception {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
         // Testing for 100 iterations
         for (int testIteration = 0; testIteration < 100; testIteration++) {
-            int startPos = randomIntBetween(0, (int) encryptedStore.rawLength - 1);
-            int endPos = randomIntBetween(startPos, (int) encryptedStore.rawLength - 1);
-            validateBlockDownload(encryptedStore, startPos, endPos);
+            int startPos = randomIntBetween(0, (int) encryptedStoreTest.rawLength - 1);
+            int endPos = randomIntBetween(startPos, (int) encryptedStoreTest.rawLength - 1);
+            validateBlockDownload(encryptedStoreTest, startPos, endPos);
         }
     }
 
     public void testDecryptionWithSameStartEndPos() throws Exception {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
-        int pos = randomIntBetween(0, (int) encryptedStore.rawLength - 1);
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
+        int pos = randomIntBetween(0, (int) encryptedStoreTest.rawLength - 1);
         for (int testIteration = 0; testIteration < frameCryptoProvider.getFrameSize(); testIteration++) {
-            validateBlockDownload(encryptedStore, pos, pos);
+            validateBlockDownload(encryptedStoreTest, pos, pos);
         }
     }
 
     public void testBlockBasedDecryptionForLastBlock() throws Exception {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
-        int maxBlockNum = (int) encryptedStore.rawLength / frameCryptoProvider.getFrameSize();
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
+        int maxBlockNum = (int) encryptedStoreTest.rawLength / frameCryptoProvider.getFrameSize();
         assert maxBlockNum > 5;
         validateBlockDownload(
-            encryptedStore,
+            encryptedStoreTest,
             randomIntBetween(1, maxBlockNum - 1) * frameCryptoProvider.getFrameSize(),
-            (int) encryptedStore.rawLength - 1
+            (int) encryptedStoreTest.rawLength - 1
         );
     }
 
-    private void validateBlockDownload(EncryptedStore encryptedStore, int startPos, int endPos) throws Exception {
+    private void validateBlockDownload(EncryptedStoreTest encryptedStoreTest, int startPos, int endPos) throws Exception {
 
         EncryptedHeaderContentSupplier encryptedHeaderContentSupplier = createEncryptedHeaderContentSupplier(
-            encryptedStore.encryptedContent
+            encryptedStoreTest.encryptedContent
         );
         Object cryptoContext = frameCryptoProvider.loadEncryptionMetadata(encryptedHeaderContentSupplier);
         DecryptedRangedStreamProvider decryptedStreamProvider = frameCryptoProvider.createDecryptingStreamOfRange(
@@ -441,19 +435,19 @@ public class CryptoTests extends OpenSearchTestCase {
         long[] transformedRange = decryptedStreamProvider.getAdjustedRange();
         int encryptedBlockSize = (int) (transformedRange[1] - transformedRange[0] + 1);
         byte[] encryptedBlockBytes = new byte[encryptedBlockSize];
-        System.arraycopy(encryptedStore.encryptedContent, (int) transformedRange[0], encryptedBlockBytes, 0, encryptedBlockSize);
+        System.arraycopy(encryptedStoreTest.encryptedContent, (int) transformedRange[0], encryptedBlockBytes, 0, encryptedBlockSize);
         ByteArrayInputStream encryptedStream = new ByteArrayInputStream(encryptedBlockBytes, 0, encryptedBlockSize);
         InputStream decryptingStream = decryptedStreamProvider.getDecryptedStreamProvider().apply(encryptedStream);
 
-        decryptAndVerifyBlock(decryptingStream, encryptedStore.file, startPos, endPos);
+        decryptAndVerifyBlock(decryptingStream, encryptedStoreTest.file, startPos, endPos);
     }
 
     public void testBlockBasedDecryptionForFirstBlock() throws Exception {
-        EncryptedStore encryptedStore = verifyAndGetEncryptedContent();
+        EncryptedStoreTest encryptedStoreTest = verifyAndGetEncryptedContent();
         // All block requests should properly line up with frames otherwise decryption will fail due to partial frames.
-        int blockEnd = randomIntBetween(5, (int) encryptedStore.rawLength / frameCryptoProvider.getFrameSize()) * frameCryptoProvider
+        int blockEnd = randomIntBetween(5, (int) encryptedStoreTest.rawLength / frameCryptoProvider.getFrameSize()) * frameCryptoProvider
             .getFrameSize() - 1;
-        validateBlockDownload(encryptedStore, 0, blockEnd);
+        validateBlockDownload(encryptedStoreTest, 0, blockEnd);
     }
 
     private long decryptAndVerifyBlock(InputStream decryptedStream, File file, int rawContentStartPos, int rawContentEndPos)

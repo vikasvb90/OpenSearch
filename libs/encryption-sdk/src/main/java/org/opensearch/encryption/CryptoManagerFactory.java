@@ -40,11 +40,14 @@ public class CryptoManagerFactory {
     }
 
     private String validateAndGetAlgorithmId(String algorithm) {
+        // Supporting only 256 bit algorithm
         switch (algorithm) {
-            case "ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY":
-                return CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY.getDataKeyAlgo();
-            case "ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384":
-                return CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384.getDataKeyAlgo();
+            case "ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256":
+                return CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256.getDataKeyAlgo();
+            case "ALG_AES_256_GCM_IV12_TAG16_NO_KDF":
+                return CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_NO_KDF.getDataKeyAlgo();
+            case "ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384":
+                return CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384.getDataKeyAlgo();
             default:
                 throw new IllegalArgumentException("Unsupported algorithm: " + algorithm);
         }
@@ -71,15 +74,21 @@ public class CryptoManagerFactory {
         CachingCryptoMaterialsManager materialsManager,
         MasterKeyProvider masterKeyProvider
     ) {
+        // Supporting only 256 bit algorithm
         switch (algorithm) {
-            case "ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY":
+            case "ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256":
                 return new FrameCryptoProvider(
-                    new AwsCrypto(materialsManager, CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
+                    new AwsCrypto(materialsManager, CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256),
                     masterKeyProvider.getEncryptionContext()
                 );
-            case "ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384":
+            case "ALG_AES_256_GCM_IV12_TAG16_NO_KDF":
                 return new FrameCryptoProvider(
-                    new AwsCrypto(materialsManager, CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384),
+                    new AwsCrypto(materialsManager, CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_NO_KDF),
+                    masterKeyProvider.getEncryptionContext()
+                );
+            case "ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384":
+                return new FrameCryptoProvider(
+                    new AwsCrypto(materialsManager, CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384),
                     masterKeyProvider.getEncryptionContext()
                 );
             default:

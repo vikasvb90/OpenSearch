@@ -1,12 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
- * The OpenSearch Contributors require contributions made to
- * this file be licensed under the Apache-2.0 license or a
- * compatible open source license.
- */
-
-/*
  * Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may not use this file except
@@ -24,6 +16,7 @@ package org.opensearch.encryption.frame.core;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.exception.AwsCryptoException;
 import com.amazonaws.encryptionsdk.exception.BadCiphertextException;
+import com.amazonaws.encryptionsdk.internal.Constants;
 import com.amazonaws.encryptionsdk.internal.CryptoHandler;
 import com.amazonaws.encryptionsdk.internal.ProcessingSummary;
 import com.amazonaws.encryptionsdk.model.CipherFrameHeaders;
@@ -33,12 +26,12 @@ import javax.crypto.SecretKey;
 import java.util.Arrays;
 
 /**
- * This class implementation has been referenced from AWS encryption SDK.
+ * The frame decryption handler is a subclass of the decryption handler and
+ * thereby provides an implementation of the Cryptography handler.
  *
- * The frame decryption handler is a subclass of the decryption handler and thereby provides an
- * implementation of the Cryptography handler.
- *
- * <p>It implements methods for decrypting content that was encrypted and stored in frames.
+ * <p>
+ * It implements methods for decrypting content that was encrypted and stored in
+ * frames.
  */
 class FrameDecryptionHandler implements CryptoHandler {
     private final SecretKey decryptionKey_;
@@ -80,33 +73,28 @@ class FrameDecryptionHandler implements CryptoHandler {
      * Decrypt the ciphertext bytes containing content encrypted using frames and put the plaintext
      * bytes into out.
      *
-     * <p>It decrypts by performing the following operations:
-     *
+     * <p>
+     * It decrypts by performing the following operations:
      * <ol>
-     *   <li>parse the ciphertext headers
-     *   <li>parse the ciphertext until encrypted content in a frame is available
-     *   <li>decrypt the encrypted content
-     *   <li>return decrypted bytes as output
+     * <li>parse the ciphertext headers</li>
+     * <li>parse the ciphertext until encrypted content in a frame is available</li>
+     * <li>decrypt the encrypted content</li>
+     * <li>return decrypted bytes as output</li>
      * </ol>
      *
-     * @param in the input byte array.
-     * @param off the offset into the in array where the data to be decrypted starts.
-     * @param len the number of bytes to be decrypted.
-     * @param out the output buffer the decrypted plaintext bytes go into.
-     * @param outOff the offset into the output byte array the decrypted data starts at.
+     * @param in
+     *            the input byte array.
+     * @param out
+     *            the output buffer the decrypted plaintext bytes go into.
+     * @param outOff
+     *            the offset into the output byte array the decrypted data starts at.
      * @return the number of bytes written to out and processed
-     * @throws BadCiphertextException if frame number is invalid/out-of-order or if the bytes do not
-     *     decrypt correctly.
-     * @throws AwsCryptoException if the content type found in the headers is not of frame type.
+     * @throws AwsCryptoException
+     *             if the content type found in the headers is not of frame type.
      */
     @Override
     public ProcessingSummary processBytes(final byte[] in, final int off, final int len, final byte[] out, final int outOff)
-        throws BadCiphertextException, AwsCryptoException {
-
-        if (complete_) {
-            throw new AwsCryptoException("Ciphertext has already been processed.");
-        }
-
+        throws AwsCryptoException {
         final long totalBytesToParse = unparsedBytes_.length + (long) len;
         if (totalBytesToParse > Integer.MAX_VALUE) {
             throw new AwsCryptoException("Integer overflow of the total bytes to parse and decrypt occured.");
@@ -143,11 +131,6 @@ class FrameDecryptionHandler implements CryptoHandler {
                 int protectedContentLen = -1;
                 if (currentFrameHeaders_.isFinalFrame()) {
                     protectedContentLen = currentFrameHeaders_.getFrameContentLength();
-
-                    // The final frame should not be able to exceed the frameLength
-                    if (frameSize_ > 0 && protectedContentLen > frameSize_) {
-                        throw new BadCiphertextException("Final frame length exceeds frame length.");
-                    }
                 } else {
                     protectedContentLen = frameSize_;
                 }
@@ -164,7 +147,7 @@ class FrameDecryptionHandler implements CryptoHandler {
                 final byte[] bytesToDecrypt_ = Arrays.copyOfRange(bytesToParse, totalParsedBytes, totalParsedBytes + protectedContentLen);
                 totalParsedBytes += protectedContentLen;
 
-                if (frameNumber_ == Constants.MAX_FRAME_NUMBER) {
+                if (frameNumber_ == com.amazonaws.encryptionsdk.internal.Constants.MAX_FRAME_NUMBER) {
                     throw new BadCiphertextException("Frame number exceeds the maximum allowed value.");
                 }
 
@@ -196,29 +179,30 @@ class FrameDecryptionHandler implements CryptoHandler {
     }
 
     /**
-     * Finish processing of the bytes. This function does nothing since the final frame will be
-     * processed and decrypted in processBytes().
+     * Finish processing of the bytes. This function does nothing since the
+     * final frame will be processed and decrypted in processBytes().
      *
-     * @param out space for any resulting output data.
-     * @param outOff offset into out to start copying the data at.
-     * @return 0
+     * @param out
+     *            space for any resulting output data.
+     * @param outOff
+     *            offset into out to start copying the data at.
+     * @return
+     *         0
      */
     @Override
     public int doFinal(final byte[] out, final int outOff) {
-        if (!complete_) {
-            throw new BadCiphertextException("Unable to process entire ciphertext.");
-        }
-
         return 0;
     }
 
     /**
-     * Return the size of the output buffer required for a processBytes plus a doFinal with an input
-     * of inLen bytes.
+     * Return the size of the output buffer required for a processBytes plus a
+     * doFinal with an input of inLen bytes.
      *
-     * @param inLen the length of the input.
-     * @return the space required to accommodate a call to processBytes and doFinal with len bytes of
-     *     input.
+     * @param inLen
+     *            the length of the input.
+     * @return
+     *         the space required to accommodate a call to processBytes and
+     *         doFinal with len bytes of input.
      */
     @Override
     public int estimateOutputSize(final int inLen) {
@@ -275,11 +259,17 @@ class FrameDecryptionHandler implements CryptoHandler {
     /**
      * Returns the plaintext bytes of the encrypted content.
      *
-     * @param input the input bytes containing the content
-     * @param off the offset into the input array where the data to be decrypted starts.
-     * @param len the number of bytes to be decrypted.
-     * @return the plaintext bytes of the encrypted content.
-     * @throws BadCiphertextException if the bytes do not decrypt correctly.
+     * @param input
+     *            the input bytes containing the content
+     * @param off
+     *            the offset into the input array where the data to be decrypted
+     *            starts.
+     * @param len
+     *            the number of bytes to be decrypted.
+     * @return
+     *         the plaintext bytes of the encrypted content.
+     * @throws BadCiphertextException
+     *             if the bytes do not decrypt correctly.
      */
     private byte[] decryptContent(final byte[] input, final int off, final int len) throws BadCiphertextException {
         final byte[] nonce = currentFrameHeaders_.getNonce();

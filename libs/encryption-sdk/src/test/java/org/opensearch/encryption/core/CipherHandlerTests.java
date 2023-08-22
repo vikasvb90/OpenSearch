@@ -20,7 +20,7 @@ public class CipherHandlerTests {
 
     @Test
     public void testInvalidNonce() {
-        CipherHandler cipherHandler = new CipherHandler(null, 1, CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY);
+        CipherHandler cipherHandler = new CipherHandler(null, 1, CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256);
         byte[] nonce = "random".getBytes(StandardCharsets.UTF_8);
         byte[] content = "content".getBytes(StandardCharsets.UTF_8);
         Assert.assertThrows(IllegalArgumentException.class, () -> cipherHandler.cipherData(nonce, null, content, 0, content.length));
@@ -28,7 +28,7 @@ public class CipherHandlerTests {
 
     @Test
     public void testInvalidSecretKey() {
-        CryptoAlgorithm cryptoAlgorithm = CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY;
+        CryptoAlgorithm cryptoAlgorithm = CryptoAlgorithm.ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA256;
         CipherHandler cipherHandler = new CipherHandler(null, 1, cryptoAlgorithm);
         byte[] nonce = new byte[cryptoAlgorithm.getNonceLen()];
         byte[] content = "content".getBytes(StandardCharsets.UTF_8);

@@ -1,12 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
- * The OpenSearch Contributors require contributions made to
- * this file be licensed under the Apache-2.0 license or a
- * compatible open source license.
- */
-
-/*
  * Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may not use this file except
@@ -24,6 +16,7 @@ package org.opensearch.encryption.frame.core;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.exception.AwsCryptoException;
 import com.amazonaws.encryptionsdk.exception.BadCiphertextException;
+import com.amazonaws.encryptionsdk.internal.Constants;
 import com.amazonaws.encryptionsdk.internal.CryptoHandler;
 import com.amazonaws.encryptionsdk.internal.ProcessingSummary;
 import com.amazonaws.encryptionsdk.model.CipherFrameHeaders;
@@ -34,12 +27,14 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /**
- * The frame encryption handler is a subclass of the encryption handler and thereby provides an
- * implementation of the Cryptography handler.
+ * The frame encryption handler is a subclass of the encryption handler and
+ * thereby provides an implementation of the Cryptography handler.
  *
- * <p>It implements methods for encrypting content and storing the encrypted bytes in frames.
+ * <p>
+ * It implements methods for encrypting content and storing the encrypted bytes
+ * in frames.
  */
-public class FrameEncryptionHandler implements CryptoHandler {
+class FrameEncryptionHandler implements CryptoHandler {
     private final SecretKey encryptionKey_;
     private final CryptoAlgorithm cryptoAlgo_;
     private final CipherHandler cipherHandler_;
@@ -48,7 +43,7 @@ public class FrameEncryptionHandler implements CryptoHandler {
     private final int frameSize_;
     private final int tagLenBytes_;
 
-    private long frameNumber_ = 1;
+    private long frameNumber_;
     private boolean isFinalFrame_;
 
     private final byte[] bytesToFrame_;
@@ -56,14 +51,8 @@ public class FrameEncryptionHandler implements CryptoHandler {
     private boolean complete_ = false;
 
     /**
-     * Construct an encryption handler for encrypting bytes and storing them in frames.
-     *
-     * @param encryptionKey Encryption key used to encrypt file content. Appended to file header.
-     * @param nonceLen random number appended with every frame header.
-     * @param cryptoAlgo Crypto algorithm used to perform encryption
-     * @param messageId Message Id from the crypto header
-     * @param frameSize Size of a frame.
-     * @param frameStartNumber Number from which assignment has to start for new frames
+     * Construct an encryption handler for encrypting bytes and storing them in
+     * frames.
      */
     public FrameEncryptionHandler(
         final SecretKey encryptionKey,
@@ -88,19 +77,22 @@ public class FrameEncryptionHandler implements CryptoHandler {
     /**
      * Encrypt a block of bytes from in putting the plaintext result into out.
      *
-     * <p>It encrypts by performing the following operations:
-     *
+     * <p>
+     * It encrypts by performing the following operations:
      * <ol>
-     *   <li>determine the size of encrypted content that can fit into current frame
-     *   <li>call processBytes() of the underlying cipher to do corresponding cryptographic encryption
-     *       of plaintext
-     *   <li>check if current frame is fully filled using the processed bytes, write current frame to
-     *       the output being returned.
+     * <li>determine the size of encrypted content that can fit into current frame</li>
+     * <li>call processBytes() of the underlying cipher to do corresponding cryptographic encryption
+     * of plaintext</li>
+     * <li>check if current frame is fully filled using the processed bytes, write current frame to
+     * the output being returned.</li>
      * </ol>
      *
-     * @param in the input byte array.
-     * @param out the output buffer the encrypted bytes go into.
-     * @param outOff the offset into the output byte array the encrypted data starts at.
+     * @param in
+     *            the input byte array.
+     * @param out
+     *            the output buffer the encrypted bytes go into.
+     * @param outOff
+     *            the offset into the output byte array the encrypted data starts at.
      * @return the number of bytes written to out and processed
      */
     @Override
@@ -111,7 +103,6 @@ public class FrameEncryptionHandler implements CryptoHandler {
         int size = len;
         int offset = off;
         while (size > 0) {
-
             final int currentFrameCapacity = frameSize_ - bytesToFrameLen_;
             // bind size to the capacity of the current frame
             size = Math.min(currentFrameCapacity, size);
@@ -137,11 +128,15 @@ public class FrameEncryptionHandler implements CryptoHandler {
     }
 
     /**
-     * Finish processing of the bytes by writing out the ciphertext or final frame if framing.
+     * Finish processing of the bytes by writing out the ciphertext or final
+     * frame if framing.
      *
-     * @param out space for any resulting output data.
-     * @param outOff offset into out to start copying the data at.
-     * @return number of bytes written into out.
+     * @param out
+     *            space for any resulting output data.
+     * @param outOff
+     *            offset into out to start copying the data at.
+     * @return
+     *         number of bytes written into out.
      */
     @Override
     public int doFinal(final byte[] out, final int outOff) throws BadCiphertextException {
@@ -151,12 +146,14 @@ public class FrameEncryptionHandler implements CryptoHandler {
     }
 
     /**
-     * Return the size of the output buffer required for a processBytes plus a doFinal with an input
-     * of inLen bytes.
+     * Return the size of the output buffer required for a processBytes plus a
+     * doFinal with an input of inLen bytes.
      *
-     * @param inLen the length of the input.
-     * @return the space required to accommodate a call to processBytes and doFinal with len bytes of
-     *     input.
+     * @param inLen
+     *            the length of the input.
+     * @return
+     *         the space required to accommodate a call to processBytes and
+     *         doFinal with len bytes of input.
      */
     @Override
     public int estimateOutputSize(final int inLen) {
@@ -268,21 +265,26 @@ public class FrameEncryptionHandler implements CryptoHandler {
     }
 
     /**
-     * We encrypt the bytes, create the headers for the block, and assemble the frame containing the
-     * headers and the encrypted bytes.
-     *
-     * @param out the output buffer the encrypted bytes go into.
-     * @param outOff the offset into the output byte array the encrypted data starts at.
-     * @return the number of bytes written to out.
-     * @throws BadCiphertextException thrown by the underlying cipher handler.
-     * @throws AwsCryptoException if frame number exceeds the maximum allowed value.
+     * We encrypt the bytes, create the headers for the block, and assemble the
+     * frame containing the headers and the encrypted bytes.
+     * @param out
+     *            the output buffer the encrypted bytes go into.
+     * @param outOff
+     *            the offset into the output byte array the encrypted data
+     *            starts at.
+     * @return
+     *         the number of bytes written to out.
+     * @throws BadCiphertextException
+     *             thrown by the underlying cipher handler.
+     * @throws AwsCryptoException
+     *             if frame number exceeds the maximum allowed value.
      */
     private int writeEncryptedFrame(final byte[] input, final int off, final int len, final byte[] out, final int outOff)
         throws BadCiphertextException, AwsCryptoException {
-        if (frameNumber_ > Constants.MAX_FRAME_NUMBER
+        if (frameNumber_ > com.amazonaws.encryptionsdk.internal.Constants.MAX_FRAME_NUMBER
             // Make sure we have the appropriate flag set for the final frame; we don't want to accept
             // non-final-frame data when there won't be a subsequent frame for it to go into.
-            || (frameNumber_ == Constants.MAX_FRAME_NUMBER && !isFinalFrame_)) {
+            || (frameNumber_ == com.amazonaws.encryptionsdk.internal.Constants.MAX_FRAME_NUMBER && !isFinalFrame_)) {
             throw new AwsCryptoException("Frame number exceeded the maximum allowed value.");
         }
 
@@ -294,9 +296,19 @@ public class FrameEncryptionHandler implements CryptoHandler {
 
         byte[] contentAad;
         if (isFinalFrame_ == true) {
-            contentAad = Utils.generateContentAad(messageId_, Constants.FINAL_FRAME_STRING_ID, (int) frameNumber_, len);
+            contentAad = Utils.generateContentAad(
+                messageId_,
+                com.amazonaws.encryptionsdk.internal.Constants.FINAL_FRAME_STRING_ID,
+                (int) frameNumber_,
+                len
+            );
         } else {
-            contentAad = Utils.generateContentAad(messageId_, Constants.FRAME_STRING_ID, (int) frameNumber_, frameSize_);
+            contentAad = Utils.generateContentAad(
+                messageId_,
+                com.amazonaws.encryptionsdk.internal.Constants.FRAME_STRING_ID,
+                (int) frameNumber_,
+                frameSize_
+            );
         }
 
         final byte[] nonce = getNonce();
@@ -322,12 +334,11 @@ public class FrameEncryptionHandler implements CryptoHandler {
     private byte[] getNonce() {
         /*
          * To mitigate the risk of IVs colliding within the same message, we use deterministic IV generation within a
-         * message.
+          * message.
          */
 
         if (frameNumber_ < 1) {
-            // This should never happen - however, since we use a "frame number zero" IV elsewhere (for
-            // header auth),
+            // This should never happen - however, since we use a "frame number zero" IV elsewhere (for header auth),
             // we must be sure that we don't reuse it here.
             throw new IllegalStateException("Illegal frame number");
         }
@@ -340,10 +351,8 @@ public class FrameEncryptionHandler implements CryptoHandler {
 
         ByteBuffer buf = ByteBuffer.wrap(nonce);
         buf.order(ByteOrder.BIG_ENDIAN);
-        // We technically only allocate the low 32 bits for the frame number, and the other bits are
-        // defined to be
-        // zero. However, since MAX_FRAME_NUMBER is 2^32-1, the high-order four bytes of the long will
-        // be zero, so the
+        // We technically only allocate the low 32 bits for the frame number, and the other bits are defined to be
+        // zero. However, since MAX_FRAME_NUMBER is 2^32-1, the high-order four bytes of the long will be zero, so the
         // big-endian representation will also have zeros in that position.
         Utils.position(buf, buf.limit() - Long.BYTES);
         buf.putLong(frameNumber_);

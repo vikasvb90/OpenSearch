@@ -1,12 +1,4 @@
 /*
- * SPDX-License-Identifier: Apache-2.0
- *
- * The OpenSearch Contributors require contributions made to
- * this file be licensed under the Apache-2.0 license or a
- * compatible open source license.
- */
-
-/*
  * Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may not use this file except
@@ -21,10 +13,12 @@
 
 package org.opensearch.encryption.frame.core;
 
+import com.amazonaws.encryptionsdk.AwsCrypto;
 import com.amazonaws.encryptionsdk.MasterKey;
 import com.amazonaws.encryptionsdk.caching.CachingCryptoMaterialsManager;
 import com.amazonaws.encryptionsdk.exception.BadCiphertextException;
 import com.amazonaws.encryptionsdk.internal.MessageCryptoHandler;
+import com.amazonaws.encryptionsdk.internal.Utils;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,24 +29,29 @@ import static com.amazonaws.encryptionsdk.internal.Utils.assertNonNull;
  * A CryptoInputStream is a subclass of java.io.InputStream. It performs cryptographic
  * transformation of the bytes passing through it.
  *
- * <p>The CryptoInputStream wraps a provided InputStream object and performs cryptographic
+ * <p>
+ * The CryptoInputStream wraps a provided InputStream object and performs cryptographic
  * transformation of the bytes read from the wrapped InputStream. It uses the cryptography handler
  * provided during construction to invoke methods that perform the cryptographic transformations.
  *
- * <p>In short, reading from the CryptoInputStream returns bytes that are the cryptographic
+ * <p>
+ * In short, reading from the CryptoInputStream returns bytes that are the cryptographic
  * transformations of the bytes read from the wrapped InputStream.
  *
- * <p>For example, if the cryptography handler provides methods for decryption, the
- * CryptoInputStream will read ciphertext bytes from the wrapped InputStream, decrypt, and return
- * them as plaintext bytes.
+ * <p>
+ * For example, if the cryptography handler provides methods for decryption, the CryptoInputStream
+ * will read ciphertext bytes from the wrapped InputStream, decrypt, and return them as plaintext
+ * bytes.
  *
- * <p>This class adheres strictly to the semantics, especially the failure semantics, of its
- * ancestor class java.io.InputStream. This class overrides all the methods specified in its
- * ancestor class.
+ * <p>
+ * This class adheres strictly to the semantics, especially the failure semantics, of its ancestor
+ * class java.io.InputStream. This class overrides all the methods specified in its ancestor class.
  *
- * <p>To instantiate an instance of this class, please see {@link AwsCrypto}.
+ * <p>
+ * To instantiate an instance of this class, please see {@link AwsCrypto}.
  *
- * @param <K> The type of {@link MasterKey}s used to manipulate the data.
+ * @param <K>
+ *            The type of {@link MasterKey}s used to manipulate the data.
  */
 public class CryptoInputStream<K extends MasterKey<K>> extends InputStream {
     private static final int MAX_READ_LEN = 4096;
@@ -71,12 +70,13 @@ public class CryptoInputStream<K extends MasterKey<K>> extends InputStream {
      * cryptographic transformation of the bytes read from the wrapped InputStream using the methods
      * provided in the provided CryptoHandler implementation.
      *
-     * @param inputStream the inputStream object to be wrapped.
-     * @param cryptoHandler the cryptoHandler implementation that provides the methods to use in
-     *     performing cryptographic transformation of the bytes read from the inputStream.
-     * @param isLastPart Whether the provided InputStream is the last stream of the content.
+     * @param inputStream
+     *            the inputStream object to be wrapped.
+     * @param cryptoHandler
+     *            the cryptoHandler implementation that provides the methods to use in performing
+     *            cryptographic transformation of the bytes read from the inputStream.
      */
-    public CryptoInputStream(final InputStream inputStream, final MessageCryptoHandler cryptoHandler, final boolean isLastPart) {
+    CryptoInputStream(final InputStream inputStream, final MessageCryptoHandler cryptoHandler, boolean isLastPart) {
         inputStream_ = Utils.assertNonNull(inputStream, "inputStream");
         cryptoHandler_ = Utils.assertNonNull(cryptoHandler, "cryptoHandler");
         isLastPart_ = isLastPart;
@@ -93,17 +93,11 @@ public class CryptoInputStream<K extends MasterKey<K>> extends InputStream {
 
         final int readLen = inputStream_.read(inputStreamBytes);
 
-        return processBytes(readLen, inputStreamBytes);
-    }
-
-    private int processBytes(int readLen, byte[] inputStreamBytes) throws BadCiphertextException {
-
         outStart_ = 0;
 
         int processedLen = -1;
         if (readLen < 0 && isLastPart_) {
             // Mark end of stream until doFinal returns something.
-            processedLen = -1;
 
             if (!hasFinalCalled_) {
                 int outOffset = 0;
@@ -141,8 +135,9 @@ public class CryptoInputStream<K extends MasterKey<K>> extends InputStream {
     /**
      * {@inheritDoc}
      *
-     * @throws BadCiphertextException This is thrown only during decryption if b contains invalid or
-     *     corrupt ciphertext.
+     * @throws BadCiphertextException
+     *             This is thrown only during decryption if b contains invalid or corrupt
+     *             ciphertext.
      */
     @Override
     public int read(final byte[] b, final int off, final int len) throws IllegalArgumentException, IOException, BadCiphertextException {
@@ -180,8 +175,9 @@ public class CryptoInputStream<K extends MasterKey<K>> extends InputStream {
     /**
      * {@inheritDoc}
      *
-     * @throws BadCiphertextException This is thrown only during decryption if b contains invalid or
-     *     corrupt ciphertext.
+     * @throws BadCiphertextException
+     *             This is thrown only during decryption if b contains invalid or corrupt
+     *             ciphertext.
      */
     @Override
     public int read(final byte[] b) throws IllegalArgumentException, IOException, BadCiphertextException {
@@ -191,8 +187,9 @@ public class CryptoInputStream<K extends MasterKey<K>> extends InputStream {
     /**
      * {@inheritDoc}
      *
-     * @throws BadCiphertextException if b contains invalid or corrupt ciphertext. This is thrown only
-     *     during decryption.
+     * @throws BadCiphertextException
+     *             if b contains invalid or corrupt ciphertext. This is thrown only during
+     *             decryption.
      */
     @Override
     public int read() throws IOException, BadCiphertextException {
@@ -215,28 +212,25 @@ public class CryptoInputStream<K extends MasterKey<K>> extends InputStream {
         inputStream_.close();
     }
 
-    /** Returns metadata associated with the performed cryptographic operation. */
+    /**
+     * Returns metadata associated with the performed cryptographic operation.
+     */
     @Override
     public int available() throws IOException {
         return (outBytes_.length + inputStream_.available());
     }
 
     /**
-     * Sets an upper bound on the size of the input data. This method should be called before reading
-     * any data from the stream. If this method is not called prior to reading any data, performance
-     * may be reduced (notably, it will not be possible to cache data keys when encrypting).
-     *
-     * <p>Among other things, this size is used to enforce limits configured on the {@link
-     * CachingCryptoMaterialsManager}.
-     *
-     * <p>If the input size set here is exceeded, an exception will be thrown, and the encyption or
-     * decryption will fail.
-     *
-     * <p>If this method is called multiple times, the smallest bound will be used.
+     * Sets an upper bound on the size of the input data. This method should be called before reading any data from the
+     * stream. If this method is not called prior to reading any data, performance may be reduced (notably, it will not
+     * be possible to cache data keys when encrypting).
+     * Among other things, this size is used to enforce limits configured on the {@link CachingCryptoMaterialsManager}.
+     * If the input size set here is exceeded, an exception will be thrown, and the encyption or decryption will fail.
      *
      * @param size Maximum input size.
      */
     public void setMaxInputLength(long size) {
         cryptoHandler_.setMaxInputLength(size);
     }
+
 }
