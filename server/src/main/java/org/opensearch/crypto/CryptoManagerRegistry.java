@@ -39,7 +39,7 @@ public class CryptoManagerRegistry {
 
     // Package private for tests
     SetOnce<CryptoManagerFactory> cryptoManagerFactory = new SetOnce<CryptoManagerFactory>();
-    private final Map<CryptoMetadata, CryptoManager> registeredCryptoManagers = new HashMap<>();
+    private final Map<CryptoMetadata, CryptoManager<?, ?>> registeredCryptoManagers = new HashMap<>();
 
     private static volatile CryptoManagerRegistry instance;
     private static final Object lock = new Object();
@@ -145,8 +145,8 @@ public class CryptoManagerRegistry {
      * @return The crypto manager for performing encrypt/decrypt operations.
      * @throws CryptoRegistryException If the key provider is not installed or there is an error during crypto manager creation.
      */
-    public CryptoManager fetchCryptoManager(CryptoMetadata cryptoMetadata) {
-        CryptoManager cryptoManager = registeredCryptoManagers.get(cryptoMetadata);
+    public CryptoManager<?, ?> fetchCryptoManager(CryptoMetadata cryptoMetadata) {
+        CryptoManager<?, ?> cryptoManager = registeredCryptoManagers.get(cryptoMetadata);
         if (cryptoManager == null) {
             synchronized (registeredCryptoManagers) {
                 cryptoManager = registeredCryptoManagers.get(cryptoMetadata);
@@ -164,7 +164,7 @@ public class CryptoManagerRegistry {
         return cryptoManager;
     }
 
-    private CryptoManager createCryptoManager(CryptoMetadata cryptoMetadata, Runnable onClose) {
+    private CryptoManager<? , ?> createCryptoManager(CryptoMetadata cryptoMetadata, Runnable onClose) {
         logger.debug("creating crypto client [{}][{}]", cryptoMetadata.keyProviderType(), cryptoMetadata.keyProviderName());
         CryptoKeyProviderPlugin keyProviderPlugin = getCryptoKeyProviderPlugin(cryptoMetadata.keyProviderType());
         if (keyProviderPlugin == null) {

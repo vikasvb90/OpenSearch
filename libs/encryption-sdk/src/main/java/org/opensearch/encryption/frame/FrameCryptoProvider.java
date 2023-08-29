@@ -20,7 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 
-public class FrameCryptoProvider implements CryptoProvider {
+public class FrameCryptoProvider implements CryptoProvider<EncryptionMetadata, ParsedCiphertext> {
     private final AwsCrypto awsCrypto;
     private final Map<String, String> encryptionContext;
 
@@ -40,7 +40,7 @@ public class FrameCryptoProvider implements CryptoProvider {
      * Initialises metadata store used in encryption.
      * @return crypto metadata object constructed with encryption metadata like data key pair, encryption algorithm, etc.
      */
-    public Object initEncryptionMetadata() {
+    public EncryptionMetadata initEncryptionMetadata() {
         return awsCrypto.createCryptoContext(encryptionContext, getFrameSize());
     }
 
@@ -57,7 +57,7 @@ public class FrameCryptoProvider implements CryptoProvider {
      * @param streamSize Size of the stream to be adjusted.
      * @return Adjusted size of the stream.
      */
-    public long adjustContentSizeForPartialEncryption(Object cryptoContextObj, long streamSize) {
+    public long adjustContentSizeForPartialEncryption(EncryptionMetadata cryptoContextObj, long streamSize) {
         EncryptionMetadata encryptionMetadata = validateEncryptionMetadata(cryptoContextObj);
         return (streamSize - (streamSize % encryptionMetadata.getFrameSize())) + encryptionMetadata.getFrameSize();
     }
@@ -69,7 +69,7 @@ public class FrameCryptoProvider implements CryptoProvider {
      * @param contentLength Size of the raw content
      * @return Calculated size of the encrypted stream for the provided raw stream.
      */
-    public long estimateEncryptedLengthOfEntireContent(Object cryptoMetadataObj, long contentLength) {
+    public long estimateEncryptedLengthOfEntireContent(EncryptionMetadata cryptoMetadataObj, long contentLength) {
         EncryptionMetadata encryptionMetadata = validateEncryptionMetadata(cryptoMetadataObj);
         return encryptionMetadata.getCiphertextHeaderBytes().length + awsCrypto.estimateOutputSizeWithFooter(
             encryptionMetadata.getFrameSize(),
@@ -87,17 +87,13 @@ public class FrameCryptoProvider implements CryptoProvider {
      * @param contentLength Size of the encrypted content
      * @return Calculated size of the encrypted stream for the provided raw stream.
      */
-    public long estimateDecryptedLength(Object cryptoMetadataObj, long contentLength) {
-        if (!(cryptoMetadataObj instanceof ParsedCiphertext)) {
-            throw new IllegalArgumentException("Unknown crypto metadata object received for adjusting range for decryption");
-        }
-        ParsedCiphertext parsedCiphertext = (ParsedCiphertext) cryptoMetadataObj;
+    public long estimateDecryptedLength(ParsedCiphertext cryptoMetadataObj, long contentLength) {
         return awsCrypto.estimateDecryptedSize(
-            parsedCiphertext.getFrameLength(),
-            parsedCiphertext.getNonceLength(),
-            parsedCiphertext.getCryptoAlgoId().getTagLen(),
-            contentLength - parsedCiphertext.getOffset(),
-            parsedCiphertext.getCryptoAlgoId()
+            cryptoMetadataObj.getFrameLength(),
+            cryptoMetadataObj.getNonceLength(),
+            cryptoMetadataObj.getCryptoAlgoId().getTagLen(),
+            contentLength - cryptoMetadataObj.getOffset(),
+            cryptoMetadataObj.getCryptoAlgoId()
         );
     }
 
@@ -107,7 +103,7 @@ public class FrameCryptoProvider implements CryptoProvider {
      * @param stream Raw InputStream to encrypt
      * @return encrypting stream wrapped around raw InputStream.
      */
-    public InputStreamContainer createEncryptingStream(Object cryptoContextObj, InputStreamContainer stream) {
+    public InputStreamContainer createEncryptingStream(EncryptionMetadata cryptoContextObj, InputStreamContainer stream) {
         EncryptionMetadata encryptionMetadata = validateEncryptionMetadata(cryptoContextObj);
         return createEncryptingStreamOfPart(encryptionMetadata, stream, 1, 0);
     }
@@ -132,7 +128,7 @@ public class FrameCryptoProvider implements CryptoProvider {
      * @return Encrypted stream for the provided raw stream.
      */
     public InputStreamContainer createEncryptingStreamOfPart(
-        Object cryptoContextObj,
+        EncryptionMetadata cryptoContextObj,
         InputStreamContainer stream,
         int totalStreams,
         int streamIdx
@@ -157,7 +153,7 @@ public class FrameCryptoProvider implements CryptoProvider {
      * @return parsed encryption metadata object
      * @throws IOException if content fetch for header creation fails
      */
-    public Object loadEncryptionMetadata(EncryptedHeaderContentSupplier encryptedHeaderContentSupplier) throws IOException {
+    public ParsedCiphertext loadEncryptionMetadata(EncryptedHeaderContentSupplier encryptedHeaderContentSupplier) throws IOException {
         byte[] encryptedHeader = encryptedHeaderContentSupplier.supply(0, 4095);
         return new ParsedCiphertext(encryptedHeader);
     }
@@ -214,21 +210,19 @@ public class FrameCryptoProvider implements CryptoProvider {
      * @return stream provider for decrypted stream for the specified range of content including adjusted range
      */
     public DecryptedRangedStreamProvider createDecryptingStreamOfRange(
-        Object cryptoContext,
+        ParsedCiphertext cryptoContext,
         long startPosOfRawContent,
         long endPosOfRawContent
     ) {
         if (!(cryptoContext instanceof ParsedCiphertext)) {
             throw new IllegalArgumentException("Unknown crypto metadata object received for adjusting range for decryption");
         }
-
-        ParsedCiphertext encryptionMetadata = (ParsedCiphertext) cryptoContext;
-        long adjustedStartPos = startPosOfRawContent - (startPosOfRawContent % encryptionMetadata.getFrameLength());
-        long endPosOverhead = (endPosOfRawContent + 1) % encryptionMetadata.getFrameLength();
+        long adjustedStartPos = startPosOfRawContent - (startPosOfRawContent % cryptoContext.getFrameLength());
+        long endPosOverhead = (endPosOfRawContent + 1) % cryptoContext.getFrameLength();
         long adjustedEndPos = endPosOverhead == 0
             ? endPosOfRawContent
-            : (endPosOfRawContent - endPosOverhead + encryptionMetadata.getFrameLength());
-        long[] encryptedRange = transformToEncryptedRange(encryptionMetadata, adjustedStartPos, adjustedEndPos);
+            : (endPosOfRawContent - endPosOverhead + cryptoContext.getFrameLength());
+        long[] encryptedRange = transformToEncryptedRange(cryptoContext, adjustedStartPos, adjustedEndPos);
         return new DecryptedRangedStreamProvider(encryptedRange, (encryptedStream) -> {
             InputStream decryptedStream = createBlockDecryptionStream(
                 cryptoContext,

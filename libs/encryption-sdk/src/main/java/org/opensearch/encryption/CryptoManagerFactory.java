@@ -50,7 +50,7 @@ public class CryptoManagerFactory {
         }
     }
 
-    public CryptoManager getOrCreateCryptoManager(
+    public CryptoManager<?, ?> getOrCreateCryptoManager(
         MasterKeyProvider keyProvider,
         String keyProviderName,
         String keyProviderType,
@@ -61,12 +61,12 @@ public class CryptoManagerFactory {
             keyProviderName,
             validateAndGetAlgorithmId(algorithm)
         );
-        CryptoProvider cryptoProvider = createCryptoProvider(algorithm, materialsManager, keyProvider);
+        CryptoProvider<?, ?> cryptoProvider = createCryptoProvider(algorithm, materialsManager, keyProvider);
         return createCryptoManager(cryptoProvider, keyProviderType, keyProviderName, onClose);
     }
 
     // package private for tests
-    CryptoProvider createCryptoProvider(
+    CryptoProvider<? , ?> createCryptoProvider(
         String algorithm,
         CachingCryptoMaterialsManager materialsManager,
         MasterKeyProvider masterKeyProvider
@@ -103,8 +103,8 @@ public class CryptoManagerFactory {
     }
 
     // package private for tests
-    CryptoManager createCryptoManager(CryptoProvider cryptoProvider, String keyProviderType, String keyProviderName, Runnable onClose) {
-        return new CryptoManagerImpl(keyProviderName, keyProviderType) {
+    <T, U> CryptoManager<?, ?> createCryptoManager(CryptoProvider<T, U> cryptoProvider, String keyProviderType, String keyProviderName, Runnable onClose) {
+        return new CryptoManagerImpl<T, U>(keyProviderName, keyProviderType) {
             @Override
             protected void closeInternal() {
                 onClose.run();
@@ -121,15 +121,17 @@ public class CryptoManagerFactory {
             }
 
             @Override
-            public CryptoProvider getCryptoProvider() {
+            public CryptoProvider<T, U> getCryptoProvider() {
                 return cryptoProvider;
             }
         };
     }
 
-    private static abstract class CryptoManagerImpl extends AbstractRefCounted implements CryptoManager {
+    private static abstract class CryptoManagerImpl<T, U> extends AbstractRefCounted implements CryptoManager<T, U> {
         public CryptoManagerImpl(String keyProviderName, String keyProviderType) {
             super(keyProviderName + "-" + keyProviderType);
         }
     }
+
+
 }
