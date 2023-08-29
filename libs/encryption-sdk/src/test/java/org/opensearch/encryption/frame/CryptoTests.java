@@ -45,14 +45,14 @@ import java.util.zip.CheckedInputStream;
 
 public class CryptoTests extends OpenSearchTestCase {
 
-    private static FrameCryptoProvider frameCryptoProvider;
+    private static FrameCryptoHandler frameCryptoProvider;
 
-    private static FrameCryptoProvider frameCryptoProviderTrailingAlgo;
+    private static FrameCryptoHandler frameCryptoProviderTrailingAlgo;
 
-    static class CustomFrameCryptoProviderTest extends FrameCryptoProvider {
+    static class CustomFrameCryptoHandlerTest extends FrameCryptoHandler {
         private final int frameSize;
 
-        CustomFrameCryptoProviderTest(AwsCrypto awsCrypto, HashMap<String, String> config, int frameSize) {
+        CustomFrameCryptoHandlerTest(AwsCrypto awsCrypto, HashMap<String, String> config, int frameSize) {
             super(awsCrypto, config);
             this.frameSize = frameSize;
         }
@@ -65,12 +65,12 @@ public class CryptoTests extends OpenSearchTestCase {
 
     @Before
     public void setupResources() {
-        frameCryptoProvider = new CustomFrameCryptoProviderTest(
+        frameCryptoProvider = new CustomFrameCryptoHandlerTest(
             createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
             new HashMap<>(),
             100
         );
-        frameCryptoProviderTrailingAlgo = new CustomFrameCryptoProviderTest(
+        frameCryptoProviderTrailingAlgo = new CustomFrameCryptoHandlerTest(
             createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384),
             new HashMap<>(),
             100
@@ -99,7 +99,7 @@ public class CryptoTests extends OpenSearchTestCase {
         return verifyAndGetEncryptedContent(false, frameCryptoProvider);
     }
 
-    private EncryptedStore verifyAndGetEncryptedContent(boolean truncateRemainderPart, FrameCryptoProvider frameCryptoProvider)
+    private EncryptedStore verifyAndGetEncryptedContent(boolean truncateRemainderPart, FrameCryptoHandler frameCryptoProvider)
         throws IOException, URISyntaxException {
         String path = CryptoTests.class.getResource("/raw_content_for_crypto_test").toURI().getPath();
         File file = new File(path);
@@ -141,7 +141,7 @@ public class CryptoTests extends OpenSearchTestCase {
         for (int i = 0; i < 100; i++) {
             // Raw content size cannot be max value as encrypted size will overflow for the same.
             long n = randomLongBetween(0, Long.MAX_VALUE / 2);
-            FrameCryptoProvider frameCryptoProvider = new CustomFrameCryptoProviderTest(
+            FrameCryptoHandler frameCryptoProvider = new CustomFrameCryptoHandlerTest(
                 createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
                 new HashMap<>(),
                 randomIntBetween(10, 10240)

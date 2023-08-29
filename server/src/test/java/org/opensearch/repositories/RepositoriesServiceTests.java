@@ -34,7 +34,7 @@ package org.opensearch.repositories;
 
 import org.apache.lucene.index.IndexCommit;
 import org.opensearch.Version;
-import org.opensearch.common.crypto.CryptoProvider;
+import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.action.admin.cluster.crypto.CryptoSettings;
 import org.opensearch.action.admin.cluster.repositories.put.PutRepositoryRequest;
@@ -529,7 +529,7 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         expectThrows(RepositoryException.class, () -> repositoriesService.registerRepository(request, null));
     }
 
-    private static class TestCryptoProvider implements CryptoProvider {
+    private static class TestCryptoHandler implements CryptoHandler {
 
         @Override
         public Object initEncryptionMetadata() {
@@ -590,12 +590,12 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         private final String name;
         private final AtomicInteger ref;
 
-        private final CryptoProvider cryptoProvider;
+        private final CryptoHandler cryptoHandler;
 
         public TestCryptoManager(Settings settings, String keyProviderName) {
             this.name = keyProviderName;
             this.ref = new AtomicInteger(1);
-            this.cryptoProvider = new TestCryptoProvider();
+            this.cryptoHandler = new TestCryptoHandler();
         }
 
         @Override
@@ -624,8 +624,8 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
             return name;
         }
 
-        public CryptoProvider getCryptoProvider() {
-            return cryptoProvider;
+        public CryptoHandler getCryptoProvider() {
+            return cryptoHandler;
         }
     }
 

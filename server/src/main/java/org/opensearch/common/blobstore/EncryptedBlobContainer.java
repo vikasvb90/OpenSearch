@@ -9,7 +9,7 @@
 package org.opensearch.common.blobstore;
 
 import org.opensearch.common.CheckedBiConsumer;
-import org.opensearch.common.crypto.CryptoProvider;
+import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.DecryptedRangedStreamProvider;
 import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
 import org.opensearch.common.io.InputStreamContainer;
@@ -27,11 +27,11 @@ import java.util.stream.Collectors;
 public class EncryptedBlobContainer implements BlobContainer {
 
     private final BlobContainer blobContainer;
-    private final CryptoProvider cryptoProvider;
+    private final CryptoHandler cryptoHandler;
 
-    public EncryptedBlobContainer(BlobContainer blobContainer, CryptoProvider cryptoProvider) {
+    public EncryptedBlobContainer(BlobContainer blobContainer, CryptoHandler cryptoHandler) {
         this.blobContainer = blobContainer;
-        this.cryptoProvider = cryptoProvider;
+        this.cryptoHandler = cryptoHandler;
     }
 
     @Override
@@ -47,7 +47,7 @@ public class EncryptedBlobContainer implements BlobContainer {
     @Override
     public InputStream readBlob(String blobName) throws IOException {
         InputStream inputStream = blobContainer.readBlob(blobName);
-        return cryptoProvider.createDecryptingStream(inputStream);
+        return cryptoHandler.createDecryptingStream(inputStream);
     }
 
     private EncryptedHeaderContentSupplier getEncryptedHeaderContentSupplier(String blobName) {
@@ -64,8 +64,8 @@ public class EncryptedBlobContainer implements BlobContainer {
 
     @Override
     public InputStream readBlob(String blobName, long position, long length) throws IOException {
-        Object encryptionMetadata = cryptoProvider.loadEncryptionMetadata(getEncryptedHeaderContentSupplier(blobName));
-        DecryptedRangedStreamProvider decryptedStreamProvider = cryptoProvider.createDecryptingStreamOfRange(
+        Object encryptionMetadata = cryptoHandler.loadEncryptionMetadata(getEncryptedHeaderContentSupplier(blobName));
+        DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
             encryptionMetadata,
             position,
             position + length - 1
@@ -83,10 +83,10 @@ public class EncryptedBlobContainer implements BlobContainer {
 
     private void executeWrite(InputStream inputStream, long blobSize, CheckedBiConsumer<InputStream, Long, IOException> writeConsumer)
         throws IOException {
-        Object cryptoContext = cryptoProvider.initEncryptionMetadata();
+        Object cryptoContext = cryptoHandler.initEncryptionMetadata();
         InputStreamContainer streamContainer = new InputStreamContainer(inputStream, blobSize, 0);
-        InputStreamContainer encryptedStream = cryptoProvider.createEncryptingStream(cryptoContext, streamContainer);
-        long cryptoLength = cryptoProvider.estimateEncryptedLengthOfEntireContent(cryptoContext, blobSize);
+        InputStreamContainer encryptedStream = cryptoHandler.createEncryptingStream(cryptoContext, streamContainer);
+        long cryptoLength = cryptoHandler.estimateEncryptedLengthOfEntireContent(cryptoContext, blobSize);
         writeConsumer.accept(encryptedStream.getInputStream(), cryptoLength);
     }
 
@@ -135,7 +135,7 @@ public class EncryptedBlobContainer implements BlobContainer {
         if (children != null) {
             return children.entrySet()
                 .stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, entry -> new EncryptedBlobContainer(entry.getValue(), cryptoProvider)));
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> new EncryptedBlobContainer(entry.getValue(), cryptoHandler)));
         } else {
             return null;
         }
@@ -157,7 +157,7 @@ public class EncryptedBlobContainer implements BlobContainer {
             .collect(
                 Collectors.toMap(
                     Map.Entry::getKey,
-                    entry -> new EncryptedBlobMetadata(entry.getValue(), cryptoProvider, getEncryptedHeaderContentSupplier(entry.getKey()))
+                    entry -> new EncryptedBlobMetadata(entry.getValue(), cryptoHandler, getEncryptedHeaderContentSupplier(entry.getKey()))
                 )
             );
 
@@ -178,7 +178,7 @@ public class EncryptedBlobContainer implements BlobContainer {
                         .map(
                             blobMetadata -> new EncryptedBlobMetadata(
                                 blobMetadata,
-                                cryptoProvider,
+                                    cryptoHandler,
                                 getEncryptedHeaderContentSupplier(blobMetadata.name())
                             )
                         )

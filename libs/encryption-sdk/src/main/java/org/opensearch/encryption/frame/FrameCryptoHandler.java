@@ -9,7 +9,7 @@
 package org.opensearch.encryption.frame;
 
 import com.amazonaws.encryptionsdk.ParsedCiphertext;
-import org.opensearch.common.crypto.CryptoProvider;
+import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.DecryptedRangedStreamProvider;
 import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
 import org.opensearch.encryption.frame.core.AwsCrypto;
@@ -20,14 +20,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 
-public class FrameCryptoProvider implements CryptoProvider<EncryptionMetadata, ParsedCiphertext> {
+public class FrameCryptoHandler implements CryptoHandler<EncryptionMetadata, ParsedCiphertext> {
     private final AwsCrypto awsCrypto;
     private final Map<String, String> encryptionContext;
 
     // package private for tests
     private final int FRAME_SIZE = 8 * 1024;
 
-    public FrameCryptoProvider(AwsCrypto awsCrypto, Map<String, String> encryptionContext) {
+    public FrameCryptoHandler(AwsCrypto awsCrypto, Map<String, String> encryptionContext) {
         this.awsCrypto = awsCrypto;
         this.encryptionContext = encryptionContext;
     }
