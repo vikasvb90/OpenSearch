@@ -61,12 +61,12 @@ public class EncryptedBlobStore implements BlobStore {
     public BlobContainer blobContainer(BlobPath path) {
         BlobContainer blobContainer = blobStore.blobContainer(path);
         if (blobContainer instanceof AsyncMultiStreamBlobContainer) {
-            return new AsyncMultiStreamEncryptedBlobContainer(
+            return new AsyncMultiStreamEncryptedBlobContainer<>(
                 (AsyncMultiStreamBlobContainer) blobContainer,
                 cryptoManager.getCryptoProvider()
             );
         }
-        return new EncryptedBlobContainer(blobContainer, cryptoManager.getCryptoProvider());
+        return new EncryptedBlobContainer<>(blobContainer, cryptoManager.getCryptoProvider());
     }
 
     /**

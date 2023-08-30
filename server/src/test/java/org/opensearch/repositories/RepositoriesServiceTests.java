@@ -35,6 +35,7 @@ package org.opensearch.repositories;
 import org.apache.lucene.index.IndexCommit;
 import org.opensearch.Version;
 import org.opensearch.common.crypto.CryptoHandler;
+import org.opensearch.common.crypto.EncryptionHandler;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.action.admin.cluster.crypto.CryptoSettings;
 import org.opensearch.action.admin.cluster.repositories.put.PutRepositoryRequest;
@@ -529,31 +530,31 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         expectThrows(RepositoryException.class, () -> repositoriesService.registerRepository(request, null));
     }
 
-    private static class TestCryptoHandler implements CryptoHandler {
+    private static class TestCryptoHandler implements CryptoHandler<EncryptionHandler, Object> {
 
         @Override
-        public Object initEncryptionMetadata() {
-            return new Object();
+        public EncryptionHandler initEncryptionMetadata() {
+            return new EncryptionHandler();
         }
 
         @Override
-        public long adjustContentSizeForPartialEncryption(Object cryptoContextObj, long contentSize) {
+        public long adjustContentSizeForPartialEncryption(EncryptionHandler cryptoContextObj, long contentSize) {
             return 0;
         }
 
         @Override
-        public long estimateEncryptedLengthOfEntireContent(Object cryptoContextObj, long contentLength) {
+        public long estimateEncryptedLengthOfEntireContent(EncryptionHandler cryptoContextObj, long contentLength) {
             return 0;
         }
 
         @Override
-        public InputStreamContainer createEncryptingStream(Object encryptionMetadata, InputStreamContainer streamContainer) {
+        public InputStreamContainer createEncryptingStream(EncryptionHandler encryptionMetadata, InputStreamContainer streamContainer) {
             return null;
         }
 
         @Override
         public InputStreamContainer createEncryptingStreamOfPart(
-            Object cryptoContextObj,
+            EncryptionHandler cryptoContextObj,
             InputStreamContainer stream,
             int totalStreams,
             int streamIdx

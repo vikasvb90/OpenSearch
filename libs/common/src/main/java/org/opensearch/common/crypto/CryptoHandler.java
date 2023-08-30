@@ -17,10 +17,10 @@ import java.io.InputStream;
  * Crypto provider abstractions for encryption and decryption of data. Allows registering multiple providers
  * for defining different ways of encrypting or decrypting data.
  *
- * T - Encryption Metadata
+ * T - Encryption Metadata - crypto metadata instance.
  * U - Parsed Encryption Metadata
  */
-public interface CryptoHandler<T, U> {
+public interface CryptoHandler<T extends EncryptionHandler, U> {
 
     /**
      * To initialise or create a new crypto metadata to be used in encryption. This is needed to set the context before
@@ -28,6 +28,7 @@ public interface CryptoHandler<T, U> {
      *
      * @return crypto metadata instance
      */
+    // prepare encryption metadata
     T initEncryptionMetadata();
 
     /**

@@ -108,11 +108,8 @@ public class FrameCryptoHandler implements CryptoHandler<EncryptionMetadata, Par
         return createEncryptingStreamOfPart(encryptionMetadata, stream, 1, 0);
     }
 
-    private EncryptionMetadata validateEncryptionMetadata(Object cryptoContext) {
-        if (!(cryptoContext instanceof EncryptionMetadata)) {
-            throw new IllegalArgumentException("Unknown crypto metadata object received");
-        }
-        return (EncryptionMetadata) cryptoContext;
+    private EncryptionMetadata validateEncryptionMetadata(EncryptionMetadata cryptoContext) {
+        return cryptoContext;
     }
 
     /**

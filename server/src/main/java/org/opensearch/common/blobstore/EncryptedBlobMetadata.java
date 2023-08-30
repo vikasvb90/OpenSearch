@@ -10,20 +10,21 @@ package org.opensearch.common.blobstore;
 
 import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
+import org.opensearch.common.crypto.EncryptionHandler;
 
 import java.io.IOException;
 
 /**
  * Adjusts length of encrypted blob to raw length
  */
-public class EncryptedBlobMetadata implements BlobMetadata {
+public class EncryptedBlobMetadata<T extends EncryptionHandler, U> implements BlobMetadata {
     private final EncryptedHeaderContentSupplier encryptedHeaderContentSupplier;
     private final BlobMetadata delegate;
-    private final CryptoHandler cryptoHandler;
+    private final CryptoHandler<T, U> cryptoHandler;
 
     public EncryptedBlobMetadata(
         BlobMetadata delegate,
-        CryptoHandler cryptoHandler,
+        CryptoHandler<T, U> cryptoHandler,
         EncryptedHeaderContentSupplier encryptedHeaderContentSupplier
     ) {
         this.encryptedHeaderContentSupplier = encryptedHeaderContentSupplier;
@@ -44,6 +45,6 @@ public class EncryptedBlobMetadata implements BlobMetadata {
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         }
-        return cryptoHandler.estimateDecryptedLength(cryptoContext, delegate.length());
+        return cryptoHandler.estimateDecryptedLength((U) cryptoContext, delegate.length());
     }
 }
