@@ -10,14 +10,13 @@ package org.opensearch.common.blobstore;
 
 import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
-import org.opensearch.common.crypto.EncryptionHandler;
 
 import java.io.IOException;
 
 /**
  * Adjusts length of encrypted blob to raw length
  */
-public class EncryptedBlobMetadata<T extends EncryptionHandler, U> implements BlobMetadata {
+public class EncryptedBlobMetadata<T , U> implements BlobMetadata {
     private final EncryptedHeaderContentSupplier encryptedHeaderContentSupplier;
     private final BlobMetadata delegate;
     private final CryptoHandler<T, U> cryptoHandler;

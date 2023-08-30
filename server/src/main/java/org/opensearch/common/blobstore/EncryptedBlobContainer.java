@@ -12,7 +12,6 @@ import org.opensearch.common.CheckedBiConsumer;
 import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.DecryptedRangedStreamProvider;
 import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
-import org.opensearch.common.crypto.EncryptionHandler;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.core.action.ActionListener;
 
@@ -25,7 +24,7 @@ import java.util.stream.Collectors;
 /**
  * EncryptedBlobContainer is a wrapper around BlobContainer that encrypts the data on the fly.
  */
-public class EncryptedBlobContainer<T extends EncryptionHandler, U> implements BlobContainer {
+public class EncryptedBlobContainer<T , U> implements BlobContainer {
 
     private final BlobContainer blobContainer;
     private final CryptoHandler<T, U> cryptoHandler;
@@ -65,9 +64,9 @@ public class EncryptedBlobContainer<T extends EncryptionHandler, U> implements B
 
     @Override
     public InputStream readBlob(String blobName, long position, long length) throws IOException {
-        Object encryptionMetadata = cryptoHandler.loadEncryptionMetadata(getEncryptedHeaderContentSupplier(blobName));
+        U encryptionMetadata = cryptoHandler.loadEncryptionMetadata(getEncryptedHeaderContentSupplier(blobName));
         DecryptedRangedStreamProvider decryptedStreamProvider = cryptoHandler.createDecryptingStreamOfRange(
-            (U) encryptionMetadata,
+            encryptionMetadata,
             position,
             position + length - 1
         );
@@ -84,10 +83,10 @@ public class EncryptedBlobContainer<T extends EncryptionHandler, U> implements B
 
     private void executeWrite(InputStream inputStream, long blobSize, CheckedBiConsumer<InputStream, Long, IOException> writeConsumer)
         throws IOException {
-        Object cryptoContext = cryptoHandler.initEncryptionMetadata();
+        T cryptoContext = cryptoHandler.initEncryptionMetadata();
         InputStreamContainer streamContainer = new InputStreamContainer(inputStream, blobSize, 0);
-        InputStreamContainer encryptedStream = cryptoHandler.createEncryptingStream((T) cryptoContext, streamContainer);
-        long cryptoLength = cryptoHandler.estimateEncryptedLengthOfEntireContent((T) cryptoContext, blobSize);
+        InputStreamContainer encryptedStream = cryptoHandler.createEncryptingStream(cryptoContext, streamContainer);
+        long cryptoLength = cryptoHandler.estimateEncryptedLengthOfEntireContent(cryptoContext, blobSize);
         writeConsumer.accept(encryptedStream.getInputStream(), cryptoLength);
     }
 

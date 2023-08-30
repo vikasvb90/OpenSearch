@@ -9,13 +9,12 @@
 package org.opensearch.encryption;
 
 import org.opensearch.common.crypto.CryptoHandler;
-import org.opensearch.common.crypto.EncryptionHandler;
 import org.opensearch.common.util.concurrent.RefCounted;
 
 /**
  * Crypto plugin interface used for encryption and decryption.
  */
-public interface CryptoManager<T extends EncryptionHandler, U> extends RefCounted {
+public interface CryptoManager<T , U> extends RefCounted {
 
     /**
      * @return key provider type

@@ -34,9 +34,6 @@ package org.opensearch.repositories;
 
 import org.apache.lucene.index.IndexCommit;
 import org.opensearch.Version;
-import org.opensearch.common.crypto.CryptoHandler;
-import org.opensearch.common.crypto.EncryptionHandler;
-import org.opensearch.core.action.ActionListener;
 import org.opensearch.action.admin.cluster.crypto.CryptoSettings;
 import org.opensearch.action.admin.cluster.repositories.put.PutRepositoryRequest;
 import org.opensearch.cluster.AckedClusterStateUpdateTask;
@@ -57,17 +54,19 @@ import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
+import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.DecryptedRangedStreamProvider;
 import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
+import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.lifecycle.Lifecycle;
 import org.opensearch.common.lifecycle.LifecycleListener;
-import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.Strings;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.encryption.CryptoManager;
 import org.opensearch.index.mapper.MapperService;
-import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.snapshots.IndexShardSnapshotStatus;
 import org.opensearch.index.snapshots.blobstore.RemoteStoreShardShallowCopySnapshot;
 import org.opensearch.index.store.Store;
@@ -530,31 +529,31 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         expectThrows(RepositoryException.class, () -> repositoriesService.registerRepository(request, null));
     }
 
-    private static class TestCryptoHandler implements CryptoHandler<EncryptionHandler, Object> {
+    private static class TestCryptoHandler implements CryptoHandler<Object, Object> {
 
         @Override
-        public EncryptionHandler initEncryptionMetadata() {
-            return new EncryptionHandler();
+        public Object initEncryptionMetadata() {
+            return new Object();
         }
 
         @Override
-        public long adjustContentSizeForPartialEncryption(EncryptionHandler cryptoContextObj, long contentSize) {
+        public long adjustContentSizeForPartialEncryption(Object cryptoContextObj, long contentSize) {
             return 0;
         }
 
         @Override
-        public long estimateEncryptedLengthOfEntireContent(EncryptionHandler cryptoContextObj, long contentLength) {
+        public long estimateEncryptedLengthOfEntireContent(Object cryptoContextObj, long contentLength) {
             return 0;
         }
 
         @Override
-        public InputStreamContainer createEncryptingStream(EncryptionHandler encryptionMetadata, InputStreamContainer streamContainer) {
+        public InputStreamContainer createEncryptingStream(Object encryptionMetadata, InputStreamContainer streamContainer) {
             return null;
         }
 
         @Override
         public InputStreamContainer createEncryptingStreamOfPart(
-            EncryptionHandler cryptoContextObj,
+            Object cryptoContextObj,
             InputStreamContainer stream,
             int totalStreams,
             int streamIdx
@@ -587,11 +586,11 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         }
     }
 
-    private static abstract class TestCryptoManager implements CryptoManager {
+    private static abstract class TestCryptoManager implements CryptoManager<Object, Object> {
         private final String name;
         private final AtomicInteger ref;
 
-        private final CryptoHandler cryptoHandler;
+        private final CryptoHandler<Object, Object> cryptoHandler;
 
         public TestCryptoManager(Settings settings, String keyProviderName) {
             this.name = keyProviderName;
@@ -625,7 +624,7 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
             return name;
         }
 
-        public CryptoHandler getCryptoProvider() {
+        public CryptoHandler<Object, Object> getCryptoProvider() {
             return cryptoHandler;
         }
     }

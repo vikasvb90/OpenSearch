@@ -33,7 +33,6 @@ import com.amazonaws.encryptionsdk.model.CiphertextType;
 import com.amazonaws.encryptionsdk.model.ContentType;
 import com.amazonaws.encryptionsdk.model.EncryptionMaterials;
 import com.amazonaws.encryptionsdk.model.KeyBlob;
-import org.opensearch.common.crypto.EncryptionHandler;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -47,7 +46,7 @@ import java.util.Map;
 
 @SuppressWarnings({ "rawtypes" })
 // Move this to EncryptionHandler
-public class EncryptionMetadata extends EncryptionHandler {
+public class EncryptionMetadata {
     private static final CiphertextType CIPHERTEXT_TYPE = CiphertextType.CUSTOMER_AUTHENTICATED_ENCRYPTED_DATA;
 
     private final Map<String, String> encryptionContext_;

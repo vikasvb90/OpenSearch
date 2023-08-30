@@ -20,7 +20,7 @@ import java.io.InputStream;
  * T - Encryption Metadata - crypto metadata instance.
  * U - Parsed Encryption Metadata
  */
-public interface CryptoHandler<T extends EncryptionHandler, U> {
+public interface CryptoHandler<T , U> {
 
     /**
      * To initialise or create a new crypto metadata to be used in encryption. This is needed to set the context before

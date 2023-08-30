@@ -11,7 +11,6 @@ package org.opensearch.common.blobstore;
 import org.opensearch.common.StreamContext;
 import org.opensearch.common.blobstore.stream.write.WriteContext;
 import org.opensearch.common.crypto.CryptoHandler;
-import org.opensearch.common.crypto.EncryptionHandler;
 import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.core.action.ActionListener;
 
@@ -23,7 +22,7 @@ import java.io.IOException;
  *
  * @opensearch.internal
  */
-public class AsyncMultiStreamEncryptedBlobContainer<T extends EncryptionHandler, U> extends EncryptedBlobContainer<T, U> implements AsyncMultiStreamBlobContainer {
+public class AsyncMultiStreamEncryptedBlobContainer<T , U> extends EncryptedBlobContainer<T, U> implements AsyncMultiStreamBlobContainer {
 
     private final AsyncMultiStreamBlobContainer blobContainer;
     private final CryptoHandler<T, U> cryptoHandler;
@@ -45,9 +44,9 @@ public class AsyncMultiStreamEncryptedBlobContainer<T extends EncryptionHandler,
         return false;
     }
 
-    static class EncryptedWriteContext<T extends EncryptionHandler, U> extends WriteContext {
+    static class EncryptedWriteContext<T, U> extends WriteContext {
 
-        private final Object encryptionMetadata;
+        private final T encryptionMetadata;
         private final CryptoHandler<T, U>  cryptoHandler;
         private final long fileSize;
 
@@ -58,11 +57,11 @@ public class AsyncMultiStreamEncryptedBlobContainer<T extends EncryptionHandler,
             super(writeContext);
             this.cryptoHandler  = cryptoHandler;
             this.encryptionMetadata = this.cryptoHandler.initEncryptionMetadata();
-            this.fileSize = this.cryptoHandler.estimateEncryptedLengthOfEntireContent((T) encryptionMetadata, writeContext.getFileSize());
+            this.fileSize = this.cryptoHandler.estimateEncryptedLengthOfEntireContent(encryptionMetadata, writeContext.getFileSize());
         }
 
         public StreamContext getStreamProvider(long partSize) {
-            long adjustedPartSize = cryptoHandler.adjustContentSizeForPartialEncryption((T) encryptionMetadata, partSize);
+            long adjustedPartSize = cryptoHandler.adjustContentSizeForPartialEncryption(encryptionMetadata, partSize);
             StreamContext streamContext = super.getStreamProvider(adjustedPartSize);
             return new EncryptedStreamContext<>(streamContext, cryptoHandler, encryptionMetadata);
         }
@@ -75,15 +74,15 @@ public class AsyncMultiStreamEncryptedBlobContainer<T extends EncryptionHandler,
         }
     }
 
-    static class EncryptedStreamContext<T extends EncryptionHandler, U> extends StreamContext {
+    static class EncryptedStreamContext<T , U> extends StreamContext {
 
         private final CryptoHandler<T, U>  cryptoHandler;
-        private final Object encryptionMetadata;
+        private final T encryptionMetadata;
 
         /**
          * Construct a new encrypted StreamContext object
          */
-        public EncryptedStreamContext(StreamContext streamContext, CryptoHandler<T, U>  cryptoHandler, Object encryptionMetadata) {
+        public EncryptedStreamContext(StreamContext streamContext, CryptoHandler<T, U>  cryptoHandler, T encryptionMetadata) {
             super(streamContext);
             this.cryptoHandler = cryptoHandler;
             this.encryptionMetadata = encryptionMetadata;
@@ -92,7 +91,7 @@ public class AsyncMultiStreamEncryptedBlobContainer<T extends EncryptionHandler,
         @Override
         public InputStreamContainer provideStream(int partNumber) throws IOException {
             InputStreamContainer inputStreamContainer = super.provideStream(partNumber);
-            return cryptoHandler.createEncryptingStreamOfPart((T) encryptionMetadata, inputStreamContainer, getNumberOfParts(), partNumber);
+            return cryptoHandler.createEncryptingStreamOfPart(encryptionMetadata, inputStreamContainer, getNumberOfParts(), partNumber);
         }
 
     }

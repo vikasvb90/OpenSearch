@@ -12,7 +12,6 @@ import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.caching.CachingCryptoMaterialsManager;
 import com.amazonaws.encryptionsdk.caching.LocalCryptoMaterialsCache;
 import org.opensearch.common.crypto.CryptoHandler;
-import org.opensearch.common.crypto.EncryptionHandler;
 import org.opensearch.common.crypto.MasterKeyProvider;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.AbstractRefCounted;
@@ -104,7 +103,7 @@ public class CryptoManagerFactory {
     }
 
     // package private for tests
-    <T extends EncryptionHandler, U> CryptoManager<?, ?> createCryptoManager(CryptoHandler<T, U> cryptoHandler, String keyProviderType, String keyProviderName, Runnable onClose) {
+    <T, U> CryptoManager<?, ?> createCryptoManager(CryptoHandler<T, U> cryptoHandler, String keyProviderType, String keyProviderName, Runnable onClose) {
         return new CryptoManagerImpl<T, U>(keyProviderName, keyProviderType) {
             @Override
             protected void closeInternal() {
@@ -128,7 +127,7 @@ public class CryptoManagerFactory {
         };
     }
 
-    private static abstract class CryptoManagerImpl<T extends EncryptionHandler, U> extends AbstractRefCounted implements CryptoManager<T, U> {
+    private static abstract class CryptoManagerImpl<T , U> extends AbstractRefCounted implements CryptoManager<T, U> {
         public CryptoManagerImpl(String keyProviderName, String keyProviderType) {
             super(keyProviderName + "-" + keyProviderType);
         }
