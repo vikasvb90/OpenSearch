@@ -220,7 +220,7 @@ public class CryptoTests extends OpenSearchTestCase {
 
     public void testMultiPartStreamsEncryption() throws IOException, URISyntaxException {
         EncryptionMetadata cryptoContextObj = frameCryptoProvider.initEncryptionMetadata();
-        EncryptionMetadata encryptionMetadata =  cryptoContextObj;
+        EncryptionMetadata encryptionMetadata = cryptoContextObj;
         String path = CryptoTests.class.getResource("/raw_content_for_crypto_test").toURI().getPath();
         File file = new File(path);
         byte[] encryptedContent = new byte[1024 * 20];

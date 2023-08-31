@@ -45,7 +45,6 @@ import java.util.List;
 import java.util.Map;
 
 @SuppressWarnings({ "rawtypes" })
-// Move this to EncryptionHandler
 public class EncryptionMetadata {
     private static final CiphertextType CIPHERTEXT_TYPE = CiphertextType.CUSTOMER_AUTHENTICATED_ENCRYPTED_DATA;
 

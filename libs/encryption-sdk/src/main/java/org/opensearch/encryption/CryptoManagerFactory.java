@@ -66,7 +66,7 @@ public class CryptoManagerFactory {
     }
 
     // package private for tests
-    CryptoHandler<? , ?> createCryptoProvider(
+    CryptoHandler<?, ?> createCryptoProvider(
         String algorithm,
         CachingCryptoMaterialsManager materialsManager,
         MasterKeyProvider masterKeyProvider
@@ -103,7 +103,12 @@ public class CryptoManagerFactory {
     }
 
     // package private for tests
-    <T, U> CryptoManager<?, ?> createCryptoManager(CryptoHandler<T, U> cryptoHandler, String keyProviderType, String keyProviderName, Runnable onClose) {
+    <T, U> CryptoManager<?, ?> createCryptoManager(
+        CryptoHandler<T, U> cryptoHandler,
+        String keyProviderType,
+        String keyProviderName,
+        Runnable onClose
+    ) {
         return new CryptoManagerImpl<T, U>(keyProviderName, keyProviderType) {
             @Override
             protected void closeInternal() {
@@ -127,11 +132,10 @@ public class CryptoManagerFactory {
         };
     }
 
-    private static abstract class CryptoManagerImpl<T , U> extends AbstractRefCounted implements CryptoManager<T, U> {
+    private static abstract class CryptoManagerImpl<T, U> extends AbstractRefCounted implements CryptoManager<T, U> {
         public CryptoManagerImpl(String keyProviderName, String keyProviderType) {
             super(keyProviderName + "-" + keyProviderType);
         }
     }
-
 
 }

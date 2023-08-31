@@ -14,7 +14,7 @@ import org.opensearch.common.util.concurrent.RefCounted;
 /**
  * Crypto plugin interface used for encryption and decryption.
  */
-public interface CryptoManager<T , U> extends RefCounted {
+public interface CryptoManager<T, U> extends RefCounted {
 
     /**
      * @return key provider type
