@@ -34,8 +34,6 @@ package org.opensearch.repositories;
 
 import org.apache.lucene.index.IndexCommit;
 import org.opensearch.Version;
-import org.opensearch.common.crypto.CryptoProvider;
-import org.opensearch.core.action.ActionListener;
 import org.opensearch.action.admin.cluster.crypto.CryptoSettings;
 import org.opensearch.action.admin.cluster.repositories.put.PutRepositoryRequest;
 import org.opensearch.cluster.AckedClusterStateUpdateTask;
@@ -56,17 +54,19 @@ import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.blobstore.BlobPath;
 import org.opensearch.common.blobstore.BlobStore;
+import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.DecryptedRangedStreamProvider;
 import org.opensearch.common.crypto.EncryptedHeaderContentSupplier;
+import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.lifecycle.Lifecycle;
 import org.opensearch.common.lifecycle.LifecycleListener;
-import org.opensearch.common.io.InputStreamContainer;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.Strings;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.encryption.CryptoManager;
 import org.opensearch.index.mapper.MapperService;
-import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.snapshots.IndexShardSnapshotStatus;
 import org.opensearch.index.snapshots.blobstore.RemoteStoreShardShallowCopySnapshot;
 import org.opensearch.index.store.Store;
@@ -529,7 +529,7 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         expectThrows(RepositoryException.class, () -> repositoriesService.registerRepository(request, null));
     }
 
-    private static class TestCryptoProvider implements CryptoProvider {
+    private static class TestCryptoHandler implements CryptoHandler<Object, Object> {
 
         @Override
         public Object initEncryptionMetadata() {
@@ -586,16 +586,16 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
         }
     }
 
-    private static abstract class TestCryptoManager implements CryptoManager {
+    private static abstract class TestCryptoManager implements CryptoManager<Object, Object> {
         private final String name;
         private final AtomicInteger ref;
 
-        private final CryptoProvider cryptoProvider;
+        private final CryptoHandler<Object, Object> cryptoHandler;
 
         public TestCryptoManager(Settings settings, String keyProviderName) {
             this.name = keyProviderName;
             this.ref = new AtomicInteger(1);
-            this.cryptoProvider = new TestCryptoProvider();
+            this.cryptoHandler = new TestCryptoHandler();
         }
 
         @Override
@@ -624,8 +624,8 @@ public class RepositoriesServiceTests extends OpenSearchTestCase {
             return name;
         }
 
-        public CryptoProvider getCryptoProvider() {
-            return cryptoProvider;
+        public CryptoHandler<Object, Object> getCryptoProvider() {
+            return cryptoHandler;
         }
     }
 

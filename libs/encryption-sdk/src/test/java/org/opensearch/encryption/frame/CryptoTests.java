@@ -45,14 +45,14 @@ import java.util.zip.CheckedInputStream;
 
 public class CryptoTests extends OpenSearchTestCase {
 
-    private static FrameCryptoProvider frameCryptoProvider;
+    private static FrameCryptoHandler frameCryptoProvider;
 
-    private static FrameCryptoProvider frameCryptoProviderTrailingAlgo;
+    private static FrameCryptoHandler frameCryptoProviderTrailingAlgo;
 
-    static class CustomFrameCryptoProviderTest extends FrameCryptoProvider {
+    static class CustomFrameCryptoHandlerTest extends FrameCryptoHandler {
         private final int frameSize;
 
-        CustomFrameCryptoProviderTest(AwsCrypto awsCrypto, HashMap<String, String> config, int frameSize) {
+        CustomFrameCryptoHandlerTest(AwsCrypto awsCrypto, HashMap<String, String> config, int frameSize) {
             super(awsCrypto, config);
             this.frameSize = frameSize;
         }
@@ -65,12 +65,12 @@ public class CryptoTests extends OpenSearchTestCase {
 
     @Before
     public void setupResources() {
-        frameCryptoProvider = new CustomFrameCryptoProviderTest(
+        frameCryptoProvider = new CustomFrameCryptoHandlerTest(
             createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
             new HashMap<>(),
             100
         );
-        frameCryptoProviderTrailingAlgo = new CustomFrameCryptoProviderTest(
+        frameCryptoProviderTrailingAlgo = new CustomFrameCryptoHandlerTest(
             createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384),
             new HashMap<>(),
             100
@@ -99,12 +99,12 @@ public class CryptoTests extends OpenSearchTestCase {
         return verifyAndGetEncryptedContent(false, frameCryptoProvider);
     }
 
-    private EncryptedStore verifyAndGetEncryptedContent(boolean truncateRemainderPart, FrameCryptoProvider frameCryptoProvider)
+    private EncryptedStore verifyAndGetEncryptedContent(boolean truncateRemainderPart, FrameCryptoHandler frameCryptoProvider)
         throws IOException, URISyntaxException {
         String path = CryptoTests.class.getResource("/raw_content_for_crypto_test").toURI().getPath();
         File file = new File(path);
 
-        Object cryptoContext = frameCryptoProvider.initEncryptionMetadata();
+        EncryptionMetadata cryptoContext = frameCryptoProvider.initEncryptionMetadata();
         long length;
         byte[] encryptedContent = new byte[1024 * 20];
         try (FileInputStream fileInputStream = new FileInputStream(file)) {
@@ -141,12 +141,12 @@ public class CryptoTests extends OpenSearchTestCase {
         for (int i = 0; i < 100; i++) {
             // Raw content size cannot be max value as encrypted size will overflow for the same.
             long n = randomLongBetween(0, Long.MAX_VALUE / 2);
-            FrameCryptoProvider frameCryptoProvider = new CustomFrameCryptoProviderTest(
+            FrameCryptoHandler frameCryptoProvider = new CustomFrameCryptoHandlerTest(
                 createAwsCrypto(CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
                 new HashMap<>(),
                 randomIntBetween(10, 10240)
             );
-            EncryptionMetadata cryptoContext = (EncryptionMetadata) frameCryptoProvider.initEncryptionMetadata();
+            EncryptionMetadata cryptoContext = frameCryptoProvider.initEncryptionMetadata();
             long encryptedLength = frameCryptoProvider.estimateEncryptedLengthOfEntireContent(cryptoContext, n);
             ParsedCiphertext parsedCiphertext = new ParsedCiphertext(cryptoContext.getCiphertextHeaderBytes());
             long decryptedLength = frameCryptoProvider.estimateDecryptedLength(parsedCiphertext, encryptedLength);
@@ -219,8 +219,8 @@ public class CryptoTests extends OpenSearchTestCase {
     }
 
     public void testMultiPartStreamsEncryption() throws IOException, URISyntaxException {
-        Object cryptoContextObj = frameCryptoProvider.initEncryptionMetadata();
-        EncryptionMetadata encryptionMetadata = (EncryptionMetadata) cryptoContextObj;
+        EncryptionMetadata cryptoContextObj = frameCryptoProvider.initEncryptionMetadata();
+        EncryptionMetadata encryptionMetadata = cryptoContextObj;
         String path = CryptoTests.class.getResource("/raw_content_for_crypto_test").toURI().getPath();
         File file = new File(path);
         byte[] encryptedContent = new byte[1024 * 20];
@@ -431,7 +431,7 @@ public class CryptoTests extends OpenSearchTestCase {
         EncryptedHeaderContentSupplier encryptedHeaderContentSupplier = createEncryptedHeaderContentSupplier(
             encryptedStore.encryptedContent
         );
-        Object cryptoContext = frameCryptoProvider.loadEncryptionMetadata(encryptedHeaderContentSupplier);
+        ParsedCiphertext cryptoContext = frameCryptoProvider.loadEncryptionMetadata(encryptedHeaderContentSupplier);
         DecryptedRangedStreamProvider decryptedStreamProvider = frameCryptoProvider.createDecryptingStreamOfRange(
             cryptoContext,
             startPos,
@@ -480,7 +480,7 @@ public class CryptoTests extends OpenSearchTestCase {
 
     public void testEmptyContentCrypto() throws IOException {
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(new byte[] {});
-        Object cryptoContext = frameCryptoProvider.initEncryptionMetadata();
+        EncryptionMetadata cryptoContext = frameCryptoProvider.initEncryptionMetadata();
         InputStreamContainer stream = new InputStreamContainer(byteArrayInputStream, 0, 0);
         InputStreamContainer encryptingStream = frameCryptoProvider.createEncryptingStream(cryptoContext, stream);
         InputStream decryptingStream = frameCryptoProvider.createDecryptingStream(encryptingStream.getInputStream());
@@ -489,7 +489,7 @@ public class CryptoTests extends OpenSearchTestCase {
 
     public void testEmptyContentCryptoTrailingSignatureAlgo() throws IOException {
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(new byte[] {});
-        Object cryptoContext = frameCryptoProviderTrailingAlgo.initEncryptionMetadata();
+        EncryptionMetadata cryptoContext = frameCryptoProviderTrailingAlgo.initEncryptionMetadata();
         InputStreamContainer stream = new InputStreamContainer(byteArrayInputStream, 0, 0);
         InputStreamContainer encryptingStream = frameCryptoProviderTrailingAlgo.createEncryptingStream(cryptoContext, stream);
         InputStream decryptingStream = frameCryptoProviderTrailingAlgo.createDecryptingStream(encryptingStream.getInputStream());

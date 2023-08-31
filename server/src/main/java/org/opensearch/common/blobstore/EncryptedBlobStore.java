@@ -25,7 +25,7 @@ import java.util.Map;
 public class EncryptedBlobStore implements BlobStore {
 
     private final BlobStore blobStore;
-    private final CryptoManager cryptoManager;
+    private final CryptoManager<? , ?> cryptoManager;
 
     /**
      * Constructs an EncryptedBlobStore that wraps the provided BlobStore with encryption capabilities based on the
@@ -61,12 +61,12 @@ public class EncryptedBlobStore implements BlobStore {
     public BlobContainer blobContainer(BlobPath path) {
         BlobContainer blobContainer = blobStore.blobContainer(path);
         if (blobContainer instanceof AsyncMultiStreamBlobContainer) {
-            return new AsyncMultiStreamEncryptedBlobContainer(
+            return new AsyncMultiStreamEncryptedBlobContainer<>(
                 (AsyncMultiStreamBlobContainer) blobContainer,
                 cryptoManager.getCryptoProvider()
             );
         }
-        return new EncryptedBlobContainer(blobContainer, cryptoManager.getCryptoProvider());
+        return new EncryptedBlobContainer<>(blobContainer, cryptoManager.getCryptoProvider());
     }
 
     /**

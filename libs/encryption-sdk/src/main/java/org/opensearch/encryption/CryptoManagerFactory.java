@@ -11,11 +11,11 @@ package org.opensearch.encryption;
 import com.amazonaws.encryptionsdk.CryptoAlgorithm;
 import com.amazonaws.encryptionsdk.caching.CachingCryptoMaterialsManager;
 import com.amazonaws.encryptionsdk.caching.LocalCryptoMaterialsCache;
-import org.opensearch.common.crypto.CryptoProvider;
+import org.opensearch.common.crypto.CryptoHandler;
 import org.opensearch.common.crypto.MasterKeyProvider;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.AbstractRefCounted;
-import org.opensearch.encryption.frame.FrameCryptoProvider;
+import org.opensearch.encryption.frame.FrameCryptoHandler;
 import org.opensearch.encryption.frame.core.AwsCrypto;
 import org.opensearch.encryption.keyprovider.CryptoMasterKey;
 
@@ -50,7 +50,7 @@ public class CryptoManagerFactory {
         }
     }
 
-    public CryptoManager getOrCreateCryptoManager(
+    public CryptoManager<?, ?> getOrCreateCryptoManager(
         MasterKeyProvider keyProvider,
         String keyProviderName,
         String keyProviderType,
@@ -61,24 +61,24 @@ public class CryptoManagerFactory {
             keyProviderName,
             validateAndGetAlgorithmId(algorithm)
         );
-        CryptoProvider cryptoProvider = createCryptoProvider(algorithm, materialsManager, keyProvider);
-        return createCryptoManager(cryptoProvider, keyProviderType, keyProviderName, onClose);
+        CryptoHandler<?, ?> cryptoHandler = createCryptoProvider(algorithm, materialsManager, keyProvider);
+        return createCryptoManager(cryptoHandler, keyProviderType, keyProviderName, onClose);
     }
 
     // package private for tests
-    CryptoProvider createCryptoProvider(
+    CryptoHandler<?, ?> createCryptoProvider(
         String algorithm,
         CachingCryptoMaterialsManager materialsManager,
         MasterKeyProvider masterKeyProvider
     ) {
         switch (algorithm) {
             case "ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY":
-                return new FrameCryptoProvider(
+                return new FrameCryptoHandler(
                     new AwsCrypto(materialsManager, CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY),
                     masterKeyProvider.getEncryptionContext()
                 );
             case "ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384":
-                return new FrameCryptoProvider(
+                return new FrameCryptoHandler(
                     new AwsCrypto(materialsManager, CryptoAlgorithm.ALG_AES_256_GCM_HKDF_SHA512_COMMIT_KEY_ECDSA_P384),
                     masterKeyProvider.getEncryptionContext()
                 );
@@ -103,8 +103,13 @@ public class CryptoManagerFactory {
     }
 
     // package private for tests
-    CryptoManager createCryptoManager(CryptoProvider cryptoProvider, String keyProviderType, String keyProviderName, Runnable onClose) {
-        return new CryptoManagerImpl(keyProviderName, keyProviderType) {
+    <T, U> CryptoManager<?, ?> createCryptoManager(
+        CryptoHandler<T, U> cryptoHandler,
+        String keyProviderType,
+        String keyProviderName,
+        Runnable onClose
+    ) {
+        return new CryptoManagerImpl<T, U>(keyProviderName, keyProviderType) {
             @Override
             protected void closeInternal() {
                 onClose.run();
@@ -121,15 +126,16 @@ public class CryptoManagerFactory {
             }
 
             @Override
-            public CryptoProvider getCryptoProvider() {
-                return cryptoProvider;
+            public CryptoHandler<T, U> getCryptoProvider() {
+                return cryptoHandler;
             }
         };
     }
 
-    private static abstract class CryptoManagerImpl extends AbstractRefCounted implements CryptoManager {
+    private static abstract class CryptoManagerImpl<T, U> extends AbstractRefCounted implements CryptoManager<T, U> {
         public CryptoManagerImpl(String keyProviderName, String keyProviderType) {
             super(keyProviderName + "-" + keyProviderType);
         }
     }
+
 }
