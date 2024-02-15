@@ -43,6 +43,7 @@ import org.opensearch.cluster.block.ClusterBlock;
 import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.node.DiscoveryNodeFilters;
 import org.opensearch.cluster.routing.allocation.IndexMetadataUpdater;
+import org.opensearch.common.CheckedConsumer;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.collect.MapBuilder;
@@ -634,6 +635,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     static final String KEY_ALIASES = "aliases";
     static final String KEY_ROLLOVER_INFOS = "rollover_info";
     static final String KEY_SYSTEM = "system";
+    static final String KEY_NEW_SHARD_RECOVERIES = "new_shard_recoveries";
     public static final String KEY_PRIMARY_TERMS = "primary_terms";
 
     public static final String INDEX_STATE_FILE_PREFIX = "state-";
@@ -681,6 +683,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final ActiveShardCount waitForActiveShards;
     private final Map<String, RolloverInfo> rolloverInfos;
     private final boolean isSystem;
+    private final Map<Integer, NewRecoveringShardMetadata> newShardRecoveries;
 
     private IndexMetadata(
         final Index index,
@@ -707,7 +710,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         final int routingPartitionSize,
         final ActiveShardCount waitForActiveShards,
         final Map<String, RolloverInfo> rolloverInfos,
-        final boolean isSystem
+        final boolean isSystem,
+        final Map<Integer, NewRecoveringShardMetadata> newShardRecoveries
     ) {
 
         this.index = index;
@@ -741,6 +745,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         this.waitForActiveShards = waitForActiveShards;
         this.rolloverInfos = Collections.unmodifiableMap(rolloverInfos);
         this.isSystem = isSystem;
+        this.newShardRecoveries = Collections.unmodifiableMap(newShardRecoveries);
         assert numberOfShards * routingFactor == routingNumShards : routingNumShards + " must be a multiple of " + numberOfShards;
     }
 
@@ -788,6 +793,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * that can be indexed into) is larger than 0. See {@link IndexMetadataUpdater#applyChanges}.
      **/
     public long primaryTerm(int shardId) {
+        if (newShardRecoveries.containsKey(shardId)) {
+            return newShardRecoveries.get(shardId).getPrimaryTerm();
+        }
         return this.primaryTerms[shardId];
     }
 
@@ -889,8 +897,15 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return rolloverInfos;
     }
 
+    public Map<Integer, NewRecoveringShardMetadata> getNewShardRecoveries() {
+        return newShardRecoveries;
+    }
+
     public Set<String> inSyncAllocationIds(int shardId) {
-        assert shardId >= 0 && shardId < numberOfShards;
+        assert shardId >= 0 && shardId < numberOfShards || newShardRecoveries.containsKey(shardId);
+        if (newShardRecoveries.containsKey(shardId)) {
+            return newShardRecoveries.get(shardId).getInSyncAllocationIds();
+        }
         return inSyncAllocationIds.get(shardId);
     }
 
@@ -1059,6 +1074,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             new DiffableUtils.DiffableValueReader<>(DiffableStringMap::readFrom, DiffableStringMap::readDiffFrom);
         private static final DiffableUtils.DiffableValueReader<String, RolloverInfo> ROLLOVER_INFO_DIFF_VALUE_READER =
             new DiffableUtils.DiffableValueReader<>(RolloverInfo::new, RolloverInfo::readDiffFrom);
+        private static final DiffableUtils.DiffableValueReader<String, NewRecoveringShardMetadata> NEW_SHARD_RECOVERIES_DIFF_VALUE_READER =
+            new DiffableUtils.DiffableValueReader<>(NewRecoveringShardMetadata::new, NewRecoveringShardMetadata::readDiffFrom);
 
         IndexMetadataDiff(StreamInput in) throws IOException {
             index = in.readString();
@@ -1233,6 +1250,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         private final Map<String, RolloverInfo> rolloverInfos;
         private Integer routingNumShards;
         private boolean isSystem;
+        private Map<Integer, NewRecoveringShardMetadata> newShardRecoveries;
 
         public Builder(String index) {
             this.index = index;
@@ -1241,6 +1259,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.customMetadata = new HashMap<>();
             this.inSyncAllocationIds = new HashMap<>();
             this.rolloverInfos = new HashMap<>();
+            this.newShardRecoveries = new HashMap<>();
             this.isSystem = false;
         }
 
@@ -1260,6 +1279,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.inSyncAllocationIds = new HashMap<>(indexMetadata.inSyncAllocationIds);
             this.rolloverInfos = new HashMap<>(indexMetadata.rolloverInfos);
             this.isSystem = indexMetadata.isSystem;
+            this.newShardRecoveries = new HashMap<>(indexMetadata.newShardRecoveries);
         }
 
         public Builder index(String index) {
@@ -1395,6 +1415,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return this;
         }
 
+        public Builder putNewRecoveringShardMetadata(NewRecoveringShardMetadata newRecoveringShardMetadata) {
+            newShardRecoveries.put(newRecoveringShardMetadata.getShardId(), newRecoveringShardMetadata);
+            return this;
+        }
+
         public long version() {
             return this.version;
         }
@@ -1450,6 +1475,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             if (primaryTerms == null) {
                 initializePrimaryTerms();
             }
+            if (newShardRecoveries.containsKey(shardId)) {
+                newShardRecoveries.get(shardId).setPrimaryTerm(primaryTerm);
+                return this;
+            }
             this.primaryTerms[shardId] = primaryTerm;
             return this;
         }
@@ -1474,6 +1503,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
         public boolean isSystem() {
             return isSystem;
+        }
+
+        public Builder newRecoveringShardMetadata(Map<Integer, NewRecoveringShardMetadata> newShardRecoveries) {
+            this.newShardRecoveries = newShardRecoveries;
+            return this;
         }
 
         public IndexMetadata build() {
@@ -1601,7 +1635,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 routingPartitionSize,
                 waitForActiveShards,
                 rolloverInfos,
-                isSystem
+                isSystem,
+                newShardRecoveries
             );
         }
 
@@ -1702,6 +1737,13 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 cursor.toXContent(builder, params);
             }
             builder.endObject();
+
+            builder.startObject(KEY_NEW_SHARD_RECOVERIES);
+            for (final NewRecoveringShardMetadata cursor : indexMetadata.getNewShardRecoveries().values()) {
+                cursor.toXContent(builder, params);
+            }
+            builder.endObject();
+
             builder.field(KEY_SYSTEM, indexMetadata.isSystem);
 
             builder.endObject();
@@ -1785,6 +1827,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                         // simply ignored when upgrading from 2.x
                         assert Version.CURRENT.major <= 5;
                         parser.skipChildren();
+                    } else if (KEY_NEW_SHARD_RECOVERIES.equals(currentFieldName)) {
+                        while (parser.nextToken() != XContentParser.Token.END_OBJECT) {
+                            builder.putNewRecoveringShardMetadata(NewRecoveringShardMetadata.fromXContent(parser));
+                        }
                     } else {
                         // assume it's custom index metadata
                         builder.putCustom(currentFieldName, parser.mapStrings());

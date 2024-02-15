@@ -61,6 +61,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -90,6 +91,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
     final List<ShardRouting> activeShards;
     final List<ShardRouting> assignedShards;
     final Set<String> allAllocationIds;
+    final List<IndexShardRoutingTable> childShards;
     final boolean allShardsStarted;
 
     private volatile Map<AttributesKey, AttributesRoutings> activeShardsByAttributes = emptyMap();
@@ -107,11 +109,12 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
      */
     final List<ShardRouting> allInitializingShards;
 
-    IndexShardRoutingTable(ShardId shardId, List<ShardRouting> shards) {
+    IndexShardRoutingTable(ShardId shardId, List<ShardRouting> shards, List<IndexShardRoutingTable> childShards) {
         this.shardId = shardId;
         this.shuffler = new RotationShardShuffler(Randomness.get().nextInt());
         this.shufflerForWeightedRouting = new RotationShardShuffler(Randomness.get().nextInt());
         this.shards = Collections.unmodifiableList(shards);
+        this.childShards = Collections.unmodifiableList(childShards);
 
         ShardRouting primary = null;
         List<ShardRouting> replicas = new ArrayList<>();
@@ -204,6 +207,12 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
         return this.shards;
     }
 
+    /**
+     * Returns child shards for a parent shard.
+     */
+    public List<IndexShardRoutingTable> getChildShards() {
+        return new ArrayList<>(childShards);
+    }
     /**
      * Returns a {@link List} of shards
      *
@@ -990,15 +999,18 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
 
         private ShardId shardId;
         private final List<ShardRouting> shards;
+        private final List<IndexShardRoutingTable> childShards;
 
         public Builder(IndexShardRoutingTable indexShard) {
             this.shardId = indexShard.shardId;
             this.shards = new ArrayList<>(indexShard.shards);
+            this.childShards = new ArrayList<>(indexShard.childShards);
         }
 
         public Builder(ShardId shardId) {
             this.shardId = shardId;
             this.shards = new ArrayList<>();
+            this.childShards = new ArrayList<>();
         }
 
         public Builder addShard(ShardRouting shardEntry) {
@@ -1011,10 +1023,16 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
             return this;
         }
 
+        public Builder addChildShard(IndexShardRoutingTable shardRouting) {
+            childShards.add(shardRouting);
+            return this;
+        }
+
         public IndexShardRoutingTable build() {
             // don't allow more than one shard copy with same id to be allocated to same node
             assert distinctNodes(shards) : "more than one shard with same id assigned to same node (shards: " + shards + ")";
-            return new IndexShardRoutingTable(shardId, Collections.unmodifiableList(new ArrayList<>(shards)));
+            return new IndexShardRoutingTable(shardId, Collections.unmodifiableList(new ArrayList<>(shards)),
+                Collections.unmodifiableList(childShards));
         }
 
         static boolean distinctNodes(List<ShardRouting> shards) {

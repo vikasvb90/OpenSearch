@@ -527,6 +527,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
         return (indexShard.state() == IndexShardState.RECOVERING && indexShard.shardRouting.primary())
             && indexShard.recoveryState() != null
             && (indexShard.recoveryState().getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS
+                || indexShard.recoveryState().getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARD_SPLIT
                 || indexShard.recoveryState().getRecoverySource().getType() == RecoverySource.Type.SNAPSHOT);
     }
 

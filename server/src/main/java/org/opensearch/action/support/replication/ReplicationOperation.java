@@ -183,6 +183,7 @@ public class ReplicationOperation<
             markUnavailableShardsAsStale(replicaRequest, replicationGroup);
             performOnReplicas(replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, replicationGroup, pendingReplicationActions);
         }
+
         primaryResult.runPostReplicationActions(new ActionListener<Void>() {
 
             @Override

@@ -177,6 +177,11 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 + ", removed ids: "
                 + updates.removedAllocationIds;
 
+        if (updates.initializedPrimary != null &&
+            updates.initializedPrimary.recoverySource().getType() == RecoverySource.Type.LOCAL_SHARD_SPLIT) {
+            return indexMetadataBuilder;
+        }
+
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
 
         // check if we have been force-initializing an empty primary or a stale primary

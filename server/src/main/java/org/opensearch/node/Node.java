@@ -72,6 +72,7 @@ import org.opensearch.cluster.metadata.Metadata;
 import org.opensearch.cluster.metadata.MetadataCreateDataStreamService;
 import org.opensearch.cluster.metadata.MetadataCreateIndexService;
 import org.opensearch.cluster.metadata.MetadataIndexUpgradeService;
+import org.opensearch.cluster.metadata.MetadataLocalShardSplitService;
 import org.opensearch.cluster.metadata.SystemIndexMetadataUpgradeService;
 import org.opensearch.cluster.metadata.TemplateUpgradeService;
 import org.opensearch.cluster.node.DiscoveryNode;
@@ -851,6 +852,14 @@ public class Node implements Closeable {
                 forbidPrivateIndexSettings,
                 awarenessReplicaBalance
             );
+            final MetadataLocalShardSplitService metadataLocalShardSplitService = new MetadataLocalShardSplitService(
+                settings,
+                clusterService,
+                indicesService,
+                clusterModule.getAllocationService(),
+                shardLimitValidator,
+                awarenessReplicaBalance
+            );
             pluginsService.filterPlugins(Plugin.class)
                 .forEach(
                     p -> p.getAdditionalIndexSettingProviders().forEach(metadataCreateIndexService::addAdditionalIndexSettingProvider)
@@ -1228,6 +1237,7 @@ public class Node implements Closeable {
                 b.bind(RemoteStoreStatsTrackerFactory.class).toInstance(remoteStoreStatsTrackerFactory);
                 b.bind(AliasValidator.class).toInstance(aliasValidator);
                 b.bind(MetadataCreateIndexService.class).toInstance(metadataCreateIndexService);
+                b.bind(MetadataLocalShardSplitService.class).toInstance(metadataLocalShardSplitService);
                 b.bind(AwarenessReplicaBalance.class).toInstance(awarenessReplicaBalance);
                 b.bind(MetadataCreateDataStreamService.class).toInstance(metadataCreateDataStreamService);
                 b.bind(SearchService.class).toInstance(searchService);

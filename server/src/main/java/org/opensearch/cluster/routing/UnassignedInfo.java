@@ -150,7 +150,11 @@ public final class UnassignedInfo implements ToXContentFragment, Writeable {
         /**
          * Unassigned as a result of closing an index.
          */
-        INDEX_CLOSED
+        INDEX_CLOSED,
+        /**
+         * Child shard added for online split of shard.
+         */
+        SPLIT_SHARD_ADDED
     }
 
     /**

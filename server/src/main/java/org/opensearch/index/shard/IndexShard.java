@@ -3698,6 +3698,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     throw e;
                 }
                 break;
+            case LOCAL_SHARD_SPLIT:
+                return;
             default:
                 throw new IllegalArgumentException("Unknown recovery source " + recoveryState.getRecoverySource());
         }

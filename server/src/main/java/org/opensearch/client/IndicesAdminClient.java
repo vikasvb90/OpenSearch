@@ -65,6 +65,8 @@ import org.opensearch.action.admin.indices.forcemerge.ForceMergeResponse;
 import org.opensearch.action.admin.indices.get.GetIndexRequest;
 import org.opensearch.action.admin.indices.get.GetIndexRequestBuilder;
 import org.opensearch.action.admin.indices.get.GetIndexResponse;
+import org.opensearch.action.admin.indices.localsplit.LocalShardSplit;
+import org.opensearch.action.admin.indices.localsplit.LocalShardSplitResponse;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequest;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequestBuilder;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsResponse;
@@ -783,6 +785,11 @@ public interface IndicesAdminClient extends OpenSearchClient {
      * Shrinks an index using an explicit request allowing to specify the settings, mappings and aliases of the target index of the index.
      */
     void resizeIndex(ResizeRequest request, ActionListener<ResizeResponse> listener);
+
+    /**
+     * Split a given shard id into given number of shards.
+     */
+    void localShardSplit(LocalShardSplit request, ActionListener<LocalShardSplitResponse> listener);
 
     /**
      * Swaps the index pointed to by an alias given all provided conditions are satisfied

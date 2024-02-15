@@ -229,6 +229,9 @@ import org.opensearch.action.admin.indices.get.GetIndexAction;
 import org.opensearch.action.admin.indices.get.GetIndexRequest;
 import org.opensearch.action.admin.indices.get.GetIndexRequestBuilder;
 import org.opensearch.action.admin.indices.get.GetIndexResponse;
+import org.opensearch.action.admin.indices.localsplit.LocalShardSplit;
+import org.opensearch.action.admin.indices.localsplit.LocalShardSplitAction;
+import org.opensearch.action.admin.indices.localsplit.LocalShardSplitResponse;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsAction;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequest;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequestBuilder;
@@ -2004,6 +2007,11 @@ public abstract class AbstractClient implements Client {
         @Override
         public void resizeIndex(ResizeRequest request, ActionListener<ResizeResponse> listener) {
             execute(ResizeAction.INSTANCE, request, listener);
+        }
+
+        @Override
+        public void localShardSplit(LocalShardSplit request, ActionListener<LocalShardSplitResponse> listener) {
+            execute(LocalShardSplitAction.INSTANCE, request, listener);
         }
 
         @Override
