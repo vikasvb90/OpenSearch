@@ -1432,10 +1432,10 @@ public class IndicesRequestCacheTests extends OpenSearchSingleNodeTestCase {
             RetentionLeaseSyncer.EMPTY,
             SegmentReplicationCheckpointPublisher.EMPTY,
             null,
-            null,
             localNode,
             null,
-            DiscoveryNodes.builder().add(localNode).build()
+            DiscoveryNodes.builder().add(localNode).build(),
+            null
         );
 
         // Verify that the new shard requestStats entries are empty.

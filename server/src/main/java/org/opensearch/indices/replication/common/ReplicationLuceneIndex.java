@@ -427,6 +427,9 @@ public final class ReplicationLuceneIndex extends ReplicationTimer implements To
         }
 
         public void addRecoveredBytes(long bytes) {
+            if (reused) {
+                throw new IllegalStateException("Reused recovery bytes");
+            }
             assert reused == false : "file is marked as reused, can't update recovered bytes";
             assert bytes >= 0 : "can't recovered negative bytes. got [" + bytes + "]";
             recovered += bytes;

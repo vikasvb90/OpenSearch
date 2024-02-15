@@ -15,6 +15,7 @@ import org.opensearch.core.action.ActionListener;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 
 /**
  * An extension of {@link BlobContainer} that adds {@link AsyncMultiStreamBlobContainer#asyncBlobUpload} to allow
@@ -53,4 +54,17 @@ public interface AsyncMultiStreamBlobContainer extends BlobContainer {
     void deleteAsync(ActionListener<DeleteResult> completionListener);
 
     void deleteBlobsAsyncIgnoringIfNotExists(List<String> blobNames, ActionListener<Void> completionListener);
+    /**
+     * Should copy files from source remote directory to current remote directory if any of the provided files
+     * doesn't already exist.
+     * It should first make sure that all provided files are present in source directory. Also, it should make an exact
+     * copy of the source file. This means that all parts if applicable should be an exact replica and metadata and tags
+     * should be copied over.
+     *
+     * @param files Files to be copied from source.
+     * @param blobContainer Source container from which files are to be copied.
+     * @return Subset of files from the provided files which were actually copied from source to target depending on the
+     *         availability of file in source remote directory/
+     */
+    Set<String> copyFilesFromSrcRemote(Set<String> files, AsyncMultiStreamBlobContainer blobContainer);
 }

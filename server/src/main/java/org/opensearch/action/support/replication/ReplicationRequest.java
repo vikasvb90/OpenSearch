@@ -201,7 +201,7 @@ public abstract class ReplicationRequest<Request extends ReplicationRequest<Requ
         return (Request) this;
     }
 
-    long routedBasedOnClusterVersion() {
+    public long routedBasedOnClusterVersion() {
         return routedBasedOnClusterVersion;
     }
 

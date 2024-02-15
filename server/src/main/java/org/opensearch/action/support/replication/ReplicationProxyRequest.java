@@ -9,6 +9,7 @@
 package org.opensearch.action.support.replication;
 
 import org.opensearch.cluster.routing.ShardRouting;
+import org.opensearch.core.index.shard.ShardId;
 
 import java.util.Objects;
 
@@ -32,6 +33,7 @@ public class ReplicationProxyRequest<ReplicaRequest> {
     private final ReplicaRequest replicaRequest;
 
     private final long primaryTerm;
+    private final boolean replicatingToChild;
 
     private ReplicationProxyRequest(
         ShardRouting shardRouting,
@@ -49,6 +51,7 @@ public class ReplicationProxyRequest<ReplicaRequest> {
         this.pendingReplicationActions = Objects.requireNonNull(pendingReplicationActions);
         this.replicaRequest = Objects.requireNonNull(replicaRequest);
         this.primaryTerm = primaryTerm;
+        this.replicatingToChild = primaryRouting.splitting() && shardRouting.isSplitTargetOf(primaryRouting);
     }
 
     public ShardRouting getShardRouting() {
@@ -77,6 +80,10 @@ public class ReplicationProxyRequest<ReplicaRequest> {
 
     public long getPrimaryTerm() {
         return primaryTerm;
+    }
+
+    public boolean isReplicatingToChild() {
+        return replicatingToChild;
     }
 
     /**

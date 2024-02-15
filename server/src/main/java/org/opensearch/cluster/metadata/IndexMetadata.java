@@ -51,6 +51,7 @@ import org.opensearch.common.compress.CompressedXContent;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.util.set.Sets;
 import org.opensearch.common.xcontent.XContentHelper;
 import org.opensearch.core.Assertions;
 import org.opensearch.core.common.Strings;
@@ -80,6 +81,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -590,6 +592,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         Property.IndexScope
     );
     public static final String INDEX_UUID_NA_VALUE = Strings.UNKNOWN_UUID_VALUE;
+    public static final int SPLIT_PARENT_TERM = -5;
 
     public static final String INDEX_ROUTING_REQUIRE_GROUP_PREFIX = "index.routing.allocation.require";
     public static final String INDEX_ROUTING_INCLUDE_GROUP_PREFIX = "index.routing.allocation.include";
@@ -657,6 +660,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     static final String KEY_ALIASES = "aliases";
     static final String KEY_ROLLOVER_INFOS = "rollover_info";
     static final String KEY_SYSTEM = "system";
+    static final String KEY_SPLIT_SHARDS_METADATA = "split_shards_metadata";
     public static final String KEY_PRIMARY_TERMS = "primary_terms";
     public static final String REMOTE_STORE_CUSTOM_KEY = "remote_store";
     public static final String TRANSLOG_METADATA_KEY = "translog_metadata";
@@ -714,6 +718,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     private final Context context;
 
+    private final SplitShardsMetadata splitShardsMetadata;
+
     private IndexMetadata(
         final Index index,
         final long version,
@@ -742,7 +748,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         final Map<String, RolloverInfo> rolloverInfos,
         final boolean isSystem,
         final int indexTotalShardsPerNodeLimit,
-        final Context context
+        final Context context,
+        final SplitShardsMetadata splitShardsMetadata
     ) {
 
         this.index = index;
@@ -772,7 +779,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         this.indexCreatedVersion = indexCreatedVersion;
         this.indexUpgradedVersion = indexUpgradedVersion;
         this.routingNumShards = routingNumShards;
-        this.routingFactor = routingNumShards / numberOfShards;
+        this.routingFactor = routingNumShards / splitShardsMetadata.getNumberOfRootShards();
         this.routingPartitionSize = routingPartitionSize;
         this.waitForActiveShards = waitForActiveShards;
         this.rolloverInfos = Collections.unmodifiableMap(rolloverInfos);
@@ -780,7 +787,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         this.isRemoteSnapshot = IndexModule.Type.REMOTE_SNAPSHOT.match(this.settings);
         this.indexTotalShardsPerNodeLimit = indexTotalShardsPerNodeLimit;
         this.context = context;
-        assert numberOfShards * routingFactor == routingNumShards : routingNumShards + " must be a multiple of " + numberOfShards;
+        this.splitShardsMetadata = splitShardsMetadata;
+        assert splitShardsMetadata.getNumberOfRootShards() * routingFactor == routingNumShards : routingNumShards
+            + " must be a multiple of " + splitShardsMetadata.getNumberOfRootShards();
     }
 
     public Index getIndex() {
@@ -858,6 +867,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return numberOfShards;
     }
 
+    public long[] getPrimaryTerms() {
+        return primaryTerms.clone();
+    }
+
     public int getNumberOfReplicas() {
         return numberOfReplicas;
     }
@@ -932,8 +945,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return rolloverInfos;
     }
 
+    public SplitShardsMetadata getSplitShardsMetadata() {
+        return splitShardsMetadata;
+    }
+
     public Set<String> inSyncAllocationIds(int shardId) {
-        assert shardId >= 0 && shardId < numberOfShards;
         return inSyncAllocationIds.get(shardId);
     }
 
@@ -1015,6 +1031,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         if (!Objects.equals(context, that.context)) {
             return false;
         }
+        if (!splitShardsMetadata.equals(that.splitShardsMetadata)) {
+            return false;
+        }
         return true;
     }
 
@@ -1034,6 +1053,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         result = 31 * result + rolloverInfos.hashCode();
         result = 31 * result + Boolean.hashCode(isSystem);
         result = 31 * result + Objects.hashCode(context);
+        result = 31 * result + splitShardsMetadata.hashCode();
         return result;
     }
 
@@ -1079,6 +1099,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         private final Diff<Map<String, RolloverInfo>> rolloverInfos;
         private final boolean isSystem;
         private final Context context;
+        private Diff<SplitShardsMetadata> splitMetadata;
 
         IndexMetadataDiff(IndexMetadata before, IndexMetadata after) {
             index = after.index.getName();
@@ -1102,6 +1123,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             rolloverInfos = DiffableUtils.diff(before.rolloverInfos, after.rolloverInfos, DiffableUtils.getStringKeySerializer());
             isSystem = after.isSystem;
             context = after.context;
+            splitMetadata = after.splitShardsMetadata.diff(before.splitShardsMetadata);
         }
 
         private static final DiffableUtils.DiffableValueReader<String, AliasMetadata> ALIAS_METADATA_DIFF_VALUE_READER =
@@ -1122,7 +1144,12 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             aliasesVersion = in.readVLong();
             state = State.fromId(in.readByte());
             settings = Settings.readSettingsFromStream(in);
-            primaryTerms = in.readVLongArray();
+
+            if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+                primaryTerms = in.readZLongArray();
+            } else {
+                primaryTerms = in.readVLongArray();
+            }
             mappings = DiffableUtils.readJdkMapDiff(in, DiffableUtils.getStringKeySerializer(), MAPPING_DIFF_VALUE_READER);
             aliases = DiffableUtils.readJdkMapDiff(in, DiffableUtils.getStringKeySerializer(), ALIAS_METADATA_DIFF_VALUE_READER);
             customData = DiffableUtils.readJdkMapDiff(in, DiffableUtils.getStringKeySerializer(), CUSTOM_DIFF_VALUE_READER);
@@ -1138,6 +1165,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             } else {
                 context = null;
             }
+            if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+                splitMetadata = SplitShardsMetadata.readDiffFrom(in);
+            }
         }
 
         @Override
@@ -1150,7 +1180,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             out.writeVLong(aliasesVersion);
             out.writeByte(state.id);
             Settings.writeSettingsToStream(settings, out);
-            out.writeVLongArray(primaryTerms);
+            if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+                out.writeZLongArray(primaryTerms);
+            } else {
+                out.writeVLongArray(primaryTerms);
+            }
             mappings.writeTo(out);
             aliases.writeTo(out);
             customData.writeTo(out);
@@ -1159,6 +1193,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             out.writeBoolean(isSystem);
             if (out.getVersion().onOrAfter(Version.V_2_17_0)) {
                 out.writeOptionalWriteable(context);
+            }
+            if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+                splitMetadata.writeTo(out);
             }
         }
 
@@ -1177,9 +1214,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             builder.aliases.putAll(aliases.apply(part.aliases));
             builder.customMetadata.putAll(customData.apply(part.customData));
             builder.inSyncAllocationIds.putAll(inSyncAllocationIds.apply(part.inSyncAllocationIds));
+
             builder.rolloverInfos.putAll(rolloverInfos.apply(part.rolloverInfos));
             builder.system(isSystem);
             builder.context(context);
+            builder.splitShardsMetadata(splitMetadata.apply(part.splitShardsMetadata));
             return builder.build();
         }
     }
@@ -1193,7 +1232,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         builder.setRoutingNumShards(in.readInt());
         builder.state(State.fromId(in.readByte()));
         builder.settings(readSettingsFromStream(in));
-        builder.primaryTerms(in.readVLongArray());
+        if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+            builder.primaryTerms(in.readZLongArray());
+        } else {
+            builder.primaryTerms(in.readVLongArray());
+        }
         int mappingsSize = in.readVInt();
         for (int i = 0; i < mappingsSize; i++) {
             MappingMetadata mappingMd = new MappingMetadata(in);
@@ -1225,6 +1268,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         if (in.getVersion().onOrAfter(Version.V_2_17_0)) {
             builder.context(in.readOptionalWriteable(Context::new));
         }
+        if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+            builder.splitShardsMetadata(new SplitShardsMetadata(in));
+        }
         return builder.build();
     }
 
@@ -1238,7 +1284,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         out.writeInt(routingNumShards);
         out.writeByte(state.id());
         writeSettingsToStream(settings, out);
-        out.writeVLongArray(primaryTerms);
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            out.writeZLongArray(primaryTerms);
+        } else {
+            out.writeVLongArray(primaryTerms);
+        }
         out.writeVInt(mappings.size());
         for (final MappingMetadata cursor : mappings.values()) {
             cursor.writeTo(out);
@@ -1266,6 +1316,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         if (out.getVersion().onOrAfter(Version.V_2_17_0)) {
             out.writeOptionalWriteable(context);
         }
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            splitShardsMetadata.writeTo(out);
+        }
     }
 
     @Override
@@ -1291,6 +1344,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         out.writeBoolean(isSystem);
         if (out.getVersion().onOrAfter(Version.V_2_17_0)) {
             out.writeOptionalWriteable(context);
+        }
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            splitShardsMetadata.writeTo(out);
         }
     }
 
@@ -1328,6 +1384,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             .append(isSystem)
             .append(", context=")
             .append(context)
+            .append(", splitShardsMetadata=")
+            .append(splitShardsMetadata)
             .append("}")
             .toString();
     }
@@ -1376,6 +1434,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         private Integer routingNumShards;
         private boolean isSystem;
         private Context context;
+        private SplitShardsMetadata splitShardsMetadata;
 
         public Builder(String index) {
             this.index = index;
@@ -1404,6 +1463,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.rolloverInfos = new HashMap<>(indexMetadata.rolloverInfos);
             this.isSystem = indexMetadata.isSystem;
             this.context = indexMetadata.context;
+            this.splitShardsMetadata = new SplitShardsMetadata.Builder(indexMetadata.splitShardsMetadata).build();
         }
 
         public Builder index(String index) {
@@ -1443,6 +1503,45 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
          */
         public int numberOfShards() {
             return settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1);
+        }
+
+        public Builder updateMetadataForNewChildShards(Map<Integer, String> newChildAllocationIds, int sourceShardId) {
+
+            // Now update primary terms against child shard ids
+            int numOfFinalPrimaryTerms = this.primaryTerms.length + newChildAllocationIds.size();
+            long []finalPrimaryTerms = Arrays.copyOf(this.primaryTerms, numOfFinalPrimaryTerms);
+            long parentPrimaryTerm = this.primaryTerms[sourceShardId];
+            Arrays.fill(finalPrimaryTerms, this.primaryTerms.length, numOfFinalPrimaryTerms, parentPrimaryTerm);
+            finalPrimaryTerms[sourceShardId] = -1;
+            this.primaryTerms = finalPrimaryTerms;
+
+            // Add in-sync allocations of primary child shards
+            newChildAllocationIds.forEach((shardId, newAllocationId) -> {
+                Collection<String> curAllocIds = this.inSyncAllocationIds.get(shardId);
+                Set<String> shardAllocIds = curAllocIds == null ? new HashSet<>() : new HashSet<>(curAllocIds);
+                shardAllocIds.add(newAllocationId);
+                putInSyncAllocationIds(shardId, shardAllocIds);
+            });
+            this.inSyncAllocationIds.remove(sourceShardId);
+
+            SplitShardsMetadata.Builder splitShardsMetadata = new SplitShardsMetadata.Builder(this.splitShardsMetadata);
+            splitShardsMetadata.updateSplitMetadataForChildShards(sourceShardId, newChildAllocationIds.keySet());
+
+            this.splitShardsMetadata = splitShardsMetadata.build();
+            numberOfShards(this.splitShardsMetadata.getNumberOfShards());
+            this.settingsVersion += 1;
+
+            return this;
+        }
+
+        public Builder cancelSplit(int sourceShardId) {
+            for (ShardRange child : splitShardsMetadata.getChildShardsOfParent(sourceShardId)) {
+                inSyncAllocationIds.remove(child.getShardId());
+            }
+            SplitShardsMetadata.Builder splitShardsMetadata = new SplitShardsMetadata.Builder(this.splitShardsMetadata);
+            splitShardsMetadata.cancelSplit(sourceShardId);
+            this.splitShardsMetadata = splitShardsMetadata.build();
+            return this;
         }
 
         public Builder numberOfReplicas(int numberOfReplicas) {
@@ -1541,6 +1640,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
         public Builder putRolloverInfo(RolloverInfo rolloverInfo) {
             rolloverInfos.put(rolloverInfo.getAlias(), rolloverInfo);
+            return this;
+        }
+
+        public Builder splitShardsMetadata(SplitShardsMetadata splitShardsMetadata) {
+            this.splitShardsMetadata = splitShardsMetadata;
             return this;
         }
 
@@ -1645,7 +1749,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             if (INDEX_NUMBER_OF_SHARDS_SETTING.exists(settings) == false) {
                 throw new IllegalArgumentException("must specify number of shards for index [" + index + "]");
             }
-            final int numberOfShards = INDEX_NUMBER_OF_SHARDS_SETTING.get(settings);
+            if (splitShardsMetadata == null) {
+                this.splitShardsMetadata = new SplitShardsMetadata.Builder(numberOfShards()).build();
+            }
+            final int numberOfShards = splitShardsMetadata.getNumberOfShards();
 
             if (INDEX_NUMBER_OF_REPLICAS_SETTING.exists(settings) == false) {
                 throw new IllegalArgumentException("must specify number of replicas for index [" + index + "]");
@@ -1672,8 +1779,16 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             for (int i = 0; i < numberOfShards; i++) {
                 if (inSyncAllocationIds.containsKey(i)) {
                     filledInSyncAllocationIds.put(i, Collections.unmodifiableSet(new HashSet<>(inSyncAllocationIds.get(i))));
-                } else {
+                } else if (splitShardsMetadata.isEmptyParentShard(i) == false) {
                     filledInSyncAllocationIds.put(i, Collections.emptySet());
+                }
+
+                if (splitShardsMetadata.isSplitOfShardInProgress(i) == true) {
+                    for (ShardRange child : splitShardsMetadata.getChildShardsOfParent(i)) {
+                        if (inSyncAllocationIds.containsKey(child.getShardId())) {
+                            filledInSyncAllocationIds.put(child.getShardId(), inSyncAllocationIds.get(child.getShardId()));
+                        }
+                    }
                 }
             }
             final Map<String, String> requireMap = INDEX_ROUTING_REQUIRE_GROUP_SETTING.getAsMap(settings);
@@ -1713,7 +1828,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 throw new IllegalStateException(
                     "primaryTerms length is ["
                         + primaryTerms.length
-                        + "] but should be equal to number of shards ["
+                        + "] but should be equal to total of serving shards and empty shards ["
                         + numberOfShards()
                         + "]"
                 );
@@ -1765,7 +1880,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 rolloverInfos,
                 isSystem,
                 indexTotalShardsPerNodeLimit,
-                context
+                context,
+                splitShardsMetadata
             );
         }
 
@@ -1845,7 +1961,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 builder.endArray();
 
                 builder.startObject(IndexMetadata.KEY_PRIMARY_TERMS);
-                for (int shard = 0; shard < indexMetadata.getNumberOfShards(); shard++) {
+                for (int shard = 0; shard < indexMetadata.primaryTerms.length; shard++) {
                     builder.field(Integer.toString(shard), indexMetadata.primaryTerm(shard));
                 }
                 builder.endObject();
@@ -1866,6 +1982,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 cursor.toXContent(builder, params);
             }
             builder.endObject();
+
+            builder.startObject(KEY_SPLIT_SHARDS_METADATA);
+            indexMetadata.splitShardsMetadata.toXContent(builder, params);
+            builder.endObject();
+
             builder.field(KEY_SYSTEM, indexMetadata.isSystem);
 
             if (indexMetadata.context != null) {
@@ -1956,6 +2077,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                         parser.skipChildren();
                     } else if (CONTEXT_KEY.equals(currentFieldName)) {
                         builder.context(Context.fromXContent(parser));
+                    } else if (KEY_SPLIT_SHARDS_METADATA.equals(currentFieldName)) {
+                        builder.splitShardsMetadata(SplitShardsMetadata.parse(parser));
                     } else {
                         // assume it's custom index metadata
                         builder.putCustom(currentFieldName, parser.mapStrings());
@@ -2096,7 +2219,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     /**
      * Returns the number of shards that should be used for routing. This basically defines the hash space we use in
      * {@link org.opensearch.cluster.routing.OperationRouting#generateShardId(IndexMetadata, String, String)} to route documents
-     * to shards based on their ID or their specific routing value. The default value is {@link #getNumberOfShards()}. This value only
+     * to shards based on their ID or their specific routing value. The default value is {@link #getNumberOfShards()} ()}. This value only
      * changes if and index is shrunk.
      */
     public int getRoutingNumShards() {
@@ -2120,6 +2243,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @return a the source shard ID to split off from
      */
     public static ShardId selectSplitShard(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
+        if (sourceIndexMetadata.getNumberOfShards() > sourceIndexMetadata.getSplitShardsMetadata().getNumberOfRootShards()) {
+            throw new IllegalArgumentException(
+                "Cannot perform an index level split as one or more shards of this index has been split. "
+            );
+        }
         int numSourceShards = sourceIndexMetadata.getNumberOfShards();
         if (shardId >= numTargetShards) {
             throw new IllegalArgumentException(
@@ -2139,7 +2267,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @return a the source shard ID to clone from
      */
     public static ShardId selectCloneShard(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
-        int numSourceShards = sourceIndexMetadata.getNumberOfShards();
+        int numSourceShards = sourceIndexMetadata.primaryTerms.length;
         if (numSourceShards != numTargetShards) {
             throw new IllegalArgumentException(
                 "the number of target shards ("
@@ -2174,7 +2302,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             );
         }
         // this is just an additional assertion that ensures we are a factor of the routing num shards.
-        assert sourceIndexMetadata.getNumberOfShards() == 1 // special case - we can split into anything from 1 shard
+        assert sourceIndexMetadata.primaryTerms.length == 1 // special case - we can split into anything from 1 shard
             || getRoutingFactor(numTargetShards, routingNumShards) >= 0;
     }
 
@@ -2202,6 +2330,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @return a set of shard IDs to shrink into the given shard ID.
      */
     public static Set<ShardId> selectShrinkShards(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
+        if (sourceIndexMetadata.getNumberOfShards() > sourceIndexMetadata.getSplitShardsMetadata().getNumberOfRootShards()) {
+            throw new IllegalArgumentException(
+                "Cannot perform an index level shrink as one or more shards of this index has been split. "
+            );
+        }
         if (shardId >= numTargetShards) {
             throw new IllegalArgumentException(
                 "the number of target shards (" + numTargetShards + ") must be greater than the shard id: " + shardId

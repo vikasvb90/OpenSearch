@@ -48,4 +48,9 @@ public interface BlobMetadata {
      * Gets the size of the blob in bytes.
      */
     long length();
+
+    /**
+     * Gets last modified time of blob in epoch millis.
+     */
+    long lastModified();
 }

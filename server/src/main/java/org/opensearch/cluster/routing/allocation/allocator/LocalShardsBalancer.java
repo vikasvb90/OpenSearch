@@ -14,6 +14,7 @@ import org.apache.lucene.util.IntroSorter;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.Metadata;
 import org.opensearch.cluster.routing.RecoverySource;
+import org.opensearch.cluster.metadata.SplitShardsMetadata;
 import org.opensearch.cluster.routing.RoutingNode;
 import org.opensearch.cluster.routing.RoutingNodes;
 import org.opensearch.cluster.routing.RoutingPool;
@@ -695,6 +696,17 @@ public class LocalShardsBalancer extends ShardsBalancer {
         assert sourceNode != null && sourceNode.containsShard(shardRouting);
         RoutingNode routingNode = sourceNode.getRoutingNode();
         Decision canRemain = allocation.deciders().canRemain(shardRouting, routingNode, allocation);
+        AllocationResult allocationResult = new AllocationResult(null, 0, Decision.Type.NO);
+        List<NodeAllocationResult> nodeExplanationMap = explain ? new ArrayList<>() : null;
+        if (canRemain.type() == Decision.Type.SPLIT) {
+            decideRoutingNode(allocationResult, explain, nodeExplanationMap, sourceNode.getRoutingNode(), shardRouting);
+            return MoveDecision.cannotRemain(
+                canRemain,
+                AllocationDecision.fromDecisionType(allocationResult.bestDecision),
+                allocationResult.targetNode != null ? allocationResult.targetNode.node() : null,
+                nodeExplanationMap
+            );
+        }
         if (canRemain.type() != Decision.Type.NO) {
             return MoveDecision.stay(canRemain);
         }
@@ -706,51 +718,74 @@ public class LocalShardsBalancer extends ShardsBalancer {
          * This is not guaranteed to be balanced after this operation we still try best effort to
          * allocate on the minimal eligible node.
          */
-        Decision.Type bestDecision = Decision.Type.NO;
-        RoutingNode targetNode = null;
-        final List<NodeAllocationResult> nodeExplanationMap = explain ? new ArrayList<>() : null;
-        int weightRanking = 0;
+        allocationResult = new AllocationResult(null, 0, Decision.Type.NO);
+        nodeExplanationMap = explain ? new ArrayList<>() : null;
         for (BalancedShardsAllocator.ModelNode currentNode : sorter.modelNodes) {
             if (currentNode != sourceNode) {
-                RoutingNode target = currentNode.getRoutingNode();
-                if (!explain && inEligibleTargetNode.contains(target)) continue;
-                // don't use canRebalance as we want hard filtering rules to apply. See #17698
-                if (!explain) {
-                    // If we cannot allocate any shard to node marking it in eligible
-                    Decision nodeLevelAllocationDecision = allocation.deciders().canAllocateAnyShardToNode(target, allocation);
-                    if (nodeLevelAllocationDecision.type() != Decision.Type.YES) {
-                        inEligibleTargetNode.add(currentNode.getRoutingNode());
-                        continue;
-                    }
-                }
-                // don't use canRebalance as we want hard filtering rules to apply. See #17698
-                Decision allocationDecision = allocation.deciders().canAllocate(shardRouting, target, allocation);
-                if (explain) {
-                    nodeExplanationMap.add(
-                        new NodeAllocationResult(currentNode.getRoutingNode().node(), allocationDecision, ++weightRanking)
-                    );
-                }
-                // TODO maybe we can respect throttling here too?
-                if (allocationDecision.type().higherThan(bestDecision)) {
-                    bestDecision = allocationDecision.type();
-                    if (bestDecision == Decision.Type.YES) {
-                        targetNode = target;
-                        if (explain == false) {
-                            // we are not in explain mode and already have a YES decision on the best weighted node,
-                            // no need to continue iterating
-                            break;
-                        }
-                    }
+                decideRoutingNode(allocationResult, explain, nodeExplanationMap, currentNode.getRoutingNode(), shardRouting);
+                if (allocationResult.targetFound) {
+                    break;
                 }
             }
         }
 
         return MoveDecision.cannotRemain(
             canRemain,
-            AllocationDecision.fromDecisionType(bestDecision),
-            targetNode != null ? targetNode.node() : null,
+            AllocationDecision.fromDecisionType(allocationResult.bestDecision),
+            allocationResult.targetNode != null ? allocationResult.targetNode.node() : null,
             nodeExplanationMap
         );
+    }
+
+    private static class AllocationResult {
+        private RoutingNode targetNode;
+        private int weightRanking;
+        private Decision.Type bestDecision;
+        private boolean targetFound = false;
+
+        public AllocationResult(RoutingNode targetNode, int weightRanking, Decision.Type bestDecision) {
+            this.targetNode = targetNode;
+            this.weightRanking = weightRanking;
+            this.bestDecision = bestDecision;
+        }
+    }
+
+    private void decideRoutingNode(
+        AllocationResult allocationResult,
+        boolean explain,
+        final List<NodeAllocationResult> nodeExplanationMap,
+        RoutingNode target,
+        ShardRouting shardRouting
+    ) {
+        if (!explain && inEligibleTargetNode.contains(target)) {
+            return;
+        }
+        // don't use canRebalance as we want hard filtering rules to apply. See #17698
+        if (!explain) {
+            // If we cannot allocate any shard to node marking it in eligible
+            Decision nodeLevelAllocationDecision = allocation.deciders().canAllocateAnyShardToNode(target, allocation);
+            if (nodeLevelAllocationDecision.type() != Decision.Type.YES) {
+                inEligibleTargetNode.add(target);
+                return;
+            }
+        }
+        // don't use canRebalance as we want hard filtering rules to apply. See #17698
+        Decision allocationDecision = allocation.deciders().canAllocate(shardRouting, target, allocation);
+        if (explain) {
+            nodeExplanationMap.add(new NodeAllocationResult(target.node(), allocationDecision, ++allocationResult.weightRanking));
+        }
+        // TODO maybe we can respect throttling here too?
+        if (allocationDecision.type().higherThan(allocationResult.bestDecision)) {
+            allocationResult.bestDecision = allocationDecision.type();
+            if (allocationResult.bestDecision == Decision.Type.YES) {
+                allocationResult.targetNode = target;
+                if (explain == false) {
+                    // we are not in explain mode and already have a YES decision on the best weighted node,
+                    // no need to continue iterating
+                    allocationResult.targetFound = true;
+                }
+            }
+        }
     }
 
     /**
@@ -933,6 +968,119 @@ public class LocalShardsBalancer extends ShardsBalancer {
             secondaryLength = 0;
         } while (primaryLength > 0);
         // clear everything we have either added it or moved to ignoreUnassigned
+    }
+
+    @Override
+    public void assignChildShardsOfSplittingShards() {
+        List<ShardRouting> splittingShards = routingNodes.splitting();
+        if (splittingShards.isEmpty()) {
+            return;
+        }
+
+        List<SplittingShardAssignmentInfo> splittingShardAssignmentInfos = new ArrayList<>();
+        for (ShardRouting splittingShard : splittingShards) {
+            IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(splittingShard.index());
+            SplitShardsMetadata splitShardsMetadata = indexMetadata.getSplitShardsMetadata();
+            boolean inProgress = splitShardsMetadata.isSplitOfShardInProgress(splittingShard.shardId().id())
+                && allocation.changes().isSplitOfShardFailed(splittingShard) == false;
+            ShardRouting assignedPrimaryParent = routingNodes.activePrimary(splittingShard.shardId());
+            if (inProgress && assignedPrimaryParent != null) {
+                List<ShardRouting> primaryChildShards = new ArrayList<>();
+                List<ShardRouting> replicaChildShards = new ArrayList<>();
+
+                for (ShardRouting childShard : splittingShard.getRecoveringChildShards()) {
+                    if (childShard.primary()) {
+                        primaryChildShards.add(childShard);
+                    } else {
+                        replicaChildShards.add(childShard);
+                    }
+                }
+                SplittingShardAssignmentInfo splittingShardAssignmentInfo = new SplittingShardAssignmentInfo(
+                    indexMetadata.getIndexUUID(), assignedPrimaryParent, splittingShard, primaryChildShards,
+                    replicaChildShards);
+                splittingShardAssignmentInfos.add(splittingShardAssignmentInfo);
+            }
+        }
+
+        Collections.shuffle(splittingShardAssignmentInfos);
+        //TODO: build retry and cancel split to come out of failed shard
+
+        for (SplittingShardAssignmentInfo splittingShardAssignmentInfo : splittingShardAssignmentInfos) {
+
+            RoutingNode parentShardNode = routingNodes.node(splittingShardAssignmentInfo.assignedPrimaryParent.currentNodeId());
+            ShardRouting primaryChild;
+            BalancedShardsAllocator.ModelNode parentModelNode = nodes.get(splittingShardAssignmentInfo.assignedPrimaryParent.currentNodeId());
+            Map<ShardRouting, String> assignedRoutingNodes = new HashMap<>();
+            for (int addIdx = 0; addIdx < splittingShardAssignmentInfo.primaryChildShards.size(); addIdx++) {
+                primaryChild = splittingShardAssignmentInfo.primaryChildShards.get(addIdx);
+                Decision currentDecision = allocation.deciders().canAllocate(primaryChild, parentShardNode, allocation);
+                if (currentDecision.type() == Decision.Type.NO) {
+                    break;
+                }
+                parentModelNode.addShard(primaryChild);
+                assignedRoutingNodes.put(primaryChild, parentModelNode.getNodeId());
+            }
+
+            if (assignedRoutingNodes.size() != splittingShardAssignmentInfo.primaryChildShards.size()) {
+                assignedRoutingNodes.keySet().forEach(routing -> {
+                    BalancedShardsAllocator.ModelNode node = nodes.get(assignedRoutingNodes.get(routing));
+                    node.removeShard(routing);
+                });
+                continue;
+            }
+
+            for (ShardRouting replicaChild : splittingShardAssignmentInfo.replicaChildShards) {
+                final AllocateUnassignedDecision allocationDecision = decideAllocateUnassigned(replicaChild);
+                if (allocationDecision.getAllocationDecision() != AllocationDecision.YES) {
+                    break;
+                }
+                String assignedNodeId = allocationDecision.getTargetNode().getId();
+                assignedRoutingNodes.put(replicaChild, nodes.get(assignedNodeId).getNodeId());
+                nodes.get(assignedNodeId).addShard(replicaChild);
+            }
+
+            if (assignedRoutingNodes.size() != splittingShardAssignmentInfo.primaryChildShards.size() +
+                splittingShardAssignmentInfo.replicaChildShards.size()) {
+                assignedRoutingNodes.keySet().forEach(routing -> {
+                    BalancedShardsAllocator.ModelNode node = nodes.get(assignedRoutingNodes.get(routing));
+                    node.removeShard(routing);
+                });
+                continue;
+            }
+
+            if (logger.isTraceEnabled()) {
+                logger.trace("Splitting shard [{}]", splittingShardAssignmentInfo.assignedPrimaryParent.shardId());
+            }
+
+            routingNodes.assignChildShards(
+                splittingShardAssignmentInfo.assignedPrimaryParent,
+                splittingShardAssignmentInfo.splittingPrimaryParent,
+                allocation.changes(),
+                assignedRoutingNodes
+            );
+        }
+
+    }
+
+    private static class SplittingShardAssignmentInfo {
+        final String indexUUID;
+        final ShardRouting assignedPrimaryParent;
+        final ShardRouting splittingPrimaryParent;
+        final List<ShardRouting> primaryChildShards;
+        final List<ShardRouting> replicaChildShards;
+
+        public SplittingShardAssignmentInfo(
+            String indexUUID,
+            ShardRouting assignedPrimaryParent,
+            ShardRouting splittingPrimaryParent,
+            List<ShardRouting> primaryChildShards,
+            List<ShardRouting> replicaChildShards) {
+            this.indexUUID = indexUUID;
+            this.assignedPrimaryParent = assignedPrimaryParent;
+            this.splittingPrimaryParent = splittingPrimaryParent;
+            this.primaryChildShards = primaryChildShards;
+            this.replicaChildShards = replicaChildShards;
+        }
     }
 
     /**

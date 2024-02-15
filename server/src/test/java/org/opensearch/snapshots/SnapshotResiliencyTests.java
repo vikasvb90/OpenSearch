@@ -205,6 +205,7 @@ import org.opensearch.indices.analysis.AnalysisModule;
 import org.opensearch.indices.cluster.IndicesClusterStateService;
 import org.opensearch.indices.mapper.MapperRegistry;
 import org.opensearch.indices.recovery.DefaultRecoverySettings;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.indices.recovery.PeerRecoverySourceService;
 import org.opensearch.indices.recovery.PeerRecoveryTargetService;
 import org.opensearch.indices.recovery.RecoverySettings;
@@ -2142,7 +2143,8 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                     new NodeMappingRefreshAction(transportService, metadataMappingService),
                     repositoriesService,
                     mock(SearchService.class),
-                    new PeerRecoverySourceService(transportService, indicesService, recoverySettings),
+                    new PeerRecoverySourceService(transportService, indicesService, recoverySettings,
+                        new InPlaceShardSplitRecoveryService(indicesService, recoverySettings)),
                     snapshotShardsService,
                     new PrimaryReplicaSyncer(
                         transportService,
@@ -2170,7 +2172,8 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                     ),
                     RetentionLeaseSyncer.EMPTY,
                     SegmentReplicationCheckpointPublisher.EMPTY,
-                    mock(RemoteStoreStatsTrackerFactory.class)
+                    mock(RemoteStoreStatsTrackerFactory.class),
+                    mock(InPlaceShardSplitRecoveryService.class)
                 );
 
                 final SystemIndices systemIndices = new SystemIndices(emptyMap());

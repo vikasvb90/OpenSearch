@@ -339,7 +339,9 @@ public class TestShardRouting {
             buildRecoveryTarget(primary, state),
             unassignedInfo,
             buildAllocationId(state),
-            -1
+            -1,
+            null,
+            null
         );
     }
 
@@ -361,7 +363,9 @@ public class TestShardRouting {
             recoverySource,
             buildUnassignedInfo(state),
             buildAllocationId(state),
-            -1
+            -1,
+            null,
+            null
         );
     }
 }

@@ -168,15 +168,15 @@ public class RemoteClusterStateCleanupManagerTests extends OpenSearchTestCase {
         String clusterUUID = "clusterUUID";
         String clusterName = "test-cluster";
         List<BlobMetadata> inactiveBlobs = Arrays.asList(
-            new PlainBlobMetadata("manifest1.dat", 1L),
-            new PlainBlobMetadata("manifest2.dat", 1L),
-            new PlainBlobMetadata("manifest3.dat", 1L),
-            new PlainBlobMetadata("manifest6.dat", 1L)
+            new PlainBlobMetadata("manifest1.dat", 1L, System.currentTimeMillis()),
+            new PlainBlobMetadata("manifest2.dat", 1L, System.currentTimeMillis()),
+            new PlainBlobMetadata("manifest3.dat", 1L, System.currentTimeMillis()),
+            new PlainBlobMetadata("manifest6.dat", 1L, System.currentTimeMillis())
         );
         List<BlobMetadata> activeBlobs = Arrays.asList(
-            new PlainBlobMetadata("manifest4.dat", 1L),
-            new PlainBlobMetadata("manifest5.dat", 1L),
-            new PlainBlobMetadata("manifest7.dat", 1L)
+            new PlainBlobMetadata("manifest4.dat", 1L, System.currentTimeMillis()),
+            new PlainBlobMetadata("manifest5.dat", 1L, System.currentTimeMillis()),
+            new PlainBlobMetadata("manifest7.dat", 1L, System.currentTimeMillis())
         );
         UploadedIndexMetadata index1Metadata = new UploadedIndexMetadata("index1", "indexUUID1", "index_metadata1__1");
         UploadedIndexMetadata index2Metadata = new UploadedIndexMetadata("index2", "indexUUID2", "index_metadata2__2");
@@ -305,8 +305,8 @@ public class RemoteClusterStateCleanupManagerTests extends OpenSearchTestCase {
     public void testDeleteStaleIndicesRoutingDiffFile() throws IOException {
         String clusterUUID = "clusterUUID";
         String clusterName = "test-cluster";
-        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L));
-        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L));
+        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L, System.currentTimeMillis()));
+        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L, System.currentTimeMillis()));
 
         UploadedMetadataAttribute coordinationMetadata = new UploadedMetadataAttribute(COORDINATION_METADATA, "coordination_metadata");
         UploadedMetadataAttribute templateMetadata = new UploadedMetadataAttribute(TEMPLATES_METADATA, "template_metadata");
@@ -373,8 +373,8 @@ public class RemoteClusterStateCleanupManagerTests extends OpenSearchTestCase {
     public void testDeleteClusterMetadataNoOpsRoutingTableService() throws IOException {
         String clusterUUID = "clusterUUID";
         String clusterName = "test-cluster";
-        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L));
-        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L));
+        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L, System.currentTimeMillis()));
+        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L, System.currentTimeMillis()));
 
         UploadedMetadataAttribute coordinationMetadata = new UploadedMetadataAttribute(COORDINATION_METADATA, "coordination_metadata");
         UploadedMetadataAttribute templateMetadata = new UploadedMetadataAttribute(TEMPLATES_METADATA, "template_metadata");
@@ -473,14 +473,14 @@ public class RemoteClusterStateCleanupManagerTests extends OpenSearchTestCase {
                 Integer.MAX_VALUE,
                 BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC
             )
-        ).thenReturn(List.of(new PlainBlobMetadata("mainfest2", 1L)));
+        ).thenReturn(List.of(new PlainBlobMetadata("mainfest2", 1L, System.currentTimeMillis())));
         when(
             manifest3Container.listBlobsByPrefixInSortedOrder(
                 MANIFEST + DELIMITER,
                 Integer.MAX_VALUE,
                 BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC
             )
-        ).thenReturn(List.of(new PlainBlobMetadata("mainfest3", 1L)));
+        ).thenReturn(List.of(new PlainBlobMetadata("mainfest3", 1L, System.currentTimeMillis())));
         Set<String> uuids = new HashSet<>(Arrays.asList("cluster-uuid1", "cluster-uuid2", "cluster-uuid3"));
         when(remoteClusterStateService.getAllClusterUUIDs(any())).thenReturn(uuids);
         when(blobStoreRepository.basePath()).thenReturn(blobPath);
@@ -519,8 +519,8 @@ public class RemoteClusterStateCleanupManagerTests extends OpenSearchTestCase {
     public void testIndexRoutingFilesCleanupFailureStats() throws Exception {
         String clusterUUID = "clusterUUID";
         String clusterName = "test-cluster";
-        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L));
-        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L));
+        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L, System.currentTimeMillis()));
+        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L, System.currentTimeMillis()));
 
         UploadedMetadataAttribute coordinationMetadata = new UploadedMetadataAttribute(COORDINATION_METADATA, "coordination_metadata");
         UploadedMetadataAttribute templateMetadata = new UploadedMetadataAttribute(TEMPLATES_METADATA, "template_metadata");
@@ -592,8 +592,8 @@ public class RemoteClusterStateCleanupManagerTests extends OpenSearchTestCase {
     public void testIndicesRoutingDiffFilesCleanupFailureStats() throws Exception {
         String clusterUUID = "clusterUUID";
         String clusterName = "test-cluster";
-        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L));
-        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L));
+        List<BlobMetadata> inactiveBlobs = Arrays.asList(new PlainBlobMetadata("manifest1.dat", 1L, System.currentTimeMillis()));
+        List<BlobMetadata> activeBlobs = Arrays.asList(new PlainBlobMetadata("manifest2.dat", 1L, System.currentTimeMillis()));
 
         UploadedMetadataAttribute coordinationMetadata = new UploadedMetadataAttribute(COORDINATION_METADATA, "coordination_metadata");
         UploadedMetadataAttribute templateMetadata = new UploadedMetadataAttribute(TEMPLATES_METADATA, "template_metadata");

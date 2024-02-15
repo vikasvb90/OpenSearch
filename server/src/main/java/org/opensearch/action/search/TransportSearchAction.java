@@ -49,6 +49,7 @@ import org.opensearch.cluster.block.ClusterBlockException;
 import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
+import org.opensearch.cluster.metadata.ShardRange;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.routing.GroupShardsIterator;
@@ -1451,18 +1452,33 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             final SearchContextIdForNode perNode = entry.getValue();
             if (Strings.isEmpty(perNode.getClusterAlias())) {
                 final ShardId shardId = entry.getKey();
-                OperationRouting.getShards(clusterState, shardId);
-                final List<String> targetNodes = Collections.singletonList(perNode.getNode());
-                iterators.add(
-                    new SearchShardIterator(
-                        localClusterAlias,
-                        shardId,
-                        targetNodes,
-                        originalIndices,
-                        perNode.getSearchContextId(),
-                        keepAlive
-                    )
-                );
+                IndexMetadata indexMetadata = clusterState.metadata().getIndexSafe(shardId.getIndex());
+                final List<ShardId> allShardIds;
+                if (indexMetadata.getSplitShardsMetadata().isEmptyParentShard(shardId.id())) {
+                    ShardRange[] childShards = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(shardId.id());
+                    allShardIds = new ArrayList<>();
+                    for (ShardRange childShard : childShards) {
+                        allShardIds.add(new ShardId(shardId.getIndex(), childShard.getShardId()));
+                    }
+                } else {
+                    allShardIds = List.of(shardId);
+                }
+
+                allShardIds.forEach(searchableShardId -> {
+                    OperationRouting.getShards(clusterState, searchableShardId);
+                    final List<String> targetNodes = Collections.singletonList(perNode.getNode());
+                    iterators.add(
+                        new SearchShardIterator(
+                            localClusterAlias,
+                            searchableShardId,
+                            targetNodes,
+                            originalIndices,
+                            perNode.getSearchContextId(),
+                            keepAlive
+                        )
+                    );
+                });
+
             }
         }
         return iterators;

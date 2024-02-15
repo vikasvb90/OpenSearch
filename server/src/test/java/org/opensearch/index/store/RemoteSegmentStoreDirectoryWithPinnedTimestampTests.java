@@ -189,7 +189,7 @@ public class RemoteSegmentStoreDirectoryWithPinnedTimestampTests extends RemoteS
 
         long pinnedTimestampMatchingMetadataFilename2 = RemoteSegmentStoreDirectory.MetadataFilenameUtils.getTimestamp(metadataFilename2) + 10;
         String blobName = "snapshot1__" + pinnedTimestampMatchingMetadataFilename2;
-        when(blobContainer.listBlobs()).thenReturn(Map.of(blobName, new PlainBlobMetadata(blobName, 100)));
+        when(blobContainer.listBlobs()).thenReturn(Map.of(blobName, new PlainBlobMetadata(blobName, 100, System.currentTimeMillis())));
 
         final Map<String, Map<String, String>> metadataFilenameContentMapping = populateMetadata();
         final List<String> filesToBeDeleted = metadataFilenameContentMapping.get(metadataFilename3)

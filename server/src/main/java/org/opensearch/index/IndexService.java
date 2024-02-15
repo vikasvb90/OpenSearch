@@ -562,10 +562,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         final RetentionLeaseSyncer retentionLeaseSyncer,
         final SegmentReplicationCheckpointPublisher checkpointPublisher,
         final RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
-        final RepositoriesService repositoriesService,
         final DiscoveryNode targetNode,
         @Nullable DiscoveryNode sourceNode,
-        DiscoveryNodes discoveryNodes
+        DiscoveryNodes discoveryNodes,
+        final ShardId parentShardId
     ) throws IOException {
         Objects.requireNonNull(retentionLeaseSyncer);
         /*
@@ -691,7 +691,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 recoverySettings,
                 remoteStoreSettings,
                 seedRemote,
-                discoveryNodes
+                discoveryNodes,
+                parentShardId
             );
             eventListener.indexShardStateChanged(indexShard, null, indexShard.state(), "shard created");
             eventListener.afterIndexShardCreated(indexShard);
@@ -801,7 +802,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 if (indexShard != null) {
                     try {
                         // only flush if we are closed (closed index or shutdown) and if we are not deleted
-                        final boolean flushEngine = deleted.get() == false && closed.get();
+                        final boolean flushEngine = deleted.get() == false && closed.get() &&
+                            indexShard.routingEntry().isSplitTarget() == false;
                         indexShard.close(reason, flushEngine, deleted.get());
                     } catch (Exception e) {
                         logger.debug(() -> new ParameterizedMessage("[{}] failed to close index shard", shardId), e);
