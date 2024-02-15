@@ -76,6 +76,12 @@ public class FsBlobStore implements BlobStore {
         return this.bufferSizeInBytes;
     }
 
+    public synchronized void recreateDirectories(Path path) throws IOException {
+        if (this.readOnly == false && Files.exists(path) == false) {
+            Files.createDirectories(path);
+        }
+    }
+
     @Override
     public BlobContainer blobContainer(BlobPath path) {
         try {

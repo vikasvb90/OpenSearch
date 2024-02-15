@@ -41,6 +41,7 @@ import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -95,6 +96,8 @@ public class RemoteDirectory extends Directory {
         this.downloadRateLimiter = downloadRateLimiter;
     }
 
+
+
     /**
      * Returns names of all files stored in this directory. The output must be in sorted (UTF-16,
      * java's {@link String#compareTo}) order.
@@ -115,6 +118,10 @@ public class RemoteDirectory extends Directory {
     }
 
     public List<String> listFilesByPrefixInLexicographicOrder(String filenamePrefix, int limit) throws IOException {
+        return listFilesByPrefixInOrder(filenamePrefix, limit, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC);
+    }
+
+    public List<String> listFilesByPrefixInOrder(String filenamePrefix, int limit, BlobContainer.BlobNameSortOrder order) throws IOException {
         List<String> sortedBlobList = new ArrayList<>();
         AtomicReference<Exception> exception = new AtomicReference<>();
         final CountDownLatch latch = new CountDownLatch(1);
@@ -134,7 +141,7 @@ public class RemoteDirectory extends Directory {
             blobContainer.listBlobsByPrefixInSortedOrder(
                 filenamePrefix,
                 limit,
-                BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC,
+                order,
                 actionListener
             );
             latch.await();
@@ -326,6 +333,19 @@ public class RemoteDirectory extends Directory {
 
     public void delete() throws IOException {
         blobContainer.delete();
+    }
+
+    public Set<String> copyFilesFromSrcRemoteToCurRemote(
+        RemoteDirectory sourceDirectory,
+        Set<String> remoteFiles
+    ) {
+        if (blobContainer instanceof AsyncMultiStreamBlobContainer &&
+            sourceDirectory.blobContainer instanceof AsyncMultiStreamBlobContainer) {
+            AsyncMultiStreamBlobContainer sourceBlobContainer = (AsyncMultiStreamBlobContainer) sourceDirectory.blobContainer;
+            AsyncMultiStreamBlobContainer currentBlobContainer = (AsyncMultiStreamBlobContainer) blobContainer;
+            return currentBlobContainer.copyFilesFromSrcRemote(remoteFiles, sourceBlobContainer);
+        }
+        return Collections.emptySet();
     }
 
     public boolean copyFrom(

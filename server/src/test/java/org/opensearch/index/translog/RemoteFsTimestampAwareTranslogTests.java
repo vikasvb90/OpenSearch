@@ -456,7 +456,7 @@ public class RemoteFsTimestampAwareTranslogTests extends RemoteFsTranslogTests {
                     }
 
                     Map<String, BlobMetadata> pinnedTimestampsMap = new HashMap<>();
-                    pinnedTimestamps.forEach(ts -> pinnedTimestampsMap.put(randomInt(1000) + "__" + ts, new PlainBlobMetadata("x", 100)));
+                    pinnedTimestamps.forEach(ts -> pinnedTimestampsMap.put(randomInt(1000) + "__" + ts, new PlainBlobMetadata("x", 100, System.currentTimeMillis())));
 
                     try {
 
@@ -808,7 +808,7 @@ public class RemoteFsTimestampAwareTranslogTests extends RemoteFsTranslogTests {
         String md4Timestamp = RemoteStoreUtils.invertLong(currentTimeInMillis - 600000);
 
         long pinnedTimestamp = RemoteStoreUtils.invertLong(md3Timestamp) + 10000;
-        when(blobContainer.listBlobs()).thenReturn(Map.of(randomInt(100) + "__" + pinnedTimestamp, new PlainBlobMetadata("xyz", 100)));
+        when(blobContainer.listBlobs()).thenReturn(Map.of(randomInt(100) + "__" + pinnedTimestamp, new PlainBlobMetadata("xyz", 100, System.currentTimeMillis())));
 
         updatePinnedTimstampTask.run();
 
@@ -838,7 +838,7 @@ public class RemoteFsTimestampAwareTranslogTests extends RemoteFsTranslogTests {
         String md3Timestamp = RemoteStoreUtils.invertLong(currentTimeInMillis - 600000);
 
         long pinnedTimestamp = RemoteStoreUtils.invertLong(md2Timestamp) + 10000;
-        when(blobContainer.listBlobs()).thenReturn(Map.of(randomInt(100) + "__" + pinnedTimestamp, new PlainBlobMetadata("xyz", 100)));
+        when(blobContainer.listBlobs()).thenReturn(Map.of(randomInt(100) + "__" + pinnedTimestamp, new PlainBlobMetadata("xyz", 100, System.currentTimeMillis())));
 
         updatePinnedTimstampTask.run();
 

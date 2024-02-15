@@ -87,7 +87,8 @@ public abstract class ReplicationProxy<ReplicaRequest extends ReplicationRequest
             proxyRequest.getPrimaryTerm(),
             proxyRequest.getGlobalCheckpoint(),
             proxyRequest.getMaxSeqNoOfUpdatesOrDeletes(),
-            listener
+            listener,
+            proxyRequest.isReplicatingToChild()
         );
     }
 }

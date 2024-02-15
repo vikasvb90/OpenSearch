@@ -8,10 +8,13 @@
 
 package org.opensearch.index.translog;
 
+import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
+import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.util.concurrent.ReleasableLock;
 import org.opensearch.core.index.shard.ShardId;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.stream.Stream;
 
@@ -133,5 +136,10 @@ public class NoOpTranslogManager implements TranslogManager {
     @Override
     public Translog.TranslogGeneration getTranslogGeneration() {
         return null;
+    }
+
+    @Override
+    public GatedCloseable<Long> acquireRetentionLockWithMinGen() {
+        return new GatedCloseable<>(null, ()->{});
     }
 }

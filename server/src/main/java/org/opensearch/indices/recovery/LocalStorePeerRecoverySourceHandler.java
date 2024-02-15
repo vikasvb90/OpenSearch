@@ -16,6 +16,7 @@ import org.opensearch.common.SetOnce;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.engine.RecoveryEngineException;
 import org.opensearch.index.seqno.RetentionLease;
@@ -30,6 +31,7 @@ import org.opensearch.transport.Transports;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -47,9 +49,13 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
         StartRecoveryRequest request,
         int fileChunkSizeInBytes,
         int maxConcurrentFileChunks,
-        int maxConcurrentOperations
+        int maxConcurrentOperations,
+        boolean skipSegmentFilesTransfer,
+        CancellableThreads cancellableThreads,
+        IndexShard parentShard
     ) {
-        super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations);
+        super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations,
+            skipSegmentFilesTransfer, cancellableThreads, parentShard);
     }
 
     @Override
@@ -83,7 +89,7 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
 
         final StepListener<SendFileResult> sendFileStep = new StepListener<>();
         final StepListener<TimeValue> prepareEngineStep = new StepListener<>();
-        final StepListener<SendSnapshotResult> sendSnapshotStep = new StepListener<>();
+        final StepListener<List<SendSnapshotResult>> sendSnapshotStep = new StepListener<>();
 
         if (isSequenceNumberBasedRecovery) {
             logger.trace("performing sequence numbers based recovery. starting at [{}]", request.startingSeqNo());
@@ -122,26 +128,31 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
                 onSendFileStepComplete(sendFileStep, wrappedSafeCommit, releaseStore);
 
                 final StepListener<ReplicationResponse> deleteRetentionLeaseStep = new StepListener<>();
-                RunUnderPrimaryPermit.run(() -> {
-                    try {
-                        // If the target previously had a copy of this shard then a file-based recovery might move its global
-                        // checkpoint backwards. We must therefore remove any existing retention lease so that we can create a
-                        // new one later on in the recovery.
-                        shard.removePeerRecoveryRetentionLease(
-                            request.targetNode().getId(),
-                            new ThreadedActionListener<>(
-                                logger,
-                                shard.getThreadPool(),
-                                ThreadPool.Names.GENERIC,
-                                deleteRetentionLeaseStep,
-                                false
-                            )
-                        );
-                    } catch (RetentionLeaseNotFoundException e) {
-                        logger.debug("no peer-recovery retention lease for " + request.targetAllocationId());
-                        deleteRetentionLeaseStep.onResponse(null);
-                    }
-                }, shardId + " removing retention lease for [" + request.targetAllocationId() + "]", shard, cancellableThreads, logger);
+                if (shard.routingEntry().isSplitTarget() == true) {
+                    // For the same reason above, we don't have any retention lease for a child primary to delete.
+                    deleteRetentionLeaseStep.onResponse(null);
+                } else {
+                    RunUnderPrimaryPermit.run(() -> {
+                        try {
+                            // If the target previously had a copy of this shard then a file-based recovery might move its global
+                            // checkpoint backwards. We must therefore remove any existing retention lease so that we can create a
+                            // new one later on in the recovery.
+                            shard.removePeerRecoveryRetentionLease(
+                                request.targetNode().getId(),
+                                new ThreadedActionListener<>(
+                                    logger,
+                                    shard.getThreadPool(),
+                                    ThreadPool.Names.GENERIC,
+                                    deleteRetentionLeaseStep,
+                                    false
+                                )
+                            );
+                        } catch (RetentionLeaseNotFoundException e) {
+                            logger.debug("no peer-recovery retention lease for " + request.targetAllocationId());
+                            deleteRetentionLeaseStep.onResponse(null);
+                        }
+                    }, shardId + " removing retention lease for [" + request.targetAllocationId() + "]", shard, cancellableThreads, logger);
+                }
 
                 deleteRetentionLeaseStep.whenComplete(ignored -> {
                     logger.debug("deleteRetentionLeaseStep completed");
@@ -171,10 +182,11 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
              * make sure to do this before sampling the max sequence number in the next step, to ensure that we send
              * all documents up to maxSeqNo in phase2.
              */
+            IndexShard primaryTracker = replicationTrackingShard();
             RunUnderPrimaryPermit.run(
-                () -> shard.initiateTracking(request.targetAllocationId()),
-                shardId + " initiating tracking of " + request.targetAllocationId(),
-                shard,
+                () -> primaryTracker.initiateTracking(request.targetAllocationId()),
+                primaryTracker.shardId() + " initiating tracking of " + request.targetAllocationId(),
+                primaryTracker,
                 cancellableThreads,
                 logger
             );
@@ -209,8 +221,7 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
                 mappingVersionOnPrimary,
                 sendSnapshotStep
             );
-
         }, onFailure);
-        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, onFailure);
+        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, new StepListener<>(), onFailure);
     }
 }

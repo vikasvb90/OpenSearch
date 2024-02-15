@@ -37,6 +37,11 @@ public class EncryptedBlobMetadata<T, U> implements BlobMetadata {
     }
 
     @Override
+    public long lastModified() {
+        return delegate.lastModified();
+    }
+
+    @Override
     public long length() {
         U cryptoContext;
         try {

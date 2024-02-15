@@ -463,7 +463,7 @@ public class InternalSnapshotsInfoServiceTests extends OpenSearchTestCase {
             currentState.custom(RestoreInProgress.TYPE, RestoreInProgress.EMPTY)
         );
         final Map<ShardId, RestoreInProgress.ShardRestoreStatus> shards = new HashMap<>();
-        for (int i = 0; i < indexMetadata.getNumberOfShards(); i++) {
+        for (int i = 0; i < numberOfShards; i++) {
             shards.put(new ShardId(index, i), new RestoreInProgress.ShardRestoreStatus(clusterService.state().nodes().getLocalNodeId()));
         }
 

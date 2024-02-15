@@ -559,7 +559,8 @@ public class ReplicationOperation<
             long primaryTerm,
             long globalCheckpoint,
             long maxSeqNoOfUpdatesOrDeletes,
-            ActionListener<ReplicaResponse> listener
+            ActionListener<ReplicaResponse> listener,
+            boolean replicatingToChild
         );
 
         /**

@@ -48,6 +48,7 @@ import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.inject.Inject;
 import org.opensearch.common.lifecycle.AbstractLifecycleComponent;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.common.util.concurrent.FutureUtils;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
@@ -55,6 +56,7 @@ import org.opensearch.index.IndexService;
 import org.opensearch.index.shard.IndexEventListener;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.tasks.Task;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.TransportChannel;
@@ -92,14 +94,17 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
     private final TransportService transportService;
     private final IndicesService indicesService;
     private final RecoverySettings recoverySettings;
+    private final InPlaceShardSplitRecoveryService splitRecoveryService;
 
     final OngoingRecoveries ongoingRecoveries = new OngoingRecoveries();
 
     @Inject
-    public PeerRecoverySourceService(TransportService transportService, IndicesService indicesService, RecoverySettings recoverySettings) {
+    public PeerRecoverySourceService(TransportService transportService, IndicesService indicesService,
+                                     RecoverySettings recoverySettings, InPlaceShardSplitRecoveryService splitRecoveryService) {
         this.transportService = transportService;
         this.indicesService = indicesService;
         this.recoverySettings = recoverySettings;
+        this.splitRecoveryService = splitRecoveryService;
         // When the target node wants to start a peer recovery it sends a START_RECOVERY request to the source
         // node. Upon receiving START_RECOVERY, the source node will initiate the peer recovery.
         transportService.registerRequestHandler(
@@ -162,6 +167,19 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
 
         final ShardRouting routingEntry = shard.routingEntry();
 
+        if (routingEntry.isSplitTarget()) {
+            ActionListener<Void> initiateRecoveryListener = ActionListener.delegateFailure(listener,
+                (ex, ignore) -> {
+                    logger.info("Initiating child replica recovery of shard [{}]", routingEntry.shardId());
+                    final IndexShard parentShard = indexService.getShard(routingEntry.getParentShardId().id());
+                    assert parentShard.getReplicationGroup().getInSyncAllocationIds().contains(routingEntry.allocationId().getId());
+                    initiateRecovery(request, shard, listener);
+                });
+            logger.info("Adding child replica recovery for node " + request.targetNode().getName() + " on parent shard node " + indicesService.clusterService().localNode().getName());
+            splitRecoveryService.addReplicaRecoveryAfterChildPrimariesSync(routingEntry.getParentShardId(), initiateRecoveryListener);
+            return;
+        }
+
         if (routingEntry.primary() == false || routingEntry.active() == false) {
             throw new DelayRecoveryException("source shard [" + routingEntry + "] is not an active primary");
         }
@@ -176,6 +194,10 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
             throw new DelayRecoveryException("source shard is not marked yet as relocating to [" + request.targetNode() + "]");
         }
 
+        initiateRecovery(request, shard, listener);
+    }
+
+    private void initiateRecovery(StartRecoveryRequest request, IndexShard shard, ActionListener<RecoveryResponse> listener) {
         RecoverySourceHandler handler = ongoingRecoveries.addNewRecovery(request, shard);
         logger.trace(
             "[{}][{}] starting recovery to {}",
@@ -379,7 +401,12 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
                     throttleTime -> shard.recoveryStats().addThrottleTime(throttleTime),
                     shard.isRemoteTranslogEnabled() || request.targetNode().isRemoteStoreNode()
                 );
-                handler = RecoverySourceHandlerFactory.create(shard, recoveryTarget, request, recoverySettings);
+                IndexShard parentShard = null;
+                if (shard.routingEntry().isSplitTarget()) {
+                    parentShard = indicesService.getShardOrNull(shard.getParentShardId());
+                }
+                handler = RecoverySourceHandlerFactory.create(shard, recoveryTarget, request, recoverySettings, false,
+                    new CancellableThreads(), parentShard);
                 return Tuple.tuple(handler, recoveryTarget);
             }
         }

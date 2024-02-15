@@ -79,6 +79,18 @@ public class ReplicationCheckpoint implements Writeable, Comparable<ReplicationC
         this.metadataMap = metadataMap;
     }
 
+    public static ReplicationCheckpoint cloneCheckpointForShardId(ShardId shardId, ReplicationCheckpoint checkpoint) {
+        return new ReplicationCheckpoint(
+            shardId,
+            checkpoint.getPrimaryTerm(),
+            checkpoint.getSegmentsGen(),
+            checkpoint.getSegmentInfosVersion(),
+            checkpoint.getLength(),
+            checkpoint.getCodec(),
+            checkpoint.getMetadataMap()
+        );
+    }
+
     public ReplicationCheckpoint(StreamInput in) throws IOException {
         shardId = new ShardId(in);
         primaryTerm = in.readLong();

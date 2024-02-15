@@ -8,6 +8,7 @@
 
 package org.opensearch.cluster.routing;
 
+import org.opensearch.Version;
 import org.opensearch.cluster.Diff;
 import org.opensearch.cluster.DiffableUtils;
 import org.opensearch.core.common.io.stream.StreamInput;
@@ -15,6 +16,7 @@ import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.index.Index;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 
 import static org.opensearch.cluster.DiffableUtils.MapDiff;
@@ -96,12 +98,14 @@ public class RoutingTableIncrementalDiff implements Diff<RoutingTable>, StringKe
     public static class IndexRoutingTableIncrementalDiff implements Diff<IndexRoutingTable> {
 
         private final Diff<Map<Integer, IndexShardRoutingTable>> indexShardRoutingTables;
+        private final Diff<Map<Integer, IndexShardRoutingTable>> childReplicaRoutingTableDiff;
 
         private final Index index;
 
         public IndexRoutingTableIncrementalDiff(Index index, IndexRoutingTable before, IndexRoutingTable after) {
             this.index = index;
             this.indexShardRoutingTables = DiffableUtils.diff(before.getShards(), after.getShards(), DiffableUtils.getIntKeySerializer());
+            this.childReplicaRoutingTableDiff = DiffableUtils.diff(before.getChildReplicas(), after.getChildReplicas(), DiffableUtils.getIntKeySerializer());
         }
 
         private static final DiffableUtils.DiffableValueReader<Integer, IndexShardRoutingTable> DIFF_VALUE_READER =
@@ -110,17 +114,29 @@ public class RoutingTableIncrementalDiff implements Diff<RoutingTable>, StringKe
         public IndexRoutingTableIncrementalDiff(StreamInput in) throws IOException {
             this.index = new Index(in);
             this.indexShardRoutingTables = DiffableUtils.readJdkMapDiff(in, DiffableUtils.getIntKeySerializer(), DIFF_VALUE_READER);
+            if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+                this.childReplicaRoutingTableDiff = DiffableUtils.readJdkMapDiff(in, DiffableUtils.getIntKeySerializer(), DIFF_VALUE_READER);
+            } else {
+                this.childReplicaRoutingTableDiff = null;
+            }
         }
 
         @Override
         public IndexRoutingTable apply(IndexRoutingTable part) {
-            return new IndexRoutingTable(index, indexShardRoutingTables.apply(part.getShards()));
+            Map<Integer, IndexShardRoutingTable> childReplicaRoutingTable;
+            if (this.childReplicaRoutingTableDiff == null) {
+                childReplicaRoutingTable = new HashMap<>();
+            } else {
+                childReplicaRoutingTable = this.childReplicaRoutingTableDiff.apply(part.getChildReplicas());
+            }
+            return new IndexRoutingTable(index, indexShardRoutingTables.apply(part.getShards()), childReplicaRoutingTable);
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             index.writeTo(out);
             indexShardRoutingTables.writeTo(out);
+            childReplicaRoutingTableDiff.writeTo(out);
         }
 
         public static IndexRoutingTableIncrementalDiff readFrom(StreamInput in) throws IOException {

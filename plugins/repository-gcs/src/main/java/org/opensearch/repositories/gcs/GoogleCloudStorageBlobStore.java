@@ -172,7 +172,7 @@ class GoogleCloudStorageBlobStore implements BlobStore {
                     assert blob.getName().startsWith(path);
                     if (blob.isDirectory() == false) {
                         final String suffixName = blob.getName().substring(path.length());
-                        mapBuilder.put(suffixName, new PlainBlobMetadata(suffixName, blob.getSize()));
+                        mapBuilder.put(suffixName, new PlainBlobMetadata(suffixName, blob.getSize(), blob.getUpdateTime()));
                     }
                 })
         );
