@@ -20,6 +20,7 @@ import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
@@ -42,6 +43,7 @@ import org.opensearch.test.VersionUtils;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntSupplier;
 
@@ -159,11 +161,14 @@ public class RemoteStorePeerRecoverySourceHandlerTests extends OpenSearchIndexLe
             request,
             Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
             between(1, 8),
-            between(1, 8)
+            between(1, 8),
+            false,
+            new CancellableThreads(),
+            null
         ) {
 
             @Override
-            void phase1(
+            protected void phase1(
                 IndexCommit snapshot,
                 long startingSeqNo,
                 IntSupplier translogOps,
@@ -175,13 +180,13 @@ public class RemoteStorePeerRecoverySourceHandlerTests extends OpenSearchIndexLe
             }
 
             @Override
-            void prepareTargetForTranslog(int totalTranslogOps, ActionListener<TimeValue> listener) {
+            protected void prepareTargetForTranslog(int totalTranslogOps, ActionListener<TimeValue> listener) {
                 prepareTargetForTranslogCalled.set(true);
                 super.prepareTargetForTranslog(totalTranslogOps, listener);
             }
 
             @Override
-            void phase2(
+            protected void phase2(
                 long startingSeqNo,
                 long endingSeqNo,
                 Translog.Snapshot snapshot,
@@ -189,7 +194,7 @@ public class RemoteStorePeerRecoverySourceHandlerTests extends OpenSearchIndexLe
                 long maxSeqNoOfUpdatesOrDeletes,
                 RetentionLeases retentionLeases,
                 long mappingVersion,
-                ActionListener<SendSnapshotResult> listener
+                ActionListener<List<SendSnapshotResult>> listener
             ) throws IOException {
                 phase2Called.set(true);
                 super.phase2(
@@ -232,7 +237,8 @@ public class RemoteStorePeerRecoverySourceHandlerTests extends OpenSearchIndexLe
             metadataSnapshot,
             randomBoolean(),
             randomNonNegativeLong(),
-            randomBoolean() || metadataSnapshot.getHistoryUUID() == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : randomNonNegativeLong()
+            randomBoolean() || metadataSnapshot.getHistoryUUID() == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : randomNonNegativeLong(),
+            null
         );
     }
 }

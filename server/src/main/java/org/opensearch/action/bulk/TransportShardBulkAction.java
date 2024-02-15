@@ -64,6 +64,8 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.AllocationId;
+import org.opensearch.cluster.routing.OperationRouting;
+import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.collect.Tuple;
@@ -113,6 +115,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
@@ -375,8 +378,10 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             long primaryTerm,
             long globalCheckpoint,
             long maxSeqNoOfUpdatesOrDeletes,
-            ActionListener<ReplicationOperation.ReplicaResponse> listener
+            ActionListener<ReplicationOperation.ReplicaResponse> listener,
+            boolean replicatingToChild
         ) {
+            assert replicatingToChild == false : "Primary term validation is attempted on child replication";
             String nodeId = replica.currentNodeId();
             final DiscoveryNode node = clusterService.state().nodes().get(nodeId);
             if (node == null) {
@@ -482,6 +487,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     }
                     assert context.isInitial(); // either completed and moved to next or reset
                 }
+
                 // We're done, there's no more operations to execute so we resolve the wrapped listener
                 finishRequest();
             }
@@ -564,13 +570,21 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         ActionListener<Void> itemDoneListener
     ) throws Exception {
         final DocWriteRequest.OpType opType = context.getCurrent().opType();
-
+//        if (context.getBulkShardRequest().shardId().id() == 0) {
+//            logger.info("Executing bulk item");
+//        }
         final UpdateHelper.Result updateResult;
         if (opType == DocWriteRequest.OpType.UPDATE) {
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Executing item update");
+//            }
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
             try {
                 updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier);
             } catch (Exception failure) {
+//                if (context.getBulkShardRequest().shardId().id() == 0) {
+//                    logger.info("Exception in item update");
+//                }
                 // we may fail translating a update to index or delete operation
                 // we use index result to communicate failure while translating update request
                 final Engine.Result result = new Engine.IndexResult(failure, updateRequest.version());
@@ -596,6 +610,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     context.getPrimary().noopUpdate();
                     context.markOperationAsNoOp(updateResult.action());
                     context.markAsCompleted(context.getExecutionResult());
+//                    if (context.getBulkShardRequest().shardId().id() == 0) {
+//                        logger.info("No-Op in item update");
+//                    }
                     return true;
                 default:
                     throw new IllegalStateException("Illegal update operation " + updateResult.getResponseResult());
@@ -612,6 +629,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         final boolean isDelete = context.getRequestToExecute().opType() == DocWriteRequest.OpType.DELETE;
         final Engine.Result result;
         if (isDelete) {
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Executing bulk item delete");
+//            }
             final DeleteRequest request = context.getRequestToExecute();
             result = primary.applyDeleteOperationOnPrimary(
                 version,
@@ -632,8 +652,10 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 request.isRetry()
             );
         }
+//        if (primary.isPrimaryMode() && primary.shardId().id() == 0) {
+//            logger.info("Indexing operation sequence " + result.getSeqNo() + " on shard 0.");
+//        }
         if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
-
             try {
                 primary.mapperService()
                     .merge(
@@ -825,6 +847,29 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             final BulkItemRequest item = request.items()[i];
             final BulkItemResponse response = item.getPrimaryResponse();
             final Engine.Result operationResult;
+            boolean discardOperation = false;
+            if (replica.getParentShardId() != null) {
+                IndexMetadata indexMetadata = replica.indexSettings().getIndexMetadata();
+                // Discard operations belonging to a different child shard. This can happen during in-place shard
+                // split recovery where after all child shards are added to replication tracker, bulk
+                // operations are replicated to all child primaries.
+                int computedShardId = OperationRouting.generateShardId(indexMetadata, item.request().id(),
+                    item.request().routing(), true);
+                discardOperation = computedShardId != replica.shardId().id();
+//                if (replica.routingEntry().isStartedChildReplica()) {
+//                    logger.info("Processing seq no." + response.getResponse().getSeqNo() + " on replica child "
+//                        + replica.shardId().id() + ", discarding " + discardOperation);
+//                } else
+
+            }
+//            if (replica.routingEntry().shardId().id() > 2 && replica.routingEntry().started()) {
+//                logger.info("Processing seq no. on child replica" + response.getResponse().getSeqNo() + " on replica child "
+//                    + replica.shardId().id() + ", discarding " + discardOperation);
+//            }
+//            if (replica.routingEntry().shardId().id() == 1 || replica.routingEntry().shardId().id() == 2) {
+//                logger.info("Processing seq no. on other child replica" + response.getResponse().getSeqNo() + " on replica child ");
+//            }
+
             if (item.getPrimaryResponse().isFailed()) {
                 if (response.getFailure().getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     continue; // ignore replication as we didn't generate a sequence number for this request.
@@ -847,7 +892,15 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     continue; // ignore replication as it's a noop
                 }
                 assert response.getResponse().getSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO;
-                operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);
+                if (discardOperation) {
+                    operationResult = replica.markSeqNoAsNoop(
+                        response.getResponse().getSeqNo(),
+                        response.getResponse().getPrimaryTerm(),
+                        Translog.NoOp.FILLING_GAPS
+                    );
+                } else {
+                    operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);
+                }
             }
             assert operationResult != null : "operation result must never be null when primary response has no failure";
             location = syncOperationResultOrThrow(operationResult, location);

@@ -79,11 +79,14 @@ final class ShardSplittingQuery extends Query {
     private final IndexMetadata indexMetadata;
     private final int shardId;
     private final BitSetProducer nestedParentBitSetProducer;
+    private final boolean includeInProgressChild;
 
-    ShardSplittingQuery(IndexMetadata indexMetadata, int shardId, boolean hasNested) {
+    ShardSplittingQuery(IndexMetadata indexMetadata, int shardId, boolean hasNested,
+                        boolean includeInProgressChild) {
         this.indexMetadata = indexMetadata;
         this.shardId = shardId;
         this.nestedParentBitSetProducer = hasNested ? newParentDocBitSetProducer(indexMetadata.getCreationVersion()) : null;
+        this.includeInProgressChild = includeInProgressChild;
     }
 
     @Override
@@ -103,7 +106,8 @@ final class ShardSplittingQuery extends Query {
                     int targetShardId = OperationRouting.generateShardId(
                         indexMetadata,
                         Uid.decodeId(ref.bytes, ref.offset, ref.length),
-                        null
+                        null,
+                        includeInProgressChild
                     );
                     return shardId == targetShardId;
                 };
@@ -147,7 +151,7 @@ final class ShardSplittingQuery extends Query {
                         };
                         // in the _routing case we first go and find all docs that have a routing value and mark the ones we have to delete
                         findSplitDocs(RoutingFieldMapper.NAME, ref -> {
-                            int targetShardId = OperationRouting.generateShardId(indexMetadata, null, ref.utf8ToString());
+                            int targetShardId = OperationRouting.generateShardId(indexMetadata, null, ref.utf8ToString(), includeInProgressChild);
                             return shardId == targetShardId;
                         }, leafReader, maybeWrapConsumer.apply(bitSet::set));
 
@@ -288,7 +292,7 @@ final class ShardSplittingQuery extends Query {
             leftToVisit = 2;
             leafReader.storedFields().document(doc, this);
             assert id != null : "docID must not be null - we might have hit a nested document";
-            int targetShardId = OperationRouting.generateShardId(indexMetadata, id, routing);
+            int targetShardId = OperationRouting.generateShardId(indexMetadata, id, routing, includeInProgressChild);
             return targetShardId != shardId;
         }
     }

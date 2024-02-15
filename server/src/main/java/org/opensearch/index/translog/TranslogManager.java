@@ -9,8 +9,10 @@
 package org.opensearch.index.translog;
 
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.stream.Stream;
 
@@ -141,5 +143,12 @@ public interface TranslogManager {
      */
     Releasable drainSync();
 
+//    /**
+//     * Copy current translog data to target translog
+//     */
+//    void copyTranslogToTarget(TranslogManager translogManager);
+
     Translog.TranslogGeneration getTranslogGeneration();
+
+    GatedCloseable<Long> acquireRetentionLockWithMinGen();
 }

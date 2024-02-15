@@ -87,7 +87,11 @@ public enum AllocationDecision implements Writeable {
     /**
      * No attempt was made to allocate the shard
      */
-    NO_ATTEMPT((byte) 7);
+    NO_ATTEMPT((byte) 7),
+    /**
+     * Shard can be split.
+     */
+    SPLIT((byte) 7);
 
     private final byte id;
 
@@ -158,6 +162,8 @@ public enum AllocationDecision implements Writeable {
                 return YES;
             case THROTTLE:
                 return THROTTLED;
+            case SPLIT:
+                return SPLIT;
             default:
                 assert type == Decision.Type.NO;
                 return NO;

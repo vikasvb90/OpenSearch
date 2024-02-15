@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.replication.ReplicationMode;
 import org.opensearch.action.support.replication.ReplicationResponse;
@@ -163,7 +164,8 @@ public class PublishCheckpointAction extends TransportReplicationAction<
                             IndexNotFoundException.class,
                             AlreadyClosedException.class,
                             IndexShardClosedException.class,
-                            ShardNotInPrimaryModeException.class
+                            ShardNotInPrimaryModeException.class,
+                            PrimaryShardSplitException.class
                         ) != null) {
                             // Node is shutting down or the index was deleted or the shard is closed
                             return;
@@ -202,7 +204,8 @@ public class PublishCheckpointAction extends TransportReplicationAction<
             logger.trace(() -> new ParameterizedMessage("Checkpoint {} received on replica {}", request, replica.shardId()));
             // Condition for ensuring that we ignore Segrep checkpoints received on Docrep shard copies.
             // This case will hit iff the replica hosting node is not remote enabled and replication type != SEGMENT
-            if (replica.indexSettings().isAssignedOnRemoteNode() == false && replica.indexSettings().isSegRepLocalEnabled() == false) {
+            if (replica.indexSettings().isAssignedOnRemoteNode() == false && replica.indexSettings().isSegRepLocalEnabled() == false
+                && replica.routingEntry().isSplitTarget() == false) {
                 logger.trace("Received segrep checkpoint on a docrep shard copy during an ongoing remote migration. NoOp.");
                 return new ReplicaResult();
             }

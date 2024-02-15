@@ -38,6 +38,7 @@ import org.opensearch.Version;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.io.stream.ReleasableBytesStreamOutput;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.lease.Releasables;
@@ -75,11 +76,13 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -735,6 +738,19 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
         }
     }
 
+    /**
+     * Acquires a lock on the translog files, preventing them from being trimmed
+     * Returns min generation reference.
+     */
+    public GatedCloseable<Long> acquireRetentionLockWithMinGen() {
+        try (ReleasableLock ignore = readLock.acquire()) {
+            ensureOpen();
+            final long viewGen = getMinFileGeneration();
+            Closeable closeable = acquireTranslogGenFromDeletionPolicy(viewGen);
+            return new GatedCloseable<>(viewGen, closeable::close);
+        }
+    }
+
     private Closeable acquireTranslogGenFromDeletionPolicy(long viewGen) {
         Releasable toClose = deletionPolicy.acquireTranslogGen(viewGen);
         return () -> {
@@ -785,7 +801,6 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
      */
     public void trimOperations(long belowTerm, long aboveSeqNo) throws IOException {
         assert aboveSeqNo >= SequenceNumbers.NO_OPS_PERFORMED : "aboveSeqNo has to a valid sequence number";
-
         try (ReleasableLock lock = writeLock.acquire()) {
             ensureOpen();
             if (current.getPrimaryTerm() < belowTerm) {
@@ -1498,6 +1513,7 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
      * @opensearch.internal
      */
     public static class NoOp implements Operation {
+        public static final String FILLING_GAPS = "filling gaps";
 
         private final long seqNo;
         private final long primaryTerm;

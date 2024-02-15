@@ -50,6 +50,7 @@ public class SegmentReplicationTarget extends ReplicationTarget {
 
     private final ReplicationCheckpoint checkpoint;
     private final SegmentReplicationSource source;
+    private final IndexShard sourceShard;
     private final SegmentReplicationState state;
     protected final MultiFileWriter multiFileWriter;
 
@@ -57,13 +58,15 @@ public class SegmentReplicationTarget extends ReplicationTarget {
 
     public SegmentReplicationTarget(
         IndexShard indexShard,
+        IndexShard sourceShard,
         ReplicationCheckpoint checkpoint,
         SegmentReplicationSource source,
         ReplicationListener listener
     ) {
-        super("replication_target", indexShard, new ReplicationLuceneIndex(), listener);
+        super("replication_target", indexShard, new ReplicationLuceneIndex(), listener, new CancellableThreads());
         this.checkpoint = checkpoint;
         this.source = source;
+        this.sourceShard = sourceShard;
         this.state = new SegmentReplicationState(
             indexShard.routingEntry(),
             stateIndex,
@@ -109,7 +112,7 @@ public class SegmentReplicationTarget extends ReplicationTarget {
     }
 
     public SegmentReplicationTarget retryCopy() {
-        return new SegmentReplicationTarget(indexShard, checkpoint, source, listener);
+        return new SegmentReplicationTarget(indexShard, sourceShard, checkpoint, source, listener);
     }
 
     @Override
@@ -174,8 +177,9 @@ public class SegmentReplicationTarget extends ReplicationTarget {
         // Get list of files to copy from this checkpoint.
         state.setStage(SegmentReplicationState.Stage.GET_CHECKPOINT_INFO);
         cancellableThreads.checkForCancel();
-        source.getCheckpointMetadata(getId(), checkpoint, checkpointInfoListener);
-
+        ReplicationCheckpoint checkpointOfSourceShard = ReplicationCheckpoint.cloneCheckpointForShardId(
+            sourceShard.shardId(), checkpoint);
+        source.getCheckpointMetadata(getId(), checkpointOfSourceShard, checkpointInfoListener);
         checkpointInfoListener.whenComplete(checkpointInfo -> {
             final List<StoreFileMetadata> filesToFetch = getFiles(checkpointInfo);
             state.setStage(SegmentReplicationState.Stage.GET_FILES);

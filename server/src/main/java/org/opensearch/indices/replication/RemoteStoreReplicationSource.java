@@ -100,7 +100,7 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
         long replicationId,
         ReplicationCheckpoint checkpoint,
         List<StoreFileMetadata> filesToFetch,
-        IndexShard indexShard,
+        IndexShard targetShard,
         BiConsumer<String, Long> fileProgressTracker,
         ActionListener<GetSegmentFilesResponse> listener
     ) {
@@ -112,28 +112,39 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
             logger.debug("Downloading segment files from remote store {}", filesToFetch);
 
             if (remoteMetadataExists()) {
-                final Directory storeDirectory = indexShard.store().directory();
-                final Collection<String> directoryFiles = List.of(storeDirectory.listAll());
+                final Directory targetStoreDirectory = targetShard.store().directory();
+                final Collection<String> directoryFiles = List.of(targetStoreDirectory.listAll());
                 final List<String> toDownloadSegmentNames = new ArrayList<>();
                 for (StoreFileMetadata fileMetadata : filesToFetch) {
                     String file = fileMetadata.name();
                     assert directoryFiles.contains(file) == false : "Local store already contains the file " + file;
                     toDownloadSegmentNames.add(file);
                 }
-                indexShard.getFileDownloader()
-                    .downloadAsync(
-                        cancellableThreads,
-                        remoteDirectory,
-                        new ReplicationStatsDirectoryWrapper(storeDirectory, fileProgressTracker),
-                        toDownloadSegmentNames,
-                        ActionListener.map(listener, r -> new GetSegmentFilesResponse(filesToFetch))
-                    );
+                syncFromRemote(filesToFetch, targetShard, fileProgressTracker, listener, toDownloadSegmentNames);
             } else {
                 listener.onResponse(new GetSegmentFilesResponse(filesToFetch));
             }
         } catch (IOException | RuntimeException e) {
             listener.onFailure(e);
         }
+    }
+
+    protected void syncFromRemote(
+        List<StoreFileMetadata> filesToFetch,
+        IndexShard targetShard,
+        BiConsumer<String, Long> fileProgressTracker,
+        ActionListener<GetSegmentFilesResponse> listener,
+        List<String> toSyncSegmentFiles
+    ) throws IOException {
+        final Directory targetStoreDirectory = targetShard.store().directory();
+        targetShard.getFileDownloader()
+            .downloadAsync(
+                cancellableThreads,
+                remoteDirectory,
+                new ReplicationStatsDirectoryWrapper(targetStoreDirectory, fileProgressTracker),
+                toSyncSegmentFiles,
+                ActionListener.map(listener, r -> new GetSegmentFilesResponse(filesToFetch))
+            );
     }
 
     @Override

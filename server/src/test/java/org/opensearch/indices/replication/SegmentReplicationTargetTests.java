@@ -146,7 +146,7 @@ public class SegmentReplicationTargetTests extends IndexShardTestCase {
         SegmentReplicationTargetService.SegmentReplicationListener segRepListener = mock(
             SegmentReplicationTargetService.SegmentReplicationListener.class
         );
-        segrepTarget = new SegmentReplicationTarget(spyIndexShard, repCheckpoint, segrepSource, segRepListener);
+        segrepTarget = new SegmentReplicationTarget(spyIndexShard, spyIndexShard, repCheckpoint, segrepSource, segRepListener);
 
         segrepTarget.startReplication(new ActionListener<Void>() {
             @Override
@@ -208,7 +208,7 @@ public class SegmentReplicationTargetTests extends IndexShardTestCase {
         SegmentReplicationTargetService.SegmentReplicationListener segRepListener = mock(
             SegmentReplicationTargetService.SegmentReplicationListener.class
         );
-        segrepTarget = new SegmentReplicationTarget(spyIndexShard, repCheckpoint, segrepSource, segRepListener);
+        segrepTarget = new SegmentReplicationTarget(spyIndexShard, spyIndexShard, repCheckpoint, segrepSource, segRepListener);
 
         segrepTarget.startReplication(new ActionListener<Void>() {
             @Override
@@ -261,7 +261,7 @@ public class SegmentReplicationTargetTests extends IndexShardTestCase {
         SegmentReplicationTargetService.SegmentReplicationListener segRepListener = mock(
             SegmentReplicationTargetService.SegmentReplicationListener.class
         );
-        segrepTarget = new SegmentReplicationTarget(spyIndexShard, repCheckpoint, segrepSource, segRepListener);
+        segrepTarget = new SegmentReplicationTarget(spyIndexShard, spyIndexShard, repCheckpoint, segrepSource, segRepListener);
 
         segrepTarget.startReplication(new ActionListener<Void>() {
             @Override
@@ -314,7 +314,7 @@ public class SegmentReplicationTargetTests extends IndexShardTestCase {
         SegmentReplicationTargetService.SegmentReplicationListener segRepListener = mock(
             SegmentReplicationTargetService.SegmentReplicationListener.class
         );
-        segrepTarget = new SegmentReplicationTarget(spyIndexShard, repCheckpoint, segrepSource, segRepListener);
+        segrepTarget = new SegmentReplicationTarget(spyIndexShard, spyIndexShard, repCheckpoint, segrepSource, segRepListener);
 
         doThrow(exception).when(spyIndexShard).finalizeReplication(any());
 
@@ -361,7 +361,7 @@ public class SegmentReplicationTargetTests extends IndexShardTestCase {
         SegmentReplicationTargetService.SegmentReplicationListener segRepListener = mock(
             SegmentReplicationTargetService.SegmentReplicationListener.class
         );
-        segrepTarget = new SegmentReplicationTarget(spyIndexShard, repCheckpoint, segrepSource, segRepListener);
+        segrepTarget = new SegmentReplicationTarget(spyIndexShard, spyIndexShard, repCheckpoint, segrepSource, segRepListener);
 
         doThrow(exception).when(spyIndexShard).finalizeReplication(any());
 
@@ -406,7 +406,7 @@ public class SegmentReplicationTargetTests extends IndexShardTestCase {
         SegmentReplicationTargetService.SegmentReplicationListener segRepListener = mock(
             SegmentReplicationTargetService.SegmentReplicationListener.class
         );
-        segrepTarget = new SegmentReplicationTarget(spyIndexShard, repCheckpoint, segrepSource, segRepListener);
+        segrepTarget = new SegmentReplicationTarget(spyIndexShard, spyIndexShard, repCheckpoint, segrepSource, segRepListener);
         when(spyIndexShard.getSegmentMetadataMap()).thenReturn(SI_SNAPSHOT_DIFFERENT);
         segrepTarget.startReplication(new ActionListener<Void>() {
             @Override
@@ -469,7 +469,7 @@ public class SegmentReplicationTargetTests extends IndexShardTestCase {
             SegmentReplicationTargetService.SegmentReplicationListener.class
         );
 
-        segrepTarget = new SegmentReplicationTarget(spyIndexShard, repCheckpoint, segrepSource, segRepListener);
+        segrepTarget = new SegmentReplicationTarget(spyIndexShard, spyIndexShard, repCheckpoint, segrepSource, segRepListener);
         when(spyIndexShard.getSegmentMetadataMap()).thenReturn(storeMetadataSnapshots.get(0).asMap());
         segrepTarget.startReplication(new ActionListener<Void>() {
             @Override

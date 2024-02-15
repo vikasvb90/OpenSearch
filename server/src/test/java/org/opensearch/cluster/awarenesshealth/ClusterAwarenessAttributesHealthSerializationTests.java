@@ -38,7 +38,8 @@ public class ClusterAwarenessAttributesHealthSerializationTests extends Abstract
             0,
             2,
             2,
-            1.0
+            1.0,
+            0
         );
 
         ClusterAwarenessAttributeValueHealth clusterAwarenessAttributeValueHealth2 = new ClusterAwarenessAttributeValueHealth(
@@ -48,7 +49,8 @@ public class ClusterAwarenessAttributesHealthSerializationTests extends Abstract
             0,
             2,
             2,
-            1.0
+            1.0,
+            0
         );
 
         ClusterAwarenessAttributeValueHealth clusterAwarenessAttributeValueHealth3 = new ClusterAwarenessAttributeValueHealth(
@@ -58,7 +60,8 @@ public class ClusterAwarenessAttributesHealthSerializationTests extends Abstract
             0,
             2,
             2,
-            0.0
+            0.0,
+            0
         );
 
         clusterAwarenessAttributeValueHealthMap.put(clusterAwarenessAttributeValueHealth1.getName(), clusterAwarenessAttributeValueHealth1);

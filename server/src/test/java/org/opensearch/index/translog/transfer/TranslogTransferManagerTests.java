@@ -399,8 +399,8 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(mdFilename1, 1));
-            bmList.add(new PlainBlobMetadata(mdFilename2, 1));
+            bmList.add(new PlainBlobMetadata(mdFilename1, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(mdFilename2, 1, System.currentTimeMillis()));
             latchedActionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -426,7 +426,7 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(mdFilename, 1));
+            bmList.add(new PlainBlobMetadata(mdFilename, 1, System.currentTimeMillis()));
             latchedActionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -542,9 +542,9 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             ActionListener<List<BlobMetadata>> actionListener = invocation.getArgument(4);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(tm1, 1));
-            bmList.add(new PlainBlobMetadata(tm2, 1));
-            bmList.add(new PlainBlobMetadata(tm3, 1));
+            bmList.add(new PlainBlobMetadata(tm1, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(tm2, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(tm3, 1, System.currentTimeMillis()));
             actionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -636,8 +636,8 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(mdFilename, 1));
-            bmList.add(new PlainBlobMetadata(mdFilename2, 1));
+            bmList.add(new PlainBlobMetadata(mdFilename, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(mdFilename2, 1, System.currentTimeMillis()));
             latchedActionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -766,9 +766,9 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             ActionListener<List<BlobMetadata>> actionListener = invocation.getArgument(4);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(tm1, 1));
-            bmList.add(new PlainBlobMetadata(tm2, 1));
-            bmList.add(new PlainBlobMetadata(tm3, 1));
+            bmList.add(new PlainBlobMetadata(tm1, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(tm2, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(tm3, 1, System.currentTimeMillis()));
             actionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -814,9 +814,9 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
             String timestamp1 = RemoteStoreUtils.invertLong(2345L);
-            BlobMetadata bm1 = new PlainBlobMetadata("metadata__1__12__" + timestamp1 + "__node1__1", 1);
+            BlobMetadata bm1 = new PlainBlobMetadata("metadata__1__12__" + timestamp1 + "__node1__1", 1, System.currentTimeMillis());
             String timestamp2 = RemoteStoreUtils.invertLong(3456L);
-            BlobMetadata bm2 = new PlainBlobMetadata("metadata__1__12__" + timestamp2 + "__node1__1", 1);
+            BlobMetadata bm2 = new PlainBlobMetadata("metadata__1__12__" + timestamp2 + "__node1__1", 1, System.currentTimeMillis());
             List<BlobMetadata> bmList = List.of(bm1, bm2);
             latchedActionListener.onResponse(bmList);
             return null;
@@ -833,9 +833,9 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         mdFilename1.set("metadata__1__12__" + timestamp1 + "__node1__1");
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
-            BlobMetadata bm1 = new PlainBlobMetadata(mdFilename1.get(), 1);
+            BlobMetadata bm1 = new PlainBlobMetadata(mdFilename1.get(), 1, System.currentTimeMillis());
             String timestamp2 = RemoteStoreUtils.invertLong(3456L);
-            BlobMetadata bm2 = new PlainBlobMetadata("metadata__1__12__" + timestamp2 + "__node1__1", 1);
+            BlobMetadata bm2 = new PlainBlobMetadata("metadata__1__12__" + timestamp2 + "__node1__1", 1, System.currentTimeMillis());
             List<BlobMetadata> bmList = List.of(bm1, bm2);
             latchedActionListener.onResponse(bmList);
             return null;
@@ -861,9 +861,9 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         mdFilename1.set("metadata__1__12__" + timestamp1 + "__node1__1");
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
-            BlobMetadata bm1 = new PlainBlobMetadata(mdFilename1.get(), 1);
+            BlobMetadata bm1 = new PlainBlobMetadata(mdFilename1.get(), 1, System.currentTimeMillis());
             String timestamp2 = RemoteStoreUtils.invertLong(3456L);
-            BlobMetadata bm2 = new PlainBlobMetadata("metadata__1__12__" + timestamp2 + "__node1__1", 1);
+            BlobMetadata bm2 = new PlainBlobMetadata("metadata__1__12__" + timestamp2 + "__node1__1", 1, System.currentTimeMillis());
             List<BlobMetadata> bmList = List.of(bm1, bm2);
             latchedActionListener.onResponse(bmList);
             return null;

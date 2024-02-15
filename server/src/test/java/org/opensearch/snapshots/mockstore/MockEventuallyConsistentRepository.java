@@ -300,7 +300,7 @@ public class MockEventuallyConsistentRepository extends BlobStoreRepository {
                             .collect(
                                 Collectors.toMap(
                                     action -> action.path.substring(thisPath.length()),
-                                    action -> new PlainBlobMetadata(action.path.substring(thisPath.length()), action.data.length)
+                                    action -> new PlainBlobMetadata(action.path.substring(thisPath.length()), action.data.length, System.currentTimeMillis())
                                 )
                             )
                     );

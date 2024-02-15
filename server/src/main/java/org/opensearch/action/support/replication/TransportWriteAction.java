@@ -55,6 +55,7 @@ import org.opensearch.index.engine.Engine;
 import org.opensearch.index.mapper.MapperParsingException;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.PrimaryShardClosedException;
+import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.index.translog.Translog.Location;
 import org.opensearch.indices.IndicesService;

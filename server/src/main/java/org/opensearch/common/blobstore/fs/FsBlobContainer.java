@@ -123,7 +123,7 @@ public class FsBlobContainer extends AbstractBlobContainer {
                     continue;
                 }
                 if (attrs.isRegularFile()) {
-                    builder.put(file.getFileName().toString(), new PlainBlobMetadata(file.getFileName().toString(), attrs.size()));
+                    builder.put(file.getFileName().toString(), new PlainBlobMetadata(file.getFileName().toString(), attrs.size(), attrs.lastModifiedTime().toMillis()));
                 }
             }
         }
@@ -191,6 +191,9 @@ public class FsBlobContainer extends AbstractBlobContainer {
 
     @Override
     public void writeBlob(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException {
+        if (Files.exists(path) == false) {
+            blobStore.recreateDirectories(path);
+        }
         final Path file = path.resolve(blobName);
         try {
             writeToPath(inputStream, file, blobSize);
@@ -207,6 +210,9 @@ public class FsBlobContainer extends AbstractBlobContainer {
     @Override
     public void writeBlobAtomic(final String blobName, final InputStream inputStream, final long blobSize, boolean failIfAlreadyExists)
         throws IOException {
+        if (Files.exists(path) == false) {
+            blobStore.recreateDirectories(path);
+        }
         final String tempBlob = tempBlobName(blobName);
         final Path tempBlobPath = path.resolve(tempBlob);
         try {
@@ -225,6 +231,9 @@ public class FsBlobContainer extends AbstractBlobContainer {
     }
 
     private void writeToPath(InputStream inputStream, Path tempBlobPath, long blobSize) throws IOException {
+        if (Files.exists(path) == false) {
+            blobStore.recreateDirectories(path);
+        }
         try (OutputStream outputStream = Files.newOutputStream(tempBlobPath, StandardOpenOption.CREATE_NEW)) {
             final int bufferSize = blobStore.bufferSizeInBytes();
             org.opensearch.common.util.io.Streams.copy(

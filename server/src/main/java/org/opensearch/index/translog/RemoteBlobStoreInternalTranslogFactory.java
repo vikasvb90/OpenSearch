@@ -8,6 +8,7 @@
 
 package org.opensearch.index.translog;
 
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.remote.RemoteTranslogTransferTracker;
 import org.opensearch.indices.RemoteStoreSettings;
 import org.opensearch.repositories.RepositoriesService;
@@ -18,6 +19,7 @@ import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;

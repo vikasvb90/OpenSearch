@@ -50,6 +50,8 @@ import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.env.Environment;
 import org.opensearch.http.HttpServerTransport;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.recovery.RecoverySettings;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.plugins.Plugin;
 import org.opensearch.script.MockScriptService;
 import org.opensearch.script.ScriptContext;
@@ -87,6 +89,7 @@ import java.util.function.Function;
 public class MockNode extends Node {
 
     private final Collection<Class<? extends Plugin>> classpathPlugins;
+    private final InPlaceShardSplitRecoveryService splitRecoveryService;
 
     public MockNode(final Settings settings, final Collection<Class<? extends Plugin>> classpathPlugins) {
         this(settings, classpathPlugins, true);
@@ -97,29 +100,33 @@ public class MockNode extends Node {
         final Collection<Class<? extends Plugin>> classpathPlugins,
         final boolean forbidPrivateIndexSettings
     ) {
-        this(settings, classpathPlugins, null, forbidPrivateIndexSettings);
+        this(settings, classpathPlugins, null, forbidPrivateIndexSettings, null);
     }
 
     public MockNode(
         final Settings settings,
         final Collection<Class<? extends Plugin>> classpathPlugins,
         final Path configPath,
-        final boolean forbidPrivateIndexSettings
-    ) {
+        final boolean forbidPrivateIndexSettings,
+        final InPlaceShardSplitRecoveryService splitRecoveryService
+        ) {
         this(
             InternalSettingsPreparer.prepareEnvironment(settings, Collections.emptyMap(), configPath, () -> "mock_ node"),
             classpathPlugins,
-            forbidPrivateIndexSettings
+            forbidPrivateIndexSettings,
+            splitRecoveryService
         );
     }
 
     private MockNode(
         final Environment environment,
         final Collection<Class<? extends Plugin>> classpathPlugins,
-        final boolean forbidPrivateIndexSettings
+        final boolean forbidPrivateIndexSettings,
+        final InPlaceShardSplitRecoveryService splitRecoveryService
     ) {
         super(environment, classpathPlugins, forbidPrivateIndexSettings);
         this.classpathPlugins = classpathPlugins;
+        this.splitRecoveryService = splitRecoveryService;
     }
 
     /**
@@ -188,6 +195,16 @@ public class MockNode extends Node {
             indexSearcherExecutor,
             taskResourceTrackingService
         );
+    }
+
+    @Override
+    protected InPlaceShardSplitRecoveryService newInPlaceShardSplitRecoveryService(
+        IndicesService indicesService, RecoverySettings recoverySettings) {
+        if (splitRecoveryService == null) {
+            return super.newInPlaceShardSplitRecoveryService(indicesService, recoverySettings);
+        }
+
+        return splitRecoveryService;
     }
 
     @Override

@@ -71,7 +71,8 @@ public class StartRecoveryRequestTests extends OpenSearchTestCase {
             metadataSnapshot,
             randomBoolean(),
             randomNonNegativeLong(),
-            randomBoolean() || metadataSnapshot.getHistoryUUID() == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : randomNonNegativeLong()
+            randomBoolean() || metadataSnapshot.getHistoryUUID() == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : randomNonNegativeLong(),
+            null
         );
 
         final ByteArrayOutputStream outBuffer = new ByteArrayOutputStream();

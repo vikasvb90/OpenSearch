@@ -42,6 +42,7 @@ import org.opensearch.Version;
 import org.opensearch.action.ActionRunnable;
 import org.opensearch.action.DocWriteRequest;
 import org.opensearch.action.DocWriteResponse;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.RoutingMissingException;
 import org.opensearch.action.admin.indices.create.AutoCreateAction;
 import org.opensearch.action.admin.indices.create.CreateIndexRequest;
@@ -49,8 +50,10 @@ import org.opensearch.action.admin.indices.create.CreateIndexResponse;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.ingest.IngestActionForwarder;
 import org.opensearch.action.support.ActionFilters;
+import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.AutoCreateIndex;
 import org.opensearch.action.support.HandledTransportAction;
+import org.opensearch.action.support.WriteRequest;
 import org.opensearch.action.update.TransportUpdateAction;
 import org.opensearch.action.update.UpdateRequest;
 import org.opensearch.action.update.UpdateResponse;
@@ -65,6 +68,7 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.routing.ShardIterator;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.inject.Inject;
 import org.opensearch.common.lease.Releasable;
@@ -505,6 +509,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
         private final long startTimeNanos;
         private final ClusterStateObserver observer;
         private final Map<String, IndexNotFoundException> indicesThatCannotBeCreated;
+        private final boolean reDriveOnChildShards;
 
         BulkOperation(
             Task task,
@@ -512,7 +517,8 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             ActionListener<BulkResponse> listener,
             AtomicArray<BulkItemResponse> responses,
             long startTimeNanos,
-            Map<String, IndexNotFoundException> indicesThatCannotBeCreated
+            Map<String, IndexNotFoundException> indicesThatCannotBeCreated,
+            boolean reDriveOnChildShards
         ) {
             super(listener);
             this.task = task;
@@ -521,11 +527,15 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             this.startTimeNanos = startTimeNanos;
             this.indicesThatCannotBeCreated = indicesThatCannotBeCreated;
             this.observer = new ClusterStateObserver(clusterService, bulkRequest.timeout(), logger, threadPool.getThreadContext());
+            this.reDriveOnChildShards = reDriveOnChildShards;
         }
 
         @Override
         protected void doRun() {
             assert bulkRequest != null;
+            final ActiveShardCount bulkActiveShardCount = bulkRequest.waitForActiveShards();
+            final WriteRequest.RefreshPolicy refreshPolicy = bulkRequest.getRefreshPolicy();
+            final TimeValue timeout = bulkRequest.timeout();
             final ClusterState clusterState = observer.setAndGetObservedState();
             if (handleBlockExceptions(clusterState)) {
                 return;
@@ -590,9 +600,15 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                             throw new AssertionError("request type not supported: [" + docWriteRequest.opType() + "]");
                     }
 
-                    ShardId shardId = clusterService.operationRouting()
-                        .indexShards(clusterState, concreteIndex.getName(), docWriteRequest.id(), docWriteRequest.routing())
-                        .shardId();
+                    ShardId shardId;
+                    if (reDriveOnChildShards) {
+                        shardId = clusterService.operationRouting().shardWithRecoveringChild(clusterState,
+                            concreteIndex.getName(), docWriteRequest.id(), docWriteRequest.routing(), clusterState.routingTable().index(concreteIndex).getIndex());
+                    } else {
+                        shardId = clusterService.operationRouting()
+                            .indexShards(clusterState, concreteIndex.getName(), docWriteRequest.id(), docWriteRequest.routing())
+                            .shardId();
+                    }
                     List<BulkItemRequest> shardRequests = requestsByShard.computeIfAbsent(shardId, shard -> new ArrayList<>());
                     shardRequests.add(new BulkItemRequest(i, docWriteRequest));
                 } catch (OpenSearchParseException | IllegalArgumentException | RoutingMissingException e) {
@@ -670,6 +686,48 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
 
                             @Override
                             public void onFailure(Exception e) {
+                                Throwable splitEx = ExceptionsHelper.unwrap(e, PrimaryShardSplitException.class);
+                                if (splitEx != null) {
+                                    try {
+                                        reDriveOnChildShards();
+                                        return;
+                                    } catch (Exception ex) {
+                                        logger.error("Unexpected error occurred on attempting to re-drive " +
+                                            "bulk request after primary split", ex);
+                                    }
+                                }
+                                setBulkItemFailures(e);
+                                if (counter.decrementAndGet() == 0) {
+                                    finishHim();
+                                }
+                            }
+
+                            private void reDriveOnChildShards() {
+                                BulkRequest bulkRequestForRedrive = new BulkRequest();
+                                bulkRequestForRedrive.waitForActiveShards(bulkActiveShardCount);
+                                bulkRequestForRedrive.timeout(timeout);
+                                bulkRequestForRedrive.setRefreshPolicy(refreshPolicy);
+                                requests.forEach(request -> bulkRequestForRedrive.add(request.request()));
+                                ActionListener<BulkResponse> reDriveListener = ActionListener.wrap(reDriveResponses -> {
+                                    reDriveResponses.forEach(reDriveResponse -> {
+                                        responses.set(requests.get(reDriveResponse.getItemId()).id(), reDriveResponse);
+                                    });
+                                    if (counter.decrementAndGet() == 0) {
+                                        publishResponse();
+                                    }
+                                }, reDriveException -> {
+                                    // We don't expect any item level failure here. So, we fail all items.
+                                    setBulkItemFailures(reDriveException);
+                                    if (counter.decrementAndGet() == 0) {
+                                        finishHim();
+                                    }
+                                });
+                                BulkOperation bulkOperation = new BulkOperation(task, bulkRequestForRedrive, reDriveListener,
+                                    new AtomicArray<>(requests.size()), startTimeNanos, indicesThatCannotBeCreated, true);
+                                bulkOperation.run();
+                            }
+
+                            private void setBulkItemFailures(Exception e) {
                                 // create failures for all relevant requests
                                 for (BulkItemRequest request : requests) {
                                     final String indexName = concreteIndices.getConcreteIndex(request.index()).getName();
@@ -683,14 +741,14 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                                     docStatusStats.inc(bulkItemResponse.status());
                                     responses.set(request.id(), bulkItemResponse);
                                 }
-
-                                if (counter.decrementAndGet() == 0) {
-                                    finishHim();
-                                }
                             }
 
                             private void finishHim() {
                                 indicesService.addDocStatusStats(docStatusStats);
+                                publishResponse();
+                            }
+
+                            private void publishResponse() {
                                 listener.onResponse(
                                     new BulkResponse(
                                         responses.toArray(new BulkItemResponse[responses.length()]),
@@ -810,7 +868,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
          * We are not wrapping the listener here to capture the response codes for performance benefits. It will
          * be saving us an iteration over the responses array
          */
-        new BulkOperation(task, bulkRequest, listener, responses, startTimeNanos, indicesThatCannotBeCreated).run();
+        new BulkOperation(task, bulkRequest, listener, responses, startTimeNanos, indicesThatCannotBeCreated, false).run();
     }
 
     /**

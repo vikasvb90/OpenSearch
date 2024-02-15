@@ -11,6 +11,7 @@ package org.opensearch.index.translog;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
+import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.util.concurrent.ReleasableLock;
@@ -310,6 +311,11 @@ public class InternalTranslogManager implements TranslogManager, Closeable {
     @Override
     public Releasable drainSync() {
         return translog.drainSync();
+    }
+
+    @Override
+    public GatedCloseable<Long> acquireRetentionLockWithMinGen() {
+        return translog.acquireRetentionLockWithMinGen();
     }
 
     @Override

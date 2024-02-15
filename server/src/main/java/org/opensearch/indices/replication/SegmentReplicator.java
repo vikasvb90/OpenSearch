@@ -97,7 +97,7 @@ public class SegmentReplicator {
         final SegmentReplicationSource source,
         final SegmentReplicationTargetService.SegmentReplicationListener listener
     ) {
-        final SegmentReplicationTarget target = new SegmentReplicationTarget(indexShard, checkpoint, source, listener);
+        final SegmentReplicationTarget target = new SegmentReplicationTarget(indexShard, indexShard, checkpoint, source, listener);
         startReplication(target, indexShard.getRecoverySettings().activityTimeout());
         return target;
     }

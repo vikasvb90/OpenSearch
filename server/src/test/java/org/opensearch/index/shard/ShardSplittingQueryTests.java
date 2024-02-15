@@ -294,7 +294,7 @@ public class ShardSplittingQueryTests extends OpenSearchTestCase {
             IndexSearcher searcher = new IndexSearcher(reader);
             searcher.setQueryCache(null);
             final Weight splitWeight = searcher.createWeight(
-                searcher.rewrite(new ShardSplittingQuery(metadata, targetShardId, hasNested)),
+                searcher.rewrite(new ShardSplittingQuery(metadata, targetShardId, hasNested, false)),
                 ScoreMode.COMPLETE_NO_SCORES,
                 1f
             );

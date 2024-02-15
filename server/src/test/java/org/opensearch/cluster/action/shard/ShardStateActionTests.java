@@ -543,10 +543,11 @@ public class ShardStateActionTests extends OpenSearchTestCase {
         final long primaryTerm = randomIntBetween(0, 100);
         final String message = randomRealisticUnicodeOfCodepointLengthBetween(10, 100);
         final Exception failure = randomBoolean() ? null : getSimulatedFailure();
+        final String[] childShardAllocationIds = new String[]{randomAlphaOfLength(50)};
         final boolean markAsStale = randomBoolean();
 
         final Version version = randomFrom(randomCompatibleVersion(random(), Version.CURRENT));
-        final FailedShardEntry failedShardEntry = new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale);
+        final FailedShardEntry failedShardEntry = new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale, null, null, null);
         try (StreamInput in = serialize(failedShardEntry, version).streamInput()) {
             in.setVersion(version);
             final FailedShardEntry deserialized = new FailedShardEntry(in);
@@ -573,7 +574,7 @@ public class ShardStateActionTests extends OpenSearchTestCase {
         final String message = randomRealisticUnicodeOfCodepointLengthBetween(10, 100);
 
         final Version version = randomFrom(randomCompatibleVersion(random(), Version.CURRENT));
-        try (StreamInput in = serialize(new StartedShardEntry(shardId, allocationId, primaryTerm, message), version).streamInput()) {
+        try (StreamInput in = serialize(new StartedShardEntry(shardId, allocationId, primaryTerm, message, null, null, null), version).streamInput()) {
             in.setVersion(version);
             final StartedShardEntry deserialized = new StartedShardEntry(in);
             assertThat(deserialized.shardId, equalTo(shardId));

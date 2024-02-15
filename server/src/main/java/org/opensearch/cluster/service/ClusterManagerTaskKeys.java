@@ -48,5 +48,6 @@ public final class ClusterManagerTaskKeys {
     public static final String UPDATE_SNAPSHOT_STATE_KEY = "update-snapshot-state";
     public static final String RESTORE_SNAPSHOT_KEY = "restore-snapshot";
     public static final String CLUSTER_REROUTE_API_KEY = "cluster-reroute-api";
+    public static final String IN_PLACE_SHARD_SPLIT_TASK = "in-place-shard-split-task";
 
 }

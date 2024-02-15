@@ -1221,11 +1221,20 @@ public final class OpenSearchServerException {
         );
         registerExceptionHandle(
             new OpenSearchExceptionHandle(
+                org.opensearch.action.PrimaryShardSplitException.class,
+                org.opensearch.action.PrimaryShardSplitException::new,
+                172,
+                V_3_0_0
+            )
+        );
+        registerExceptionHandle(
+            new OpenSearchExceptionHandle(
                 org.opensearch.cluster.block.IndexCreateBlockException.class,
                 org.opensearch.cluster.block.IndexCreateBlockException::new,
                 CUSTOM_ELASTICSEARCH_EXCEPTIONS_BASE_ID + 1,
                 V_3_0_0
             )
         );
+
     }
 }
