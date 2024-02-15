@@ -15,6 +15,7 @@ import org.opensearch.common.blobstore.BlobMetadata;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.core.action.ActionListener;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.remote.RemoteStoreUtils;
 import org.opensearch.index.remote.RemoteTranslogTransferTracker;
 import org.opensearch.index.translog.transfer.TranslogTransferManager;
@@ -37,6 +38,7 @@ import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
@@ -148,7 +150,7 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
 
         // This is to fail fast and avoid listing md files un-necessarily.
         if (indexDeleted == false && RemoteStoreUtils.isPinnedTimestampStateStale()) {
-            logger.warn("Skipping remote translog garbage collection as last fetch of pinned timestamp is stale");
+            logger.trace("Skipping remote translog garbage collection as last fetch of pinned timestamp is stale");
             return;
         }
 
@@ -181,7 +183,7 @@ public class RemoteFsTimestampAwareTranslog extends RemoteFsTranslog {
 
                     // Check last fetch status of pinned timestamps. If stale, return.
                     if (indexDeleted == false && RemoteStoreUtils.isPinnedTimestampStateStale()) {
-                        logger.warn("Skipping remote translog garbage collection as last fetch of pinned timestamp is stale");
+                        logger.trace("Skipping remote translog garbage collection as last fetch of pinned timestamp is stale");
                         remoteGenerationDeletionPermits.release(REMOTE_DELETION_PERMITS);
                         return;
                     }

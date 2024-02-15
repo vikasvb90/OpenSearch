@@ -200,6 +200,10 @@ public final class ClusterAllocationExplanation implements ToXContentObject, Wri
                         + "to node ["
                         + relocationTargetNode.getName()
                         + "], wait until relocation has completed";
+                } else if (shardRouting.state() == ShardRoutingState.SPLITTING) {
+                    explanation = "the shard is in the process of splitting on node ["
+                        + currentNode.getName()
+                        + "] wait until split has completed";
                 } else {
                     assert shardRouting.state() == ShardRoutingState.INITIALIZING;
                     explanation = "the shard is in the process of initializing on node ["

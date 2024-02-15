@@ -38,6 +38,11 @@ public abstract class ShardsBalancer {
     abstract void balance();
 
     /**
+     *  Allocate child shard against a splitting shards.
+     */
+    abstract void assignChildShardsOfSplittingShards();
+
+    /**
      * Make a decision for allocating an unassigned shard.
      * @param shardRouting the shard for which the decision has to be made
      * @return the allocation decision

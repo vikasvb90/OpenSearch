@@ -106,6 +106,8 @@ import org.opensearch.action.admin.indices.shards.IndicesShardStoresResponse;
 import org.opensearch.action.admin.indices.shrink.ResizeRequest;
 import org.opensearch.action.admin.indices.shrink.ResizeRequestBuilder;
 import org.opensearch.action.admin.indices.shrink.ResizeResponse;
+import org.opensearch.action.admin.indices.split.InPlaceShardSplitRequest;
+import org.opensearch.action.admin.indices.split.InPlaceShardSplitResponse;
 import org.opensearch.action.admin.indices.stats.IndicesStatsRequest;
 import org.opensearch.action.admin.indices.stats.IndicesStatsRequestBuilder;
 import org.opensearch.action.admin.indices.stats.IndicesStatsResponse;
@@ -786,6 +788,18 @@ public interface IndicesAdminClient extends OpenSearchClient {
      * Shrinks an index using an explicit request allowing to specify the settings, mappings and aliases of the target index of the index.
      */
     void resizeIndex(ResizeRequest request, ActionListener<ResizeResponse> listener);
+
+    /**
+     * Split a given shard id into given number of shards.
+     *
+     * @return
+     */
+    ActionFuture<InPlaceShardSplitResponse> inPlaceShardSplit(InPlaceShardSplitRequest request);
+
+    /**
+     * Split a given shard id into given number of shards.
+     */
+    void inPlaceShardSplit(InPlaceShardSplitRequest request, ActionListener<InPlaceShardSplitResponse> listener);
 
     /**
      * Swaps the index pointed to by an alias given all provided conditions are satisfied

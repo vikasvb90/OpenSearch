@@ -907,6 +907,13 @@ public abstract class StreamOutput extends OutputStream {
         }
     }
 
+    public void writeZLongArray(long[] values) throws IOException {
+        writeVInt(values.length);
+        for (long value : values) {
+            writeZLong(value);
+        }
+    }
+
     public void writeFloatArray(float[] values) throws IOException {
         writeVInt(values.length);
         for (float value : values) {

@@ -216,6 +216,15 @@ public final class MoveDecision extends AbstractAllocationDecision {
     }
 
     /**
+     * Returns {@code true} if the shard can split on current node, returns {@code false} otherwise.
+     * If {@link #isDecisionTaken()} returns {@code false}, then invoking this method will throw an {@code IllegalStateException}.
+     */
+    public boolean canSplit() {
+        checkDecisionState();
+        return canRemainDecision.type() == Type.SPLIT;
+    }
+
+    /**
      * Returns the decision for the shard being allowed to remain on its current node.  If {@link #isDecisionTaken()}
      * returns {@code false}, then invoking this method will throw an {@code IllegalStateException}.
      */

@@ -49,6 +49,7 @@ import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.RecoverySource.SnapshotRecoverySource;
 import org.opensearch.common.UUIDs;
+import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.lucene.Lucene;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.action.ActionListener;
@@ -88,18 +89,19 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static org.opensearch.common.unit.TimeValue.timeValueMillis;
 import static org.opensearch.index.translog.Translog.CHECKPOINT_FILE_NAME;
 
 /**
- * This package private utility class encapsulates the logic to recover an index shard from either an existing index on
+ * This utility class encapsulates the logic to recover an index shard from either an existing index on
  * disk or from a snapshot in a repository.
  *
  * @opensearch.internal
  */
-final class StoreRecovery {
+public final class StoreRecovery {
 
     private final Logger logger;
     private final ShardId shardId;
@@ -208,7 +210,7 @@ final class StoreRecovery {
         }
     }
 
-    void addIndices(
+    public static void addIndices(
         final ReplicationLuceneIndex indexRecoveryStats,
         final Directory target,
         final Sort indexSort,
@@ -220,11 +222,32 @@ final class StoreRecovery {
         boolean split,
         boolean hasNested
     ) throws IOException {
+        final Directory hardLinkOrCopyTarget = new org.apache.lucene.misc.store.HardlinkCopyDirectoryWrapper(target);
+        Directory statsDirectory = new StatsDirectoryWrapper(hardLinkOrCopyTarget, indexRecoveryStats);
 
+        Tuple<Boolean, Directory> addIndexDirectoryTuple = new Tuple<>(true, statsDirectory);
+        addIndices(indexRecoveryStats, indexSort, sources, maxSeqNo, maxSeqNo, maxUnsafeAutoIdTimestamp, indexMetadata,
+            shardId, split, hasNested, addIndexDirectoryTuple, false,
+            IndexWriterConfig.OpenMode.CREATE);
+    }
+
+    public static void addIndices(
+        final ReplicationLuceneIndex indexRecoveryStats,
+        final Sort indexSort,
+        final Directory[] sources,
+        final long localCheckpoint,
+        final long maxSeqNo,
+        final long maxUnsafeAutoIdTimestamp,
+        IndexMetadata indexMetadata,
+        int shardId,
+        boolean split,
+        boolean hasNested,
+        Tuple<Boolean, Directory> addIndexDirectoryTuple,
+        boolean includeInProgressChild,
+        IndexWriterConfig.OpenMode openMode
+    ) throws IOException {
         assert sources.length > 0;
         final int luceneIndexCreatedVersionMajor = Lucene.readSegmentInfos(sources[0]).getIndexCreatedVersionMajor();
-
-        final Directory hardLinkOrCopyTarget = new org.apache.lucene.misc.store.HardlinkCopyDirectoryWrapper(target);
 
         IndexWriterConfig iwc = new IndexWriterConfig(null).setSoftDeletesField(Lucene.SOFT_DELETES_FIELD)
             .setCommitOnClose(false)
@@ -232,17 +255,19 @@ final class StoreRecovery {
             // later once we stared it up otherwise we would need to wait for it here
             // we also don't specify a codec here and merges should use the engines for this index
             .setMergePolicy(NoMergePolicy.INSTANCE)
-            .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+            .setOpenMode(openMode)
             .setIndexCreatedVersionMajor(luceneIndexCreatedVersionMajor);
         if (indexSort != null) {
             iwc.setIndexSort(indexSort);
         }
 
-        try (IndexWriter writer = new IndexWriter(new StatsDirectoryWrapper(hardLinkOrCopyTarget, indexRecoveryStats), iwc)) {
-            writer.addIndexes(sources);
+        try (IndexWriter writer = new IndexWriter(addIndexDirectoryTuple.v2(), iwc)) {
+            if (addIndexDirectoryTuple.v1() == true) {
+                writer.addIndexes(sources);
+            }
             indexRecoveryStats.setFileDetailsComplete();
             if (split) {
-                writer.deleteDocuments(new ShardSplittingQuery(indexMetadata, shardId, hasNested));
+                writer.deleteDocuments(new ShardSplittingQuery(indexMetadata, shardId, hasNested, includeInProgressChild));
             }
             /*
              * We set the maximum sequence number and the local checkpoint on the target to the maximum of the maximum sequence numbers on
@@ -252,7 +277,7 @@ final class StoreRecovery {
             writer.setLiveCommitData(() -> {
                 final HashMap<String, String> liveCommitData = new HashMap<>(3);
                 liveCommitData.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(maxSeqNo));
-                liveCommitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(maxSeqNo));
+                liveCommitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(localCheckpoint));
                 liveCommitData.put(Engine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID, Long.toString(maxUnsafeAutoIdTimestamp));
                 return liveCommitData.entrySet().iterator();
             });

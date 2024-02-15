@@ -54,6 +54,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -346,6 +347,11 @@ public class BlobStoreTransferServiceTests extends OpenSearchTestCase {
         @Override
         public void deleteBlobsAsyncIgnoringIfNotExists(List<String> blobNames, ActionListener<Void> completionListener) {
             throw new RuntimeException("deleteBlobsAsyncIgnoringIfNotExists not supported");
+        }
+
+        @Override
+        public Set<String> copyFilesFromSrcRemote(Set<String> files, AsyncMultiStreamBlobContainer blobContainer) {
+            return null;
         }
 
         @Override

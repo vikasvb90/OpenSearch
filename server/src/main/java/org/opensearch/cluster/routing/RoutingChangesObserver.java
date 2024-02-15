@@ -32,7 +32,10 @@
 
 package org.opensearch.cluster.routing;
 
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.annotation.PublicApi;
+
+import java.util.List;
 
 /**
  * Records changes made to {@link RoutingNodes} during an allocation round.
@@ -52,9 +55,24 @@ public interface RoutingChangesObserver {
     void shardStarted(ShardRouting initializingShard, ShardRouting startedShard);
 
     /**
+     * Called when a child replica is started.
+     */
+    void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childShard);
+
+    /**
+     * Called when a child shard fails.
+     */
+    void childShardFailed(ShardRouting parentShard, ShardRouting childShard);
+
+    /**
      * Called when relocation of a started shard is initiated.
      */
     void relocationStarted(ShardRouting startedShard, ShardRouting targetRelocatingShard);
+
+    /**
+     * Called when split of a started shard is initiated.
+     */
+    void splitStarted(ShardRouting startedShard, List<ShardRouting> childSplitShards);
 
     /**
      * Called when an unassigned shard's unassigned information was updated
@@ -76,6 +94,21 @@ public interface RoutingChangesObserver {
      * initializing shard.
      */
     void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource);
+
+    /**
+     * Called when split completes after child shards are started.
+     */
+    void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata);
+
+    /**
+     * Called when in-place split of child shards has failed.
+     */
+    void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata);
+
+    /**
+     * Called to determine if shard split has failed in current cluster update.
+     */
+    boolean isSplitOfShardFailed(ShardRouting parentShard);
 
     /**
      * Called when started replica is promoted to primary.
@@ -105,7 +138,22 @@ public interface RoutingChangesObserver {
         }
 
         @Override
+        public void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childReplica) {
+
+        }
+
+        @Override
+        public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
+
+        }
+
+        @Override
         public void relocationStarted(ShardRouting startedShard, ShardRouting targetRelocatingShard) {
+
+        }
+
+        @Override
+        public void splitStarted(ShardRouting startedShard, List<ShardRouting> childSplitShards) {
 
         }
 
@@ -120,12 +168,27 @@ public interface RoutingChangesObserver {
         }
 
         @Override
+        public boolean isSplitOfShardFailed(ShardRouting parentShard) {
+            return false;
+        }
+
+        @Override
         public void relocationCompleted(ShardRouting removedRelocationSource) {
 
         }
 
         @Override
         public void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource) {
+
+        }
+
+        @Override
+        public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
+
+        }
+
+        @Override
+        public void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata) {
 
         }
 
@@ -175,6 +238,24 @@ public interface RoutingChangesObserver {
         }
 
         @Override
+        public void splitStarted(ShardRouting startedShard, List<ShardRouting> childSplitShards) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.splitStarted(startedShard, childSplitShards);
+            }
+        }
+
+        @Override
+        public boolean isSplitOfShardFailed(ShardRouting parentShard) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                if (routingChangesObserver.isSplitOfShardFailed(parentShard)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        @Override
         public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.unassignedInfoUpdated(unassignedShard, newUnassignedInfo);
@@ -199,6 +280,34 @@ public interface RoutingChangesObserver {
         public void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.relocationSourceRemoved(removedReplicaRelocationSource);
+            }
+        }
+
+        @Override
+        public void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childReplica) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.childReplicaStarted(initializingShard, parentShard, childReplica);
+            }
+        }
+
+        @Override
+        public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.childShardFailed(parentShard, childShard);
+            }
+        }
+
+        @Override
+        public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.splitCompleted(removedSplitSource, indexMetadata);
+            }
+        }
+
+        @Override
+        public void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.splitFailed(splitSource, indexMetadata);
             }
         }
 

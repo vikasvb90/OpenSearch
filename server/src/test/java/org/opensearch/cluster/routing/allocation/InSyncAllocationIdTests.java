@@ -195,7 +195,7 @@ public class InSyncAllocationIdTests extends OpenSearchAllocationTestCase {
         clusterState = failedClusterStateTaskExecutor.execute(
             clusterState,
             Arrays.asList(
-                new FailedShardEntry(shardRoutingTable.shardId(), replicaShard.allocationId().getId(), primaryTerm, "dummy", null, true)
+                new FailedShardEntry(shardRoutingTable.shardId(), replicaShard.allocationId().getId(), primaryTerm, "dummy", null, true, null, null, null)
             )
         ).resultingState;
 
@@ -219,9 +219,9 @@ public class InSyncAllocationIdTests extends OpenSearchAllocationTestCase {
         long primaryTerm = clusterState.metadata().index("test").primaryTerm(0);
 
         List<FailedShardEntry> failureEntries = new ArrayList<>();
-        failureEntries.add(new FailedShardEntry(shardRoutingTable.shardId(), primaryShard.allocationId().getId(), 0L, "dummy", null, true));
+        failureEntries.add(new FailedShardEntry(shardRoutingTable.shardId(), primaryShard.allocationId().getId(), 0L, "dummy", null, true, null, null, null));
         failureEntries.add(
-            new FailedShardEntry(shardRoutingTable.shardId(), replicaShard.allocationId().getId(), primaryTerm, "dummy", null, true)
+            new FailedShardEntry(shardRoutingTable.shardId(), replicaShard.allocationId().getId(), primaryTerm, "dummy", null, true, null, null, null)
         );
         Collections.shuffle(failureEntries, random());
         logger.info("Failing {}", failureEntries);
@@ -369,7 +369,7 @@ public class InSyncAllocationIdTests extends OpenSearchAllocationTestCase {
         clusterState = failedClusterStateTaskExecutor.execute(
             clusterState,
             Collections.singletonList(
-                new FailedShardEntry(shardRoutingTable.shardId(), primaryShard.allocationId().getId(), 0L, "dummy", null, true)
+                new FailedShardEntry(shardRoutingTable.shardId(), primaryShard.allocationId().getId(), 0L, "dummy", null, true, null, null, null)
             )
         ).resultingState;
 

@@ -9,6 +9,7 @@
 package org.opensearch.index.translog;
 
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
 
 import java.io.IOException;
@@ -142,4 +143,6 @@ public interface TranslogManager {
     Releasable drainSync();
 
     Translog.TranslogGeneration getTranslogGeneration();
+
+    GatedCloseable<Long> acquireRetentionLockWithMinGen();
 }

@@ -163,10 +163,10 @@ public class IndicesLifecycleListenerSingleNodeTests extends OpenSearchSingleNod
                 RetentionLeaseSyncer.EMPTY,
                 SegmentReplicationCheckpointPublisher.EMPTY,
                 null,
-                null,
                 localNode,
                 null,
-                DiscoveryNodes.builder().add(localNode).build()
+                DiscoveryNodes.builder().add(localNode).build(),
+                null
             );
             IndexShardTestCase.updateRoutingEntry(shard, newRouting);
             assertEquals(5, counter.get());

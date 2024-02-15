@@ -95,7 +95,7 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
 
     public void testNonExistentIndexMarkedAsSuccessful() throws Exception {
         final ClusterState clusterState = stateWithNoShard();
-        final StartedShardEntry entry = new StartedShardEntry(new ShardId("test", "_na", 0), "aId", randomNonNegativeLong(), "test");
+        final StartedShardEntry entry = new StartedShardEntry(new ShardId("test", "_na", 0), "aId", randomNonNegativeLong(), "test", null, null, null);
 
         final ClusterStateTaskExecutor.ClusterTasksResult result = executeTasks(clusterState, singletonList(entry));
         assertSame(clusterState, result.resultingState);
@@ -112,10 +112,12 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
         final List<StartedShardEntry> tasks = Stream.concat(
             // Existent shard id but different allocation id
             IntStream.range(0, randomIntBetween(1, 5))
-                .mapToObj(i -> new StartedShardEntry(new ShardId(indexMetadata.getIndex(), 0), String.valueOf(i), 0L, "allocation id")),
+                .mapToObj(
+                    i -> new StartedShardEntry(new ShardId(indexMetadata.getIndex(), 0), String.valueOf(i), 0L, "allocation id", null, null, null)
+                ),
             // Non existent shard id
             IntStream.range(1, randomIntBetween(2, 5))
-                .mapToObj(i -> new StartedShardEntry(new ShardId(indexMetadata.getIndex(), i), String.valueOf(i), 0L, "shard id"))
+                .mapToObj(i -> new StartedShardEntry(new ShardId(indexMetadata.getIndex(), i), String.valueOf(i), 0L, "shard id", null, null, null))
 
         ).collect(Collectors.toList());
 
@@ -143,7 +145,7 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
                 allocationId = shardRoutingTable.replicaShards().iterator().next().allocationId().getId();
             }
             final long primaryTerm = indexMetadata.primaryTerm(shardId.id());
-            return new StartedShardEntry(shardId, allocationId, primaryTerm, "test");
+            return new StartedShardEntry(shardId, allocationId, primaryTerm, "test", null, null, null);
         }).collect(Collectors.toList());
 
         final ClusterStateTaskExecutor.ClusterTasksResult result = executeTasks(clusterState, tasks);
@@ -166,11 +168,11 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
         final String primaryAllocationId = primaryShard.allocationId().getId();
 
         final List<StartedShardEntry> tasks = new ArrayList<>();
-        tasks.add(new StartedShardEntry(shardId, primaryAllocationId, primaryTerm, "test"));
+        tasks.add(new StartedShardEntry(shardId, primaryAllocationId, primaryTerm, "test", null, null, null));
         if (randomBoolean()) {
             final ShardRouting replicaShard = clusterState.routingTable().shardRoutingTable(shardId).replicaShards().iterator().next();
             final String replicaAllocationId = replicaShard.allocationId().getId();
-            tasks.add(new StartedShardEntry(shardId, replicaAllocationId, primaryTerm, "test"));
+            tasks.add(new StartedShardEntry(shardId, replicaAllocationId, primaryTerm, "test", null, null, null));
         }
         final ClusterStateTaskExecutor.ClusterTasksResult result = executeTasks(clusterState, tasks);
         assertNotSame(clusterState, result.resultingState);
@@ -195,7 +197,7 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
         final long primaryTerm = indexMetadata.primaryTerm(shardId.id());
 
         final List<StartedShardEntry> tasks = IntStream.range(0, randomIntBetween(2, 10))
-            .mapToObj(i -> new StartedShardEntry(shardId, allocationId, primaryTerm, "test"))
+            .mapToObj(i -> new StartedShardEntry(shardId, allocationId, primaryTerm, "test", null, null, null))
             .collect(Collectors.toList());
 
         final ClusterStateTaskExecutor.ClusterTasksResult result = executeTasks(clusterState, tasks);
@@ -230,7 +232,10 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
                 shardId,
                 primaryAllocationId,
                 primaryTerm - 1,
-                "primary terms does not match on primary"
+                "primary terms does not match on primary",
+                null,
+                null,
+                null
             );
 
             final ClusterStateTaskExecutor.ClusterTasksResult result = executeTasks(clusterState, singletonList(task));
@@ -247,7 +252,10 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
                 shardId,
                 primaryAllocationId,
                 primaryTerm,
-                "primary terms match on primary"
+                "primary terms match on primary",
+                null,
+                null,
+                null
             );
 
             final ClusterStateTaskExecutor.ClusterTasksResult result = executeTasks(clusterState, singletonList(task));
@@ -270,7 +278,7 @@ public class ShardStartedClusterStateTaskExecutorTests extends OpenSearchAllocat
                 .allocationId()
                 .getId();
 
-            final StartedShardEntry task = new StartedShardEntry(shardId, replicaAllocationId, replicaPrimaryTerm, "test on replica");
+            final StartedShardEntry task = new StartedShardEntry(shardId, replicaAllocationId, replicaPrimaryTerm, "test on replica", null, null, null);
 
             final ClusterStateTaskExecutor.ClusterTasksResult result = executeTasks(clusterState, singletonList(task));
             assertNotSame(clusterState, result.resultingState);

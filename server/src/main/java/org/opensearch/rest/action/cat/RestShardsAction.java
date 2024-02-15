@@ -70,6 +70,7 @@ import org.opensearch.search.suggest.completion.CompletionStats;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
 
 import static java.util.Arrays.asList;
@@ -347,7 +348,11 @@ public class RestShardsAction extends AbstractListAction {
                     table.addCell("r");
                 }
             }
-            table.addCell(shard.state());
+            if (shard.splitting()) {
+                table.addCell("SPLITTING");
+            } else {
+                table.addCell(shard.state());
+            }
             table.addCell(getOrNull(commonStats, CommonStats::getDocs, DocsStats::getCount));
             table.addCell(getOrNull(commonStats, CommonStats::getStore, StoreStats::getSize));
             if (shard.assignedToNode()) {
@@ -365,6 +370,12 @@ public class RestShardsAction extends AbstractListAction {
                     name.append(reloNodeId);
                     name.append(" ");
                     name.append(reloNme);
+                } else if (shard.splitting()) {
+                    name.append(" -> ");
+                    for (ShardRouting childShard : shard.getRecoveringChildShards()) {
+                        name.append(childShard.shardId().getId());
+                        name.append(" ");
+                    }
                 }
                 table.addCell(ip);
                 table.addCell(nodeId);

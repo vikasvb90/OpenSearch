@@ -22,6 +22,8 @@ import org.opensearch.action.bulk.BackoffPolicy;
 import org.opensearch.action.support.GroupedActionListener;
 import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.common.concurrent.GatedCloseable;
+import org.opensearch.common.lease.Releasable;
+import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.UploadListener;
@@ -49,6 +51,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static org.opensearch.index.seqno.SequenceNumbers.LOCAL_CHECKPOINT_KEY;
@@ -90,9 +93,11 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
     private final RemoteSegmentTransferTracker segmentTracker;
     private final Map<String, String> localSegmentChecksumMap;
     private volatile long primaryTerm;
+    private volatile long commitGen = -1;
     private volatile Iterator<TimeValue> backoffDelayIterator;
     private final SegmentReplicationCheckpointPublisher checkpointPublisher;
     private final RemoteStoreSettings remoteStoreSettings;
+    private final AtomicBoolean staleCommitDeletionDelayed = new AtomicBoolean();
 
     public RemoteStoreRefreshListener(
         IndexShard indexShard,
@@ -156,11 +161,24 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
     protected boolean performAfterRefreshWithPermit(boolean didRefresh) {
         boolean successful;
         if (shouldSync(didRefresh, false)) {
-            successful = syncSegments();
+            successful = syncSegments(false);
         } else {
             successful = true;
         }
         return successful;
+    }
+
+    public Releasable delayStaleCommitDeletion() {
+        try (Releasable ignore = drainRefreshes()) {
+            boolean commitsDelayed = staleCommitDeletionDelayed.compareAndSet(false, true);
+            if (commitsDelayed == false) {
+                throw new IllegalStateException("Cannot delay an already delayed stale commit");
+            }
+            return Releasables.releaseOnce(() -> {
+                staleCommitDeletionDelayed.set(false);
+                remoteDirectory.deleteStaleSegmentsAsync(indexShard.getRemoteStoreSettings().getMinRemoteSegmentMetadataFiles());
+            });
+        }
     }
 
     /**
@@ -215,7 +233,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
     /*
      @return false if retry is needed
      */
-    private boolean syncSegments() {
+    private boolean syncSegments(boolean firstSyncAfterCommit) {
         if (isReadyForUpload() == false) {
             // Following check is required to enable retry and make sure that we do not lose this refresh event
             // When primary shard is restored from remote store, the recovery happens first followed by changing
@@ -236,12 +254,23 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                 // if a new segments_N file is present in local that is not uploaded to remote store yet, it
                 // is considered as a first refresh post commit. A cleanup of stale commit files is triggered.
                 // This is done to avoid delete post each refresh.
-                if (isRefreshAfterCommit()) {
+                if (staleCommitDeletionDelayed.get() == false && isRefreshAfterCommit()) {
                     remoteDirectory.deleteStaleSegmentsAsync(indexShard.getRemoteStoreSettings().getMinRemoteSegmentMetadataFiles());
                 }
 
-                try (GatedCloseable<SegmentInfos> segmentInfosGatedCloseable = indexShard.getSegmentInfosSnapshot()) {
+                try (GatedCloseable<SegmentInfos> segmentInfosGatedCloseable = (
+                    firstSyncAfterCommit ?
+                        new GatedCloseable<>(indexShard.store().readLastCommittedSegmentsInfo(), ()->{}) :
+                        indexShard.getSegmentInfosSnapshot()
+                        )
+                ) {
+                    indexShard.store().readLastCommittedSegmentsInfo();
                     SegmentInfos segmentInfos = segmentInfosGatedCloseable.get();
+
+                    if (firstSyncAfterCommit == false && segmentInfos.getGeneration() != commitGen) {
+                        syncSegments(true);
+                        commitGen = segmentInfos.getGeneration();
+                    }
                     final ReplicationCheckpoint checkpoint = indexShard.computeReplicationCheckpoint(segmentInfos);
                     if (checkpoint.getPrimaryTerm() != indexShard.getOperationPrimaryTerm()) {
                         throw new IllegalStateException(
@@ -257,7 +286,6 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                     // move.
                     long lastRefreshedCheckpoint = ((InternalEngine) indexShard.getEngine()).lastRefreshedCheckpoint();
                     Collection<String> localSegmentsPostRefresh = segmentInfos.files(true);
-
                     // Create a map of file name to size and update the refresh segment tracker
                     Map<String, Long> localSegmentsSizeMap = updateLocalSizeMapAndTracker(localSegmentsPostRefresh).entrySet()
                         .stream()
@@ -358,8 +386,11 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
         resetBackOffDelayIterator();
         // Set the minimum sequence number for keeping translog
         indexShard.getEngine().translogManager().setMinSeqNoToKeep(lastRefreshedCheckpoint + 1);
-        // Publishing the new checkpoint which is used for remote store + segrep indexes
-        checkpointPublisher.publish(indexShard, checkpoint);
+        // Publishing the new checkpoint which is used for remote store + segrep indexes. Skipping replication from child primary
+        // since it happens via parent primary on child replicas.
+        if (indexShard.routingEntry().isSplitTarget() == false) {
+            checkpointPublisher.publish(indexShard, checkpoint);
+        }
         logger.debug("onSuccessfulSegmentsSync lastRefreshedCheckpoint={} checkpoint={}", lastRefreshedCheckpoint, checkpoint);
     }
 
@@ -583,8 +614,9 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
         return (indexShard.state() == IndexShardState.RECOVERING && indexShard.shardRouting.primary())
             && indexShard.recoveryState() != null
             && (indexShard.recoveryState().getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS
-                || indexShard.recoveryState().getRecoverySource().getType() == RecoverySource.Type.SNAPSHOT
-                || indexShard.shouldSeedRemoteStore());
+            || indexShard.recoveryState().getRecoverySource().getType() == RecoverySource.Type.IN_PLACE_SHARD_SPLIT
+            || indexShard.recoveryState().getRecoverySource().getType() == RecoverySource.Type.SNAPSHOT
+            || indexShard.shouldSeedRemoteStore());
     }
 
     /**

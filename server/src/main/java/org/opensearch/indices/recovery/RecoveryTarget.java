@@ -38,6 +38,7 @@ import org.apache.lucene.index.IndexFormatTooOldException;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.cluster.node.DiscoveryNode;
+import org.opensearch.cluster.routing.OperationRouting;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.lucene.Lucene;
@@ -84,6 +85,7 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
 
     private final DiscoveryNode sourceNode;
     protected final MultiFileWriter multiFileWriter;
+    private final boolean recoveryFromLocalShards;
 
     // latch that can be used to blockingly wait for RecoveryTarget to be closed
     private final CountDownLatch closedLatch = new CountDownLatch(1);
@@ -99,12 +101,32 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
      * @param threadPool threadpool instance
      */
     public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, ReplicationListener listener, ThreadPool threadPool) {
-        super("recovery_status", indexShard, indexShard.recoveryState().getIndex(), listener);
+        this(indexShard, sourceNode, listener, threadPool, new CancellableThreads(), false);
+    }
+
+    /**
+     * Creates a new recovery target object that represents a recovery to the provided shard.
+     *
+     * @param indexShard                        local shard where we want to recover to
+     * @param sourceNode                        source node of the recovery where we recover from
+     * @param listener                          called when recovery is completed/failed
+     * @param cancellableThreads                cancellable threads to use instead of using new threads internally on target.
+     * @param recoveryFromLocalShards           Whether target recovery is from local shards.
+     */
+    public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, ReplicationListener listener, ThreadPool threadPool,
+                          CancellableThreads cancellableThreads, boolean recoveryFromLocalShards) {
+        super("recovery_status", indexShard, indexShard.recoveryState().getIndex(), listener,
+            cancellableThreads);
         this.sourceNode = sourceNode;
         this.threadPool = threadPool;
+        this.recoveryFromLocalShards = recoveryFromLocalShards;
         indexShard.recoveryStats().incCurrentAsTarget();
-        final String tempFilePrefix = getPrefix() + UUIDs.randomBase64UUID() + ".";
-        this.multiFileWriter = new MultiFileWriter(indexShard.store(), stateIndex, tempFilePrefix, logger, this::ensureRefCount);
+        if (recoveryFromLocalShards == false) {
+            final String tempFilePrefix = getPrefix() + UUIDs.randomBase64UUID() + ".";
+            this.multiFileWriter = new MultiFileWriter(indexShard.store(), stateIndex, tempFilePrefix, logger, this::ensureRefCount);
+        } else {
+            this.multiFileWriter = null;
+        }
     }
 
     /**
@@ -182,7 +204,9 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
     @Override
     protected void closeInternal() {
         try {
-            multiFileWriter.close();
+            if (multiFileWriter != null) {
+                multiFileWriter.close();
+            }
         } finally {
             store.decRef();
             indexShard.recoveryStats().decCurrentAsTarget();
@@ -372,11 +396,15 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
             // first, we go and move files that were created with the recovery id suffix to
             // the actual names, its ok if we have a corrupted index here, since we have replicas
             // to recover from in case of a full cluster shutdown just when this code executes...
-            multiFileWriter.renameAllTempFiles();
+            if (multiFileWriter != null) {
+                multiFileWriter.renameAllTempFiles();
+            }
             final Store store = store();
             store.incRef();
             try {
-                store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
+                if (recoveryFromLocalShards == false) {
+                    store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
+                }
 
                 // Replicas for segment replication or remote snapshot indices do not create
                 // their own commit points and therefore do not modify the commit user data
@@ -429,11 +457,15 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
                     ex.addSuppressed(e);
                 }
                 RecoveryFailedException rfe = new RecoveryFailedException(state(), "failed to clean after recovery", ex);
-                fail(rfe, true);
+                if (recoveryFromLocalShards == false) {
+                    fail(rfe, true);
+                }
                 throw rfe;
             } catch (Exception ex) {
                 RecoveryFailedException rfe = new RecoveryFailedException(state(), "failed to clean after recovery", ex);
-                fail(rfe, true);
+                if (recoveryFromLocalShards == false) {
+                    fail(rfe, true);
+                }
                 throw rfe;
             } finally {
                 store.decRef();

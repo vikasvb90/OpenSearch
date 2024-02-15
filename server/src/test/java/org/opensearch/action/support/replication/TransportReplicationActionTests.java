@@ -888,7 +888,8 @@ public class TransportReplicationActionTests extends OpenSearchTestCase {
             primaryTerm,
             randomNonNegativeLong(),
             randomNonNegativeLong(),
-            listener
+            listener,
+            false
         );
         assertTrue(listener.isDone());
         assertListenerThrows("non existent node should throw a NoNodeAvailableException", listener, NoNodeAvailableException.class);
@@ -898,7 +899,7 @@ public class TransportReplicationActionTests extends OpenSearchTestCase {
             shardRoutings.replicaShards().stream().filter(ShardRouting::assignedToNode).collect(Collectors.toList())
         );
         listener = new PlainActionFuture<>();
-        proxy.performOn(replica, new Request(NO_SHARD_ID), primaryTerm, randomNonNegativeLong(), randomNonNegativeLong(), listener);
+        proxy.performOn(replica, new Request(NO_SHARD_ID), primaryTerm, randomNonNegativeLong(), randomNonNegativeLong(), listener, false);
         assertFalse(listener.isDone());
 
         CapturingTransport.CapturedRequest[] captures = transport.getCapturedRequestsAndClear();

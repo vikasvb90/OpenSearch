@@ -39,6 +39,7 @@ import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.common.io.stream.Writeable;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.core.xcontent.ToXContent;
 import org.opensearch.core.xcontent.ToXContentObject;
 import org.opensearch.core.xcontent.XContentBuilder;
@@ -56,7 +57,7 @@ import java.util.Objects;
  * - {@link PeerRecoverySource} recovery from a primary on another node
  * - {@link SnapshotRecoverySource} recovery from a snapshot
  * - {@link LocalShardsRecoverySource} recovery from other shards of another index on the same node
- *
+ * - {@link InPlaceShardSplitRecoverySource} recovery of child shards from a source shard on the same node
  * @opensearch.api
  */
 @PublicApi(since = "1.0.0")
@@ -90,6 +91,8 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
                 return new SnapshotRecoverySource(in);
             case LOCAL_SHARDS:
                 return LocalShardsRecoverySource.INSTANCE;
+            case IN_PLACE_SHARD_SPLIT:
+                return InPlaceShardSplitRecoverySource.INSTANCE;
             case REMOTE_STORE:
                 return new RemoteStoreRecoverySource(in);
             default:
@@ -122,6 +125,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
         PEER,
         SNAPSHOT,
         LOCAL_SHARDS,
+        IN_PLACE_SHARD_SPLIT,
         REMOTE_STORE
     }
 
@@ -245,6 +249,33 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
             return "local shards recovery";
         }
 
+    }
+
+    /**
+     * recovery of child shards from a local source shard.
+     *
+     * @opensearch.internal
+     */
+    public static class InPlaceShardSplitRecoverySource extends RecoverySource {
+
+        public static final InPlaceShardSplitRecoverySource INSTANCE = new InPlaceShardSplitRecoverySource();
+
+        private InPlaceShardSplitRecoverySource() {}
+
+        @Override
+        public Type getType() {
+            return Type.IN_PLACE_SHARD_SPLIT;
+        }
+
+        @Override
+        public String toString() {
+            return "in-place shard split";
+        }
+
+        @Override
+        public boolean expectEmptyRetentionLeases() {
+            return false;
+        }
     }
 
     /**

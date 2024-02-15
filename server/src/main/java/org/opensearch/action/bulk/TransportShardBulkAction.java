@@ -64,6 +64,8 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.AllocationId;
+import org.opensearch.cluster.routing.OperationRouting;
+import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.collect.Tuple;
@@ -375,8 +377,10 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             long primaryTerm,
             long globalCheckpoint,
             long maxSeqNoOfUpdatesOrDeletes,
-            ActionListener<ReplicationOperation.ReplicaResponse> listener
+            ActionListener<ReplicationOperation.ReplicaResponse> listener,
+            boolean replicatingToChild
         ) {
+            assert replicatingToChild == false : "Primary term validation is attempted on child replication";
             String nodeId = replica.currentNodeId();
             final DiscoveryNode node = clusterService.state().nodes().get(nodeId);
             if (node == null) {
@@ -633,7 +637,6 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             );
         }
         if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
-
             try {
                 primary.mapperService()
                     .merge(
@@ -825,6 +828,17 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             final BulkItemRequest item = request.items()[i];
             final BulkItemResponse response = item.getPrimaryResponse();
             final Engine.Result operationResult;
+            boolean discardOperation = false;
+            if (replica.getParentShardId() != null) {
+                IndexMetadata indexMetadata = replica.indexSettings().getIndexMetadata();
+                // Discard operations belonging to a different child shard. This can happen during in-place shard
+                // split recovery where after all child shards are added to replication tracker, bulk
+                // operations are replicated to all child primaries.
+                int computedShardId = OperationRouting.generateShardId(indexMetadata, item.request().id(),
+                    item.request().routing(), true);
+                discardOperation = computedShardId != replica.shardId().id();
+            }
+
             if (item.getPrimaryResponse().isFailed()) {
                 if (response.getFailure().getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     continue; // ignore replication as we didn't generate a sequence number for this request.
@@ -847,7 +861,15 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     continue; // ignore replication as it's a noop
                 }
                 assert response.getResponse().getSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO;
-                operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);
+                if (discardOperation) {
+                    operationResult = replica.markSeqNoAsNoop(
+                        response.getResponse().getSeqNo(),
+                        response.getResponse().getPrimaryTerm(),
+                        Translog.NoOp.FILLING_GAPS
+                    );
+                } else {
+                    operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);
+                }
             }
             assert operationResult != null : "operation result must never be null when primary response has no failure";
             location = syncOperationResultOrThrow(operationResult, location);

@@ -36,7 +36,6 @@ import org.apache.logging.log4j.Logger;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
-
 /**
  * Base index shard class
  *
