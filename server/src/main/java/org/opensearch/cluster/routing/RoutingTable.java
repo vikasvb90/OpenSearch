@@ -549,7 +549,7 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                 return this;
             }
             IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexRoutingTable.getIndex());
-            // re-add all the shards except source shard.
+            // re-add all the shards.
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
                 indexRoutingBuilder.addIndexShard(indexShardRoutingTable);
             }
