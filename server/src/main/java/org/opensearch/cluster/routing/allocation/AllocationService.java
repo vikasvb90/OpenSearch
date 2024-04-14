@@ -54,6 +54,7 @@ import org.opensearch.cluster.routing.allocation.allocator.ShardsAllocator;
 import org.opensearch.cluster.routing.allocation.command.AllocationCommands;
 import org.opensearch.cluster.routing.allocation.decider.AllocationDeciders;
 import org.opensearch.cluster.routing.allocation.decider.Decision;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.gateway.GatewayAllocator;
 import org.opensearch.gateway.PriorityComparator;
 import org.opensearch.snapshots.SnapshotsInfoService;
@@ -602,6 +603,8 @@ public class AllocationService {
     private void applyStartedShards(RoutingAllocation routingAllocation, List<ShardRouting> startedShardEntries) {
         assert startedShardEntries.isEmpty() == false : "non-empty list of started shard entries expected";
         RoutingNodes routingNodes = routingAllocation.routingNodes();
+
+        Map<ShardId, List<ShardRouting>> inPlaceChildShards = new HashMap<>();
         for (ShardRouting startedShard : startedShardEntries) {
             assert startedShard.initializing() : "only initializing shards can be started";
             assert routingAllocation.metadata().index(startedShard.shardId().getIndex()) != null
@@ -611,8 +614,19 @@ public class AllocationService {
                     + startedShard
                     + " but was: "
                     + routingNodes.getByAllocationId(startedShard.shardId(), startedShard.allocationId().getId());
+            if (startedShard.isSplitTarget()) {
+                inPlaceChildShards.computeIfAbsent(startedShard.getSplittingShardId(), k -> new ArrayList<>());
+                inPlaceChildShards.get(startedShard.getSplittingShardId()).add(startedShard);
+            } else {
+                routingNodes.startShard(logger, startedShard, routingAllocation.changes());
+            }
+        }
 
-            routingNodes.startShard(logger, startedShard, routingAllocation.changes());
+        if (inPlaceChildShards.isEmpty() == false) {
+            inPlaceChildShards.values().forEach(childShards -> {
+                IndexMetadata indexMetadata = routingAllocation.metadata().getIndexSafe(childShards.get(0).index());
+                routingNodes.startInPlaceChildShards(logger, childShards, indexMetadata, routingAllocation.changes());
+            });
         }
     }
 

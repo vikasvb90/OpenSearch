@@ -32,6 +32,7 @@
 
 package org.opensearch.cluster.routing.allocation.decider;
 
+import org.opensearch.Version;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.core.common.io.stream.StreamInput;
@@ -64,6 +65,7 @@ public abstract class Decision implements ToXContent, Writeable {
     public static final Decision YES = new Single(Type.YES);
     public static final Decision NO = new Single(Type.NO);
     public static final Decision THROTTLE = new Single(Type.THROTTLE);
+    public static final Decision SPLIT = new Single(Type.SPLIT);
 
     /**
      * Creates a simple decision
@@ -106,6 +108,7 @@ public abstract class Decision implements ToXContent, Writeable {
     public enum Type implements Writeable {
         YES(1),
         THROTTLE(2),
+        SPLIT(3),
         NO(0);
 
         private final int id;
@@ -123,6 +126,8 @@ public abstract class Decision implements ToXContent, Writeable {
                     return YES;
                 case 2:
                     return THROTTLE;
+                case 3:
+                    return SPLIT;
                 default:
                     throw new IllegalArgumentException("No Type for integer [" + i + "]");
             }
@@ -130,7 +135,12 @@ public abstract class Decision implements ToXContent, Writeable {
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeVInt(id);
+            if (out.getVersion().onOrAfter(Version.V_3_0_0) || id != SPLIT.id) {
+                out.writeVInt(id);
+            } else {
+                throw new IllegalStateException("In-place split not allowed on older versions.");
+            }
+
         }
 
         public boolean higherThan(Type other) {
@@ -319,6 +329,8 @@ public abstract class Decision implements ToXContent, Writeable {
                 if (type == Type.NO) {
                     return type;
                 } else if (type == Type.THROTTLE) {
+                    ret = type;
+                } else if (type == Type.SPLIT) {
                     ret = type;
                 }
             }

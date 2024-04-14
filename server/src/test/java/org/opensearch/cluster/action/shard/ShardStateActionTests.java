@@ -573,7 +573,7 @@ public class ShardStateActionTests extends OpenSearchTestCase {
         final String message = randomRealisticUnicodeOfCodepointLengthBetween(10, 100);
 
         final Version version = randomFrom(randomCompatibleVersion(random(), Version.CURRENT));
-        try (StreamInput in = serialize(new StartedShardEntry(shardId, allocationId, primaryTerm, message), version).streamInput()) {
+        try (StreamInput in = serialize(new StartedShardEntry(shardId, allocationId, primaryTerm, message, null), version).streamInput()) {
             in.setVersion(version);
             final StartedShardEntry deserialized = new StartedShardEntry(in);
             assertThat(deserialized.shardId, equalTo(shardId));

@@ -322,7 +322,11 @@ public class RestShardsAction extends AbstractCatAction {
             } else {
                 table.addCell("r");
             }
-            table.addCell(shard.state());
+            if (shard.splitting()) {
+                table.addCell("SPLITTING");
+            } else {
+                table.addCell(shard.state());
+            }
             table.addCell(getOrNull(commonStats, CommonStats::getDocs, DocsStats::getCount));
             table.addCell(getOrNull(commonStats, CommonStats::getStore, StoreStats::getSize));
             if (shard.assignedToNode()) {
@@ -340,6 +344,12 @@ public class RestShardsAction extends AbstractCatAction {
                     name.append(reloNodeId);
                     name.append(" ");
                     name.append(reloNme);
+                } else if (shard.splitting()) {
+                    name.append(" -> ");
+                    for (ShardRouting childShard : shard.getRecoveringChildShards()) {
+                        name.append(childShard.shardId().getId());
+                        name.append(" ");
+                    }
                 }
                 table.addCell(ip);
                 table.addCell(nodeId);

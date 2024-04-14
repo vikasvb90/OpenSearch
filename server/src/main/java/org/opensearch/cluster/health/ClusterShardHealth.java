@@ -241,7 +241,7 @@ public final class ClusterShardHealth implements Writeable, ToXContentFragment {
             && unassignedInfo.getNumFailedAllocations() == 0
             && (recoveryType == RecoverySource.Type.EMPTY_STORE
                 || recoveryType == RecoverySource.Type.LOCAL_SHARDS
-                || recoveryType == RecoverySource.Type.LOCAL_SHARD_SPLIT
+                || recoveryType == RecoverySource.Type.IN_PLACE_SHARD_SPLIT
                 || recoveryType == RecoverySource.Type.SNAPSHOT)) {
             return ClusterHealthStatus.YELLOW;
         } else {

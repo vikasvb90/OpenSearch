@@ -70,6 +70,7 @@ import org.opensearch.index.remote.RemoteStoreStatsTrackerFactory;
 import org.opensearch.index.seqno.GlobalCheckpointSyncAction;
 import org.opensearch.index.seqno.ReplicationTracker;
 import org.opensearch.index.seqno.RetentionLeaseSyncer;
+import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexEventListener;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.IndexShardRelocatedException;
@@ -667,7 +668,12 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         }
 
         try {
-            final long primaryTerm = state.metadata().index(shardRouting.index()).primaryTerm(shardRouting.id());
+            final long primaryTerm;
+            if (shardRouting.isSplitTarget()) {
+                primaryTerm = SequenceNumbers.UNASSIGNED_PRIMARY_TERM;
+            } else {
+                primaryTerm = state.metadata().index(shardRouting.index()).primaryTerm(shardRouting.id());
+            }
             logger.debug("{} creating shard with primary term [{}]", shardRouting.shardId(), primaryTerm);
             indicesService.createShard(
                 shardRouting,

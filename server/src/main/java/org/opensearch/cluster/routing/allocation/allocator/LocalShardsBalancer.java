@@ -612,6 +612,23 @@ public class LocalShardsBalancer extends ShardsBalancer {
                 if (targetNode != null) {
                     checkAndAddInEligibleTargetNode(targetNode.getRoutingNode());
                 }
+            } else if (moveDecision.isDecisionTaken() && moveDecision.canSplit()) {
+                final BalancedShardsAllocator.ModelNode sourceNode = nodes.get(shardRouting.currentNodeId());
+                sourceNode.removeShard(shardRouting);
+                IndexMetadata indexMetadata = metadata.getIndexSafe(shardRouting.index());
+                Tuple<ShardRouting, List<ShardRouting>> splittingShards = routingNodes.splitShard(
+                    shardRouting,
+                    indexMetadata,
+                    allocation.clusterInfo().getShardSize(shardRouting, ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE),
+                    allocation.changes()
+                );
+                splittingShards.v2().forEach(sourceNode::addShard);
+                if (logger.isTraceEnabled()) {
+                    logger.trace("Splitting shard [{}]", shardRouting);
+                }
+
+                // Verifying if this node can be considered ineligible for further iterations
+                checkAndAddInEligibleTargetNode(sourceNode.getRoutingNode());
             } else if (moveDecision.isDecisionTaken() && moveDecision.canRemain() == false) {
                 logger.trace("[{}][{}] can't move", shardRouting.index(), shardRouting.id());
             }
@@ -646,6 +663,17 @@ public class LocalShardsBalancer extends ShardsBalancer {
         assert sourceNode != null && sourceNode.containsShard(shardRouting);
         RoutingNode routingNode = sourceNode.getRoutingNode();
         Decision canRemain = allocation.deciders().canRemain(shardRouting, routingNode, allocation);
+        AllocationResult allocationResult = new AllocationResult(null, 0, Decision.Type.NO);
+        List<NodeAllocationResult> nodeExplanationMap = explain ? new ArrayList<>() : null;
+        if (canRemain.type() == Decision.Type.SPLIT) {
+            decideRoutingNode(allocationResult, explain, nodeExplanationMap, sourceNode.getRoutingNode(), shardRouting);
+            return MoveDecision.cannotRemain(
+                canRemain,
+                AllocationDecision.fromDecisionType(allocationResult.bestDecision),
+                allocationResult.targetNode != null ? allocationResult.targetNode.node() : null,
+                nodeExplanationMap
+            );
+        }
         if (canRemain.type() != Decision.Type.NO) {
             return MoveDecision.stay(canRemain);
         }
@@ -657,51 +685,74 @@ public class LocalShardsBalancer extends ShardsBalancer {
          * This is not guaranteed to be balanced after this operation we still try best effort to
          * allocate on the minimal eligible node.
          */
-        Decision.Type bestDecision = Decision.Type.NO;
-        RoutingNode targetNode = null;
-        final List<NodeAllocationResult> nodeExplanationMap = explain ? new ArrayList<>() : null;
-        int weightRanking = 0;
+        allocationResult = new AllocationResult(null, 0, Decision.Type.NO);
+        nodeExplanationMap = explain ? new ArrayList<>() : null;
         for (BalancedShardsAllocator.ModelNode currentNode : sorter.modelNodes) {
             if (currentNode != sourceNode) {
-                RoutingNode target = currentNode.getRoutingNode();
-                if (!explain && inEligibleTargetNode.contains(target)) continue;
-                // don't use canRebalance as we want hard filtering rules to apply. See #17698
-                if (!explain) {
-                    // If we cannot allocate any shard to node marking it in eligible
-                    Decision nodeLevelAllocationDecision = allocation.deciders().canAllocateAnyShardToNode(target, allocation);
-                    if (nodeLevelAllocationDecision.type() != Decision.Type.YES) {
-                        inEligibleTargetNode.add(currentNode.getRoutingNode());
-                        continue;
-                    }
-                }
-                // don't use canRebalance as we want hard filtering rules to apply. See #17698
-                Decision allocationDecision = allocation.deciders().canAllocate(shardRouting, target, allocation);
-                if (explain) {
-                    nodeExplanationMap.add(
-                        new NodeAllocationResult(currentNode.getRoutingNode().node(), allocationDecision, ++weightRanking)
-                    );
-                }
-                // TODO maybe we can respect throttling here too?
-                if (allocationDecision.type().higherThan(bestDecision)) {
-                    bestDecision = allocationDecision.type();
-                    if (bestDecision == Decision.Type.YES) {
-                        targetNode = target;
-                        if (explain == false) {
-                            // we are not in explain mode and already have a YES decision on the best weighted node,
-                            // no need to continue iterating
-                            break;
-                        }
-                    }
+                decideRoutingNode(allocationResult, explain, nodeExplanationMap, currentNode.getRoutingNode(), shardRouting);
+                if (allocationResult.targetFound) {
+                    break;
                 }
             }
         }
 
         return MoveDecision.cannotRemain(
             canRemain,
-            AllocationDecision.fromDecisionType(bestDecision),
-            targetNode != null ? targetNode.node() : null,
+            AllocationDecision.fromDecisionType(allocationResult.bestDecision),
+            allocationResult.targetNode != null ? allocationResult.targetNode.node() : null,
             nodeExplanationMap
         );
+    }
+
+    private static class AllocationResult {
+        private RoutingNode targetNode;
+        private int weightRanking;
+        private Decision.Type bestDecision;
+        private boolean targetFound = false;
+
+        public AllocationResult(RoutingNode targetNode, int weightRanking, Decision.Type bestDecision) {
+            this.targetNode = targetNode;
+            this.weightRanking = weightRanking;
+            this.bestDecision = bestDecision;
+        }
+    }
+
+    private void decideRoutingNode(
+        AllocationResult allocationResult,
+        boolean explain,
+        final List<NodeAllocationResult> nodeExplanationMap,
+        RoutingNode target,
+        ShardRouting shardRouting
+    ) {
+        if (!explain && inEligibleTargetNode.contains(target)) {
+            return;
+        }
+        // don't use canRebalance as we want hard filtering rules to apply. See #17698
+        if (!explain) {
+            // If we cannot allocate any shard to node marking it in eligible
+            Decision nodeLevelAllocationDecision = allocation.deciders().canAllocateAnyShardToNode(target, allocation);
+            if (nodeLevelAllocationDecision.type() != Decision.Type.YES) {
+                inEligibleTargetNode.add(target);
+                return;
+            }
+        }
+        // don't use canRebalance as we want hard filtering rules to apply. See #17698
+        Decision allocationDecision = allocation.deciders().canAllocate(shardRouting, target, allocation);
+        if (explain) {
+            nodeExplanationMap.add(new NodeAllocationResult(target.node(), allocationDecision, ++allocationResult.weightRanking));
+        }
+        // TODO maybe we can respect throttling here too?
+        if (allocationDecision.type().higherThan(allocationResult.bestDecision)) {
+            allocationResult.bestDecision = allocationDecision.type();
+            if (allocationResult.bestDecision == Decision.Type.YES) {
+                allocationResult.targetNode = target;
+                if (explain == false) {
+                    // we are not in explain mode and already have a YES decision on the best weighted node,
+                    // no need to continue iterating
+                    allocationResult.targetFound = true;
+                }
+            }
+        }
     }
 
     /**

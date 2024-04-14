@@ -165,8 +165,8 @@ public class CancelAllocationCommand implements AllocationCommand {
             throw new IllegalArgumentException("[cancel_allocation] can't cancel " + shardId + ", failed to find it on node " + discoNode);
         }
         if (shardRouting.primary() && allowPrimary == false) {
-            if ((shardRouting.initializing() && shardRouting.relocatingNodeId() != null) == false) {
-                // only allow cancelling initializing shard of primary relocation without allowPrimary flag
+            if ((shardRouting.initializing() && (shardRouting.relocatingNodeId() != null || shardRouting.isSplitTarget())) == false) {
+                // only allow cancelling initializing shard of primary relocation/split without allowPrimary flag
                 if (explain) {
                     return new RerouteExplanation(
                         this,

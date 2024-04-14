@@ -9,6 +9,7 @@
 package org.opensearch.cluster.awarenesshealth;
 
 import org.opensearch.OpenSearchParseException;
+import org.opensearch.Version;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.metadata.WeightedRoutingMetadata;
 import org.opensearch.cluster.routing.RoutingNode;
@@ -41,6 +42,7 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
     private static final String ACTIVE_SHARDS = "active_shards";
     private static final String INITIALIZING_SHARDS = "initializing_shards";
     private static final String RELOCATING_SHARDS = "relocating_shards";
+    private static final String SPLITTING_SHARDS = "splitting_shards";
     private static final String UNASSIGNED_SHARDS = "unassigned_shards";
     private static final String NODES = "data_nodes";
     private static final String WEIGHTS = "weight";
@@ -49,6 +51,7 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
     private int unassignedShards;
     private int initializingShards;
     private int relocatingShards;
+    private int splittingShards;
     private int nodes;
     private double weight;
     private List<String> nodeList;
@@ -71,7 +74,8 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
         int relocatingShards,
         int unassignedShards,
         int nodes,
-        double weights
+        double weights,
+        int splittingShards
     ) {
         this.name = name;
         this.activeShards = activeShards;
@@ -80,6 +84,7 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
         this.unassignedShards = unassignedShards;
         this.nodes = nodes;
         this.weight = weights;
+        this.splittingShards = splittingShards;
     }
 
     public ClusterAwarenessAttributeValueHealth(final StreamInput in) throws IOException {
@@ -90,6 +95,9 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
         unassignedShards = in.readVInt();
         nodes = in.readVInt();
         weight = in.readDouble();
+        if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+            splittingShards = in.readVInt();
+        }
     }
 
     public static ClusterAwarenessAttributeValueHealth fromXContent(XContentParser parser) throws IOException {
@@ -101,6 +109,7 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
         int active_shards = 0;
         int initializing_shards = 0;
         int relocating_shards = 0;
+        int splitting_shards = 0;
         int unassigned_shards = 0;
         int nodes = 0;
         double weight = 0.0;
@@ -133,6 +142,14 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
                             );
                         }
                         relocating_shards = parser.intValue();
+                        break;
+                    case SPLITTING_SHARDS:
+                        if (parser.nextToken() != XContentParser.Token.VALUE_NUMBER) {
+                            throw new OpenSearchParseException(
+                                "failed to parse splitting shards field, expected number but found unknown type"
+                            );
+                        }
+                        splitting_shards = parser.intValue();
                         break;
                     case UNASSIGNED_SHARDS:
                         if (parser.nextToken() != XContentParser.Token.VALUE_NUMBER) {
@@ -168,7 +185,8 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
             relocating_shards,
             unassigned_shards,
             nodes,
-            weight
+            weight,
+            splitting_shards
         );
     }
 
@@ -220,8 +238,16 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
         return relocatingShards;
     }
 
+    public int getSplittingShards() {
+        return splittingShards;
+    }
+
     public void setRelocatingShards(int relocatingShards) {
         this.relocatingShards = relocatingShards;
+    }
+
+    public void setSplittingShardsShards(int splittingShards) {
+        this.splittingShards = splittingShards;
     }
 
     public List<String> getNodeList() {
@@ -241,6 +267,14 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
         out.writeVInt(unassignedShards);
         out.writeVInt(nodes);
         out.writeDouble(weight);
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            out.writeVInt(splittingShards);
+        } else if (splittingShards != 0) {
+            // In-progress shard split is not allowed in a mixed cluster where node(s) with an unsupported split
+            // version is present. Hence, we also don't want to allow a node with an unsupported version
+            // to get this state while shard split is in-progress.
+            throw new IllegalStateException("In-place split not allowed on older versions.");
+        }
     }
 
     @Override
@@ -252,6 +286,7 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
         builder.field(UNASSIGNED_SHARDS, getUnassignedShards());
         builder.field(NODES, getNodes());
         builder.field(WEIGHTS, getWeight());
+        builder.field(SPLITTING_SHARDS, getSplittingShards());
         builder.endObject();
         return builder;
     }
@@ -274,6 +309,7 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
             activeShards += node.numberOfShardsWithState(ShardRoutingState.STARTED);
             relocatingShards += node.numberOfShardsWithState(ShardRoutingState.RELOCATING);
             initializingShards += node.numberOfShardsWithState(ShardRoutingState.INITIALIZING);
+            splittingShards += node.numberOfShardsWithState(ShardRoutingState.SPLITTING);
         }
 
         // computing unassigned shards info
@@ -311,11 +347,12 @@ public class ClusterAwarenessAttributeValueHealth implements Writeable, ToXConte
             && initializingShards == that.initializingShards
             && unassignedShards == that.unassignedShards
             && nodes == that.nodes
-            && weight == that.weight;
+            && weight == that.weight
+            && splittingShards == that.splittingShards;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, activeShards, relocatingShards, initializingShards, unassignedShards, nodes, weight);
+        return Objects.hash(name, activeShards, relocatingShards, initializingShards, unassignedShards, nodes, weight, splittingShards);
     }
 }

@@ -6,7 +6,7 @@
  * compatible open source license.
  */
 
-package org.opensearch.action.admin.indices.localsplit;
+package org.opensearch.action.admin.indices.split;
 
 import org.opensearch.action.support.master.AcknowledgedResponse;
 import org.opensearch.common.annotation.ExperimentalApi;
@@ -27,37 +27,37 @@ import static org.opensearch.core.xcontent.ConstructingObjectParser.constructorA
  * @opensearch.experimental
  */
 @ExperimentalApi
-public class LocalShardSplitResponse extends AcknowledgedResponse {
+public class InPlaceShardSplitResponse extends AcknowledgedResponse {
 
-    private static final ConstructingObjectParser<LocalShardSplitResponse, Void> PARSER = new ConstructingObjectParser<>(
-        "local_shard_split_response",
+    private static final ConstructingObjectParser<InPlaceShardSplitResponse, Void> PARSER = new ConstructingObjectParser<>(
+        "in_place_shard_split_response",
         true,
-        args -> new LocalShardSplitResponse((boolean) args[0], (String) args[1], (int) args[2], (int) args[3])
+        args -> new InPlaceShardSplitResponse((boolean) args[0], (String) args[1], (int) args[2], (int) args[3])
     );
 
     static {
         declareAcknowledgedField(PARSER);
         PARSER.declareString(constructorArg(), new ParseField("index"));
         PARSER.declareInt(constructorArg(), new ParseField("shard_id"));
-        PARSER.declareInt(constructorArg(), new ParseField("split_into"));
+        PARSER.declareInt(constructorArg(), new ParseField("number_of_splits"));
     }
 
     private final String index;
     private final int shardId;
-    private final int splitInto;
+    private final int numberOfSplits;
 
-    LocalShardSplitResponse(StreamInput in) throws IOException {
+    InPlaceShardSplitResponse(StreamInput in) throws IOException {
         super(in);
         index = in.readString();
         shardId = in.readInt();
-        splitInto = in.readInt();
+        numberOfSplits = in.readInt();
     }
 
-    public LocalShardSplitResponse(final boolean acknowledged, final String index, final int shardId, final int splitInto) {
+    public InPlaceShardSplitResponse(final boolean acknowledged, final String index, final int shardId, final int numberOfSplits) {
         super(acknowledged);
         this.index = index;
         this.shardId = shardId;
-        this.splitInto = splitInto;
+        this.numberOfSplits = numberOfSplits;
     }
 
     @Override
@@ -65,24 +65,24 @@ public class LocalShardSplitResponse extends AcknowledgedResponse {
         super.writeTo(out);
         out.writeString(index);
         out.writeInt(shardId);
-        out.writeInt(splitInto);
+        out.writeInt(numberOfSplits);
     }
 
-    public static LocalShardSplitResponse fromXContent(XContentParser parser) {
+    public static InPlaceShardSplitResponse fromXContent(XContentParser parser) {
         return PARSER.apply(parser, null);
     }
 
     @Override
     public boolean equals(Object o) {
         if (super.equals(o)) {
-            LocalShardSplitResponse that = (LocalShardSplitResponse) o;
-            return shardId == that.shardId && splitInto == that.splitInto && Objects.equals(index, that.index);
+            InPlaceShardSplitResponse that = (InPlaceShardSplitResponse) o;
+            return shardId == that.shardId && numberOfSplits == that.numberOfSplits && Objects.equals(index, that.index);
         }
         return false;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(super.hashCode(), index, shardId, splitInto);
+        return Objects.hash(super.hashCode(), index, shardId, numberOfSplits);
     }
 }

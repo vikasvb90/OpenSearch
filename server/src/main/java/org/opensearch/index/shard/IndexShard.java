@@ -422,7 +422,12 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         this.checkIndexOnStartup = indexSettings.getValue(IndexSettings.INDEX_CHECK_ON_STARTUP);
         this.translogConfig = new TranslogConfig(shardId, shardPath().resolveTranslog(), indexSettings, bigArrays, nodeId);
         final String aId = shardRouting.allocationId().getId();
-        final long primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardId.id());
+        final long primaryTerm;
+        if (shardRouting.isSplitTarget()) {
+            primaryTerm = SequenceNumbers.UNASSIGNED_PRIMARY_TERM;
+        } else {
+            primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardId.id());
+        }
         this.pendingPrimaryTerm = primaryTerm;
         this.globalCheckpointListeners = new GlobalCheckpointListeners(shardId, threadPool.scheduler(), logger);
         this.pendingReplicationActions = new PendingReplicationActions(shardId, threadPool);
@@ -616,10 +621,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             if (state == IndexShardState.POST_RECOVERY && newRouting.active()) {
                 assert currentRouting.active() == false : "we are in POST_RECOVERY, but our shard routing is active " + currentRouting;
-                assert currentRouting.isRelocationTarget() == false
+                assert currentRouting.isRelocationTarget() == false && currentRouting.isSplitTarget() == false
                     || currentRouting.primary() == false
                     || replicationTracker.isPrimaryMode()
-                    : "a primary relocation is completed by the cluster-managerr, but primary mode is not active " + currentRouting;
+                    : "a primary relocation/split is completed by the cluster-managerr, but primary mode is not active " + currentRouting;
 
                 changeState(IndexShardState.STARTED, "global state is [" + newRouting.state() + "]");
 
@@ -639,7 +644,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                         shardId(),
                         "Shard is marked as relocated, cannot safely move to state " + newRouting.state()
                     );
-                }
+                } else if (currentRouting.primary()
+                    && currentRouting.splitting()
+                    && replicationTracker.isRelocated()
+                    && (newRouting.splitting() == false || newRouting.equalsIgnoringMetadata(currentRouting) == false)) {
+
+                        throw new IndexShardRelocatedException(
+                            shardId(),
+                            "Shard is marked as split, cannot safely move to state " + newRouting.state()
+                        );
+                    }
             assert newRouting.active() == false || state == IndexShardState.STARTED || state == IndexShardState.CLOSED
                 : "routing is active, but local shard state isn't. routing: " + newRouting + ", local state: " + state;
             persistMetadata(path, indexSettings, newRouting, currentRouting, logger);
@@ -647,7 +661,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
             if (newRouting.primary()) {
                 if (newPrimaryTerm == pendingPrimaryTerm) {
-                    if (currentRouting.initializing() && currentRouting.isRelocationTarget() == false && newRouting.active()) {
+                    if (currentRouting.initializing()
+                        && currentRouting.isRelocationTarget() == false
+                        && currentRouting.isSplitTarget() == false
+                        && newRouting.active()) {
                         // the cluster-manager started a recovering primary, activate primary mode.
                         replicationTracker.activatePrimaryMode(getLocalCheckpoint());
                         postActivatePrimaryMode();
@@ -3427,7 +3444,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param primaryContext the sequence number context
      */
     public void activateWithPrimaryContext(final ReplicationTracker.PrimaryContext primaryContext) {
-        assert shardRouting.primary() && shardRouting.isRelocationTarget()
+        assert shardRouting.primary() && (shardRouting.isRelocationTarget() || shardRouting.isSplitTarget())
             : "only primary relocation target can update allocation IDs from primary context: " + shardRouting;
         assert primaryContext.getCheckpointStates().containsKey(routingEntry().allocationId().getId()) : "primary context ["
             + primaryContext
@@ -3698,7 +3715,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     throw e;
                 }
                 break;
-            case LOCAL_SHARD_SPLIT:
+            case IN_PLACE_SHARD_SPLIT:
                 return;
             default:
                 throw new IllegalArgumentException("Unknown recovery source " + recoveryState.getRecoverySource());

@@ -37,7 +37,6 @@ import org.opensearch.cluster.AbstractDiffable;
 import org.opensearch.cluster.Diff;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.Metadata;
-import org.opensearch.cluster.metadata.NewRecoveringShardMetadata;
 import org.opensearch.cluster.routing.RecoverySource.EmptyStoreRecoverySource;
 import org.opensearch.cluster.routing.RecoverySource.ExistingStoreRecoverySource;
 import org.opensearch.cluster.routing.RecoverySource.LocalShardsRecoverySource;
@@ -126,13 +125,10 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         }
 
         // check the number of shards
-        if (indexMetadata.getNumberOfShards() + indexMetadata.getNewShardRecoveries().size() != shards().size()) {
+        if (indexMetadata.getNumberOfShards() != shards().size()) {
             Set<Integer> expected = new HashSet<>();
             for (int i = 0; i < indexMetadata.getNumberOfShards(); i++) {
                 expected.add(i);
-            }
-            for (NewRecoveringShardMetadata newShardMetadata : indexMetadata.getNewShardRecoveries().values()) {
-                expected.add(newShardMetadata.getShardId());
             }
             for (IndexShardRoutingTable indexShardRoutingTable : this) {
                 expected.remove(indexShardRoutingTable.shardId().id());
@@ -161,7 +157,8 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
                     );
                 }
                 final Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(shardRouting.id());
-                if (shardRouting.active() && inSyncAllocationIds.contains(shardRouting.allocationId().getId()) == false) {
+                if (shardRouting.active()
+                    && (inSyncAllocationIds == null || inSyncAllocationIds.contains(shardRouting.allocationId().getId()) == false)) {
                     throw new IllegalStateException(
                         "active shard routing "
                             + shardRouting
@@ -506,44 +503,6 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
             return this;
         }
 
-        public Builder addSplitChildShards(ShardId sourceShardId, IndexMetadata indexMetadata, List<Integer> shardIds) {
-            IndexShardRoutingTable sourceShardRouting = shards.get(sourceShardId.id());
-            if (!sourceShardRouting.getChildShards().isEmpty()) {
-                //TODO: Validate that source shard isn't dormant.
-                sourceShardRouting.getChildShards().forEach(childShard -> {
-                    if (!childShard.getShards().get(0).started()) {
-                        throw new IllegalStateException(
-                            "Recovery of child shards of the parent shard [" + sourceShardId + "] is already in progress.");
-                    }
-                });
-            }
-
-            IndexShardRoutingTable.Builder sourceShardRoutingBuilder = new IndexShardRoutingTable.Builder(sourceShardRouting);
-            for (Integer newShardId : shardIds) {
-                UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.SPLIT_SHARD_ADDED, null);
-                ShardId shardId = new ShardId(index, newShardId);
-
-                IndexShardRoutingTable.Builder shardRoutingBuilder = new IndexShardRoutingTable.Builder(shardId);
-                RecoverySource primaryRecoverySource = new RecoverySource.LocalShardSplitRecoverySource(sourceShardId);
-                for (int i = 0; i <= indexMetadata.getNumberOfReplicas(); i++) {
-                    ShardRouting shardRouting = ShardRouting.newUnassigned(
-                        shardId,
-                        i == 0,
-                        i == 0 ? primaryRecoverySource : RecoverySource.PeerRecoverySource.INSTANCE,
-                        unassignedInfo
-                    );
-                    shardRoutingBuilder.addShard(shardRouting);
-                }
-
-                IndexShardRoutingTable childShard = shardRoutingBuilder.build();
-                addIndexShard(childShard);
-                sourceShardRoutingBuilder.addChildShard(childShard);
-            }
-
-            addIndexShard(sourceShardRoutingBuilder.build());
-            return this;
-        }
-
         /**
          * Initializes an index, to be restored from snapshot
          */
@@ -624,24 +583,6 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
                 }
                 shards.put(shardNumber, indexShardRoutingBuilder.build());
             }
-
-            if (indexMetadata.getNewShardRecoveries().isEmpty()) {
-                return this;
-            }
-
-            Integer sourceShardId = null;
-            List<Integer> newLocalShardIds = new ArrayList<>();
-            for (NewRecoveringShardMetadata newShardMetadata : indexMetadata.getNewShardRecoveries().values()) {
-                if (sourceShardId != null && sourceShardId != newShardMetadata.getSourceShardId()) {
-                    throw new IllegalStateException("Cannot initialize multiple recoveries of new local shards. " +
-                        "Found multiple source shard ids.");
-                }
-                sourceShardId = newShardMetadata.getSourceShardId();
-                newLocalShardIds.add(newShardMetadata.getShardId());
-            }
-            assert sourceShardId != null;
-            ShardId sourceShard = new ShardId(indexMetadata.getIndex(), sourceShardId);
-            addSplitChildShards(sourceShard, indexMetadata, newLocalShardIds);
 
             return this;
         }

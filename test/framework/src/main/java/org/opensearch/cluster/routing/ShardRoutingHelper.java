@@ -67,7 +67,9 @@ public class ShardRoutingHelper {
             recoverySource,
             new UnassignedInfo(UnassignedInfo.Reason.REINITIALIZED, null),
             copy.allocationId(),
-            copy.getExpectedShardSize()
+            copy.getExpectedShardSize(),
+            copy.getRecoveringChildShardIds(),
+            copy.getSplittingShardId()
         );
     }
 
@@ -85,7 +87,9 @@ public class ShardRoutingHelper {
             recoverySource,
             routing.unassignedInfo(),
             routing.allocationId(),
-            routing.getExpectedShardSize()
+            routing.getExpectedShardSize(),
+            routing.getRecoveringChildShardIds(),
+            routing.getSplittingShardId()
         );
     }
 }

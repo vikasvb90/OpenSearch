@@ -30,7 +30,8 @@ public class ClusterAwarenessAttributeValueHealthTests extends AbstractSerializi
             randomInt(1000),
             randomInt(1000),
             randomInt(1000),
-            randomFrom(0.0, 1.0)
+            randomFrom(0.0, 1.0),
+            randomInt(1000)
         );
     }
 

@@ -6,18 +6,18 @@
  * compatible open source license.
  */
 
-package org.opensearch.action.admin.indices.localsplit;
+package org.opensearch.action.admin.indices.split;
 
 import org.opensearch.cluster.ack.ClusterStateUpdateRequest;
 
-public class LocalShardSplitClusterStateUpdateRequest extends ClusterStateUpdateRequest<LocalShardSplitClusterStateUpdateRequest> {
+public class InPlaceShardSplitClusterStateUpdateRequest extends ClusterStateUpdateRequest<InPlaceShardSplitClusterStateUpdateRequest> {
 
     private final String index;
     private final int shardId;
     private final int splitInto;
     private final String cause;
 
-    public LocalShardSplitClusterStateUpdateRequest(String cause, String index, int shardId, int splitInto) {
+    public InPlaceShardSplitClusterStateUpdateRequest(String cause, String index, int shardId, int splitInto) {
         this.index = index;
         this.shardId = shardId;
         this.splitInto = splitInto;

@@ -34,6 +34,8 @@ package org.opensearch.cluster.routing;
 
 import org.opensearch.common.annotation.PublicApi;
 
+import java.util.List;
+
 /**
  * Records changes made to {@link RoutingNodes} during an allocation round.
  *
@@ -57,6 +59,11 @@ public interface RoutingChangesObserver {
     void relocationStarted(ShardRouting startedShard, ShardRouting targetRelocatingShard);
 
     /**
+     * Called when split of a started shard is initiated.
+     */
+    void splitStarted(ShardRouting startedShard, List<ShardRouting> childSplitShards);
+
+    /**
      * Called when an unassigned shard's unassigned information was updated
      */
     void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo);
@@ -76,6 +83,11 @@ public interface RoutingChangesObserver {
      * initializing shard.
      */
     void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource);
+
+    /**
+     * Called when split completes after child shards are started.
+     */
+    void splitCompleted(ShardRouting removedSplitSource);
 
     /**
      * Called when started replica is promoted to primary.
@@ -110,6 +122,11 @@ public interface RoutingChangesObserver {
         }
 
         @Override
+        public void splitStarted(ShardRouting startedShard, List<ShardRouting> childSplitShards) {
+
+        }
+
+        @Override
         public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
 
         }
@@ -126,6 +143,11 @@ public interface RoutingChangesObserver {
 
         @Override
         public void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource) {
+
+        }
+
+        @Override
+        public void splitCompleted(ShardRouting removedSplitSource) {
 
         }
 
@@ -175,6 +197,13 @@ public interface RoutingChangesObserver {
         }
 
         @Override
+        public void splitStarted(ShardRouting startedShard, List<ShardRouting> childSplitShards) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.splitStarted(startedShard, childSplitShards);
+            }
+        }
+
+        @Override
         public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.unassignedInfoUpdated(unassignedShard, newUnassignedInfo);
@@ -199,6 +228,13 @@ public interface RoutingChangesObserver {
         public void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.relocationSourceRemoved(removedReplicaRelocationSource);
+            }
+        }
+
+        @Override
+        public void splitCompleted(ShardRouting removedSplitSource) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.splitCompleted(removedSplitSource);
             }
         }
 

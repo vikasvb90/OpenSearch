@@ -57,7 +57,7 @@ import java.util.Objects;
  * - {@link PeerRecoverySource} recovery from a primary on another node
  * - {@link SnapshotRecoverySource} recovery from a snapshot
  * - {@link LocalShardsRecoverySource} recovery from other shards of another index on the same node
- * - {@link LocalShardSplitRecoverySource} recovery of child shards from a source shard on the same node
+ * - {@link InPlaceShardSplitRecoverySource} recovery of child shards from a source shard on the same node
  * @opensearch.api
  */
 @PublicApi(since = "1.0.0")
@@ -91,8 +91,8 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
                 return new SnapshotRecoverySource(in);
             case LOCAL_SHARDS:
                 return LocalShardsRecoverySource.INSTANCE;
-            case LOCAL_SHARD_SPLIT:
-                return new LocalShardSplitRecoverySource(in);
+            case IN_PLACE_SHARD_SPLIT:
+                return new InPlaceShardSplitRecoverySource(in);
             case REMOTE_STORE:
                 return new RemoteStoreRecoverySource(in);
             default:
@@ -125,7 +125,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
         PEER,
         SNAPSHOT,
         LOCAL_SHARDS,
-        LOCAL_SHARD_SPLIT,
+        IN_PLACE_SHARD_SPLIT,
         REMOTE_STORE
     }
 
@@ -256,21 +256,21 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
      *
      * @opensearch.internal
      */
-    public static class LocalShardSplitRecoverySource extends RecoverySource {
+    public static class InPlaceShardSplitRecoverySource extends RecoverySource {
 
         private final ShardId sourceShardId;
 
-        public LocalShardSplitRecoverySource(ShardId sourceShardId) {
+        public InPlaceShardSplitRecoverySource(ShardId sourceShardId) {
             this.sourceShardId = sourceShardId;
         }
 
-        public LocalShardSplitRecoverySource(StreamInput in) throws IOException {
+        public InPlaceShardSplitRecoverySource(StreamInput in) throws IOException {
             sourceShardId = new ShardId(in);
         }
 
         @Override
         public Type getType() {
-            return Type.LOCAL_SHARD_SPLIT;
+            return Type.IN_PLACE_SHARD_SPLIT;
         }
 
         public ShardId getSourceShardId() {
@@ -287,7 +287,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             if (!super.equals(o)) return false;
-            LocalShardSplitRecoverySource that = (LocalShardSplitRecoverySource) o;
+            InPlaceShardSplitRecoverySource that = (InPlaceShardSplitRecoverySource) o;
             return Objects.equals(sourceShardId, that.sourceShardId);
         }
 

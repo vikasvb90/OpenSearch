@@ -32,6 +32,7 @@
 
 package org.opensearch.cluster.routing;
 
+import org.opensearch.Version;
 import org.opensearch.cluster.routing.RecoverySource.ExistingStoreRecoverySource;
 import org.opensearch.cluster.routing.RecoverySource.PeerRecoverySource;
 import org.opensearch.cluster.routing.allocation.allocator.BalancedShardsAllocator;
@@ -46,6 +47,7 @@ import org.opensearch.core.xcontent.ToXContentObject;
 import org.opensearch.core.xcontent.XContentBuilder;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -75,6 +77,12 @@ public class ShardRouting implements Writeable, ToXContentObject {
     private final long expectedShardSize;
     @Nullable
     private final ShardRouting targetRelocatingShard;
+    @Nullable
+    private final ShardId[] recoveringChildShardIds;
+    @Nullable
+    private final ShardRouting[] recoveringChildShards;
+    @Nullable
+    private final ShardId splittingShardId;
 
     /**
      * A constructor to internally create shard routing instances, note, the internal flag should only be set to true
@@ -89,7 +97,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
         RecoverySource recoverySource,
         UnassignedInfo unassignedInfo,
         AllocationId allocationId,
-        long expectedShardSize
+        long expectedShardSize,
+        ShardId[] childShardIds,
+        ShardId splittingShardId
     ) {
         this.shardId = shardId;
         this.currentNodeId = currentNodeId;
@@ -101,12 +111,18 @@ public class ShardRouting implements Writeable, ToXContentObject {
         this.allocationId = allocationId;
         this.expectedShardSize = expectedShardSize;
         this.targetRelocatingShard = initializeTargetRelocatingShard();
+        this.recoveringChildShardIds = childShardIds;
+        this.recoveringChildShards = initializeRecoveringChildShards();
+        this.splittingShardId = splittingShardId;
         this.asList = Collections.singletonList(this);
         assert expectedShardSize == UNAVAILABLE_EXPECTED_SHARD_SIZE
             || state == ShardRoutingState.INITIALIZING
-            || state == ShardRoutingState.RELOCATING : expectedShardSize + " state: " + state;
-        assert expectedShardSize >= 0 || state != ShardRoutingState.INITIALIZING || state != ShardRoutingState.RELOCATING
-            : expectedShardSize + " state: " + state;
+            || state == ShardRoutingState.RELOCATING
+            || state == ShardRoutingState.SPLITTING : expectedShardSize + " state: " + state;
+        assert expectedShardSize >= 0
+            || state != ShardRoutingState.INITIALIZING
+            || state != ShardRoutingState.RELOCATING
+            || state != ShardRoutingState.SPLITTING : expectedShardSize + " state: " + state;
         assert !(state == ShardRoutingState.UNASSIGNED && unassignedInfo == null) : "unassigned shard must be created with meta";
         assert (state == ShardRoutingState.UNASSIGNED || state == ShardRoutingState.INITIALIZING) == (recoverySource != null)
             : "recovery source only available on unassigned or initializing shard but was " + state;
@@ -128,8 +144,36 @@ public class ShardRouting implements Writeable, ToXContentObject {
                 PeerRecoverySource.INSTANCE,
                 unassignedInfo,
                 AllocationId.newTargetRelocation(allocationId),
-                expectedShardSize
+                expectedShardSize,
+                null,
+                null
             );
+        } else {
+            return null;
+        }
+    }
+
+    @Nullable
+    private ShardRouting[] initializeRecoveringChildShards() {
+        if (state == ShardRoutingState.SPLITTING) {
+            List<String> childShardAllocIds = allocationId.getSplitChildAllocationIds();
+            ShardRouting[] childShards = new ShardRouting[childShardAllocIds.size()];
+            for (int idx = 0; idx < childShardAllocIds.size(); idx++) {
+                childShards[idx] = new ShardRouting(
+                    recoveringChildShardIds[idx],
+                    currentNodeId,
+                    null,
+                    primary,
+                    ShardRoutingState.INITIALIZING,
+                    new RecoverySource.InPlaceShardSplitRecoverySource(shardId),
+                    unassignedInfo,
+                    AllocationId.newTargetSplit(allocationId, childShardAllocIds.get(idx)),
+                    expectedShardSize,
+                    null,
+                    shardId
+                );
+            }
+            return childShards;
         } else {
             return null;
         }
@@ -153,7 +197,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             null,
-            UNAVAILABLE_EXPECTED_SHARD_SIZE
+            UNAVAILABLE_EXPECTED_SHARD_SIZE,
+            null,
+            null
         );
     }
 
@@ -200,11 +246,12 @@ public class ShardRouting implements Writeable, ToXContentObject {
     /**
      * Returns <code>true</code> iff the this shard is currently
      * {@link ShardRoutingState#STARTED started} or
-     * {@link ShardRoutingState#RELOCATING relocating} to another node.
+     * {@link ShardRoutingState#RELOCATING relocating} to another node or
+     * {@link ShardRoutingState#SPLITTING splitting}
      * Otherwise <code>false</code>
      */
     public boolean active() {
-        return started() || relocating();
+        return started() || relocating() || splitting();
     }
 
     /**
@@ -222,6 +269,16 @@ public class ShardRouting implements Writeable, ToXContentObject {
      */
     public boolean relocating() {
         return state == ShardRoutingState.RELOCATING;
+    }
+
+    /**
+     * Returns <code>true</code> iff the this shard is currently being split.
+     * Otherwise <code>false</code>
+     *
+     * @see ShardRoutingState#SPLITTING
+     */
+    public boolean splitting() {
+        return state == ShardRoutingState.SPLITTING;
     }
 
     /**
@@ -315,7 +372,7 @@ public class ShardRouting implements Writeable, ToXContentObject {
         unassignedInfo = in.readOptionalWriteable(UnassignedInfo::new);
         allocationId = in.readOptionalWriteable(AllocationId::new);
         final long shardSize;
-        if (state == ShardRoutingState.RELOCATING || state == ShardRoutingState.INITIALIZING) {
+        if (state == ShardRoutingState.RELOCATING || state == ShardRoutingState.INITIALIZING || state == ShardRoutingState.SPLITTING) {
             shardSize = in.readLong();
         } else {
             shardSize = UNAVAILABLE_EXPECTED_SHARD_SIZE;
@@ -323,6 +380,14 @@ public class ShardRouting implements Writeable, ToXContentObject {
         expectedShardSize = shardSize;
         asList = Collections.singletonList(this);
         targetRelocatingShard = initializeTargetRelocatingShard();
+        splittingShardId = null;
+        if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+            recoveringChildShardIds = in.readOptionalArray(ShardId::new, ShardId[]::new);
+            recoveringChildShards = initializeRecoveringChildShards();
+        } else {
+            recoveringChildShards = null;
+            recoveringChildShardIds = null;
+        }
     }
 
     public ShardRouting(StreamInput in) throws IOException {
@@ -339,14 +404,28 @@ public class ShardRouting implements Writeable, ToXContentObject {
         out.writeOptionalString(currentNodeId);
         out.writeOptionalString(relocatingNodeId);
         out.writeBoolean(primary);
-        out.writeByte(state.value());
+        if (out.getVersion().onOrAfter(Version.V_3_0_0) || state != ShardRoutingState.SPLITTING) {
+            out.writeByte(state.value());
+        } else {
+            throw new IllegalStateException("In-place split not allowed on older versions.");
+        }
         if (state == ShardRoutingState.UNASSIGNED || state == ShardRoutingState.INITIALIZING) {
             recoverySource.writeTo(out);
         }
         out.writeOptionalWriteable(unassignedInfo);
         out.writeOptionalWriteable(allocationId);
-        if (state == ShardRoutingState.RELOCATING || state == ShardRoutingState.INITIALIZING) {
+        if (state == ShardRoutingState.RELOCATING || state == ShardRoutingState.INITIALIZING || state == ShardRoutingState.SPLITTING) {
             out.writeLong(expectedShardSize);
+        }
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            out.writeOptionalArray(recoveringChildShardIds);
+        } else {
+            if (recoveringChildShardIds != null) {
+                // In-progress shard split is not allowed in a mixed cluster where node(s) with an unsupported split
+                // version is present. Hence, we also don't want to allow a node with an unsupported version
+                // to get this state while shard split is in-progress.
+                throw new IllegalStateException("In-place split not allowed on older versions.");
+            }
         }
     }
 
@@ -368,7 +447,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             allocationId,
-            expectedShardSize
+            expectedShardSize,
+            recoveringChildShardIds,
+            splittingShardId
         );
     }
 
@@ -396,7 +477,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             null,
-            UNAVAILABLE_EXPECTED_SHARD_SIZE
+            UNAVAILABLE_EXPECTED_SHARD_SIZE,
+            null,
+            null
         );
     }
 
@@ -423,7 +506,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             allocationId,
-            expectedShardSize
+            expectedShardSize,
+            null,
+            null
         );
     }
 
@@ -443,7 +528,36 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             null,
             AllocationId.newRelocation(allocationId),
-            expectedShardSize
+            expectedShardSize,
+            null,
+            null
+        );
+    }
+
+    /**
+     * Split the shard.
+     *
+     */
+    public ShardRouting split(List<Integer> childShardIds, long expectedShardSize) {
+        assert state == ShardRoutingState.STARTED : "current shard has to be started in order to be split " + this;
+        ShardId[] childShards = new ShardId[childShardIds.size()];
+        int idx = 0;
+        for (Integer childShardId : childShardIds) {
+            childShards[idx++] = new ShardId(shardId.getIndex(), childShardId);
+        }
+        ;
+        return new ShardRouting(
+            shardId,
+            currentNodeId,
+            null,
+            primary,
+            ShardRoutingState.SPLITTING,
+            recoverySource,
+            null,
+            AllocationId.newSplit(allocationId, childShardIds.size()),
+            expectedShardSize / childShards.length,
+            childShards,
+            null
         );
     }
 
@@ -464,7 +578,32 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             null,
             AllocationId.cancelRelocation(allocationId),
-            UNAVAILABLE_EXPECTED_SHARD_SIZE
+            UNAVAILABLE_EXPECTED_SHARD_SIZE,
+            null,
+            null
+        );
+    }
+
+    /**
+     * Cancel split of a shard. The shards state must be set
+     * to <code>SPLITTING</code>.
+     */
+    public ShardRouting cancelSplit() {
+        assert state == ShardRoutingState.SPLITTING : this;
+        assert assignedToNode() : this;
+        assert relocatingNodeId != null : this;
+        return new ShardRouting(
+            shardId,
+            currentNodeId,
+            null,
+            primary,
+            ShardRoutingState.STARTED,
+            recoverySource,
+            null,
+            AllocationId.cancelSplit(allocationId),
+            UNAVAILABLE_EXPECTED_SHARD_SIZE,
+            null,
+            null
         );
     }
 
@@ -487,7 +626,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             AllocationId.finishRelocation(allocationId),
-            expectedShardSize
+            expectedShardSize,
+            null,
+            null
         );
     }
 
@@ -507,13 +648,15 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             AllocationId.newInitializing(),
-            expectedShardSize
+            expectedShardSize,
+            null,
+            null
         );
     }
 
     /**
      * Set the shards state to <code>STARTED</code>. The shards state must be
-     * <code>INITIALIZING</code> or <code>RELOCATING</code>. Any relocation will be
+     * <code>INITIALIZING</code> or <code>RELOCATING</code> or <code>SPLITTING</code>. Any relocation will be
      * canceled.
      */
     public ShardRouting moveToStarted() {
@@ -522,6 +665,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
         if (allocationId.getRelocationId() != null) {
             // relocation target
             allocationId = AllocationId.finishRelocation(allocationId);
+        } else if (allocationId.getParentAllocationId() != null) {
+            // split target
+            allocationId = AllocationId.finishSplit(allocationId);
         }
         return new ShardRouting(
             shardId,
@@ -532,7 +678,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             null,
             null,
             allocationId,
-            UNAVAILABLE_EXPECTED_SHARD_SIZE
+            UNAVAILABLE_EXPECTED_SHARD_SIZE,
+            null,
+            null
         );
     }
 
@@ -555,7 +703,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             allocationId,
-            expectedShardSize
+            expectedShardSize,
+            recoveringChildShardIds,
+            splittingShardId
         );
     }
 
@@ -578,7 +728,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             recoverySource,
             unassignedInfo,
             allocationId,
-            expectedShardSize
+            expectedShardSize,
+            recoveringChildShardIds,
+            splittingShardId
         );
     }
 
@@ -601,7 +753,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
             PeerRecoverySource.INSTANCE,
             unassignedInfo,
             allocationId,
-            expectedShardSize
+            expectedShardSize,
+            recoveringChildShardIds,
+            splittingShardId
         );
     }
 
@@ -624,6 +778,56 @@ public class ShardRouting implements Writeable, ToXContentObject {
      */
     public boolean isRelocationTarget() {
         return state == ShardRoutingState.INITIALIZING && relocatingNodeId != null;
+    }
+
+    /**
+     * Returns <code>true</code> if this shard is a split target for another shard
+     * (i.e., was created with {@link #initializeRecoveringChildShards()} ()}
+     */
+    public boolean isSplitTarget() {
+        return state == ShardRoutingState.INITIALIZING && getSplittingShardId() != null;
+    }
+
+    /**
+     * returns true if the routing is the split target of the given routing
+     */
+    public boolean isSplitTargetOf(ShardRouting other) {
+
+        boolean b = this.allocationId != null
+            && other.allocationId != null
+            && this.state == ShardRoutingState.INITIALIZING
+            && this.allocationId.getParentAllocationId() != null
+            && this.allocationId.getParentAllocationId().equals(other.allocationId.getId());
+
+        assert b == false || other.state == ShardRoutingState.SPLITTING
+            : "ShardRouting is a split target but the source shard state isn't splitting. This [" + this + "], other [" + other + "]";
+
+        assert b == false
+            || other.allocationId.getSplitChildAllocationIds() != null
+                && other.allocationId.getSplitChildAllocationIds().contains(this.allocationId.getId())
+            : "ShardRouting is a splitting target but the source split allocation doesn't contain this allocationId.getId."
+                + " This ["
+                + this
+                + "], other ["
+                + other
+                + "]";
+
+        assert b == false || this.getSplittingShardId().equals(other.shardId())
+            : "ShardRouting is a splitting target but current splitting shard id isn't equal to source shard id."
+                + " This ["
+                + this
+                + "], other ["
+                + other
+                + "]";
+
+        assert b == false || this.primary == other.primary : "ShardRouting is a splitting target but primary flag is different."
+            + " This ["
+            + this
+            + "], target ["
+            + other
+            + "]";
+
+        return b;
     }
 
     /** returns true if the routing is the relocation target of the given routing */
@@ -678,6 +882,44 @@ public class ShardRouting implements Writeable, ToXContentObject {
         return b;
     }
 
+    public boolean isSplitSourceOf(ShardRouting other) {
+        boolean b = this.allocationId != null
+            && other.allocationId != null
+            && this.state == ShardRoutingState.SPLITTING
+            && other.allocationId.getParentAllocationId() != null
+            && this.allocationId.getId().equals(other.allocationId.getParentAllocationId());
+
+        assert b == false || other.state == ShardRoutingState.INITIALIZING
+            : "ShardRouting is a split source but the target shard state isn't initializing. This [" + this + "], other [" + other + "]";
+
+        assert b == false
+            || this.allocationId.getSplitChildAllocationIds() != null
+                && this.allocationId.getSplitChildAllocationIds().contains(other.allocationId.getId())
+            : "ShardRouting is a splitting source but its split allocation ids doesn't contain target allocationId.getId."
+                + " This ["
+                + this
+                + "], other ["
+                + other
+                + "]";
+
+        assert b == false || this.shardId.equals(other.getSplittingShardId())
+            : "ShardRouting is a splitting source but current shard id isn't equal to target splitting shard id."
+                + " This ["
+                + this
+                + "], other ["
+                + other
+                + "]";
+
+        assert b == false || this.primary == other.primary : "ShardRouting is a splitting source but primary flag is different."
+            + " This ["
+            + this
+            + "], target ["
+            + other
+            + "]";
+
+        return b;
+    }
+
     /** returns true if the routing is the relocation source for the given routing */
     public boolean isRelocationSourceOf(ShardRouting other) {
         boolean b = this.allocationId != null
@@ -712,7 +954,7 @@ public class ShardRouting implements Writeable, ToXContentObject {
                 + other
                 + "]";
 
-        assert b == false || this.shardId.equals(other.shardId)
+        assert b == false || this.splitting() || this.shardId.equals(other.shardId)
             : "ShardRouting is a relocation source but both indexRoutings are not of the same shard."
                 + " This ["
                 + this
@@ -752,6 +994,9 @@ public class ShardRouting implements Writeable, ToXContentObject {
         if (recoverySource != null ? !recoverySource.equals(other.recoverySource) : other.recoverySource != null) {
             return false;
         }
+        if (Arrays.equals(recoveringChildShardIds, other.recoveringChildShardIds) == false) {
+            return false;
+        }
         return true;
     }
 
@@ -788,6 +1033,7 @@ public class ShardRouting implements Writeable, ToXContentObject {
             h = 31 * h + (recoverySource != null ? recoverySource.hashCode() : 0);
             h = 31 * h + (allocationId != null ? allocationId.hashCode() : 0);
             h = 31 * h + (unassignedInfo != null ? unassignedInfo.hashCode() : 0);
+            h = 31 * h + (recoveringChildShardIds != null ? Arrays.hashCode(recoveringChildShardIds) : 0);
             hashCode = h;
         }
         return h;
@@ -826,6 +1072,13 @@ public class ShardRouting implements Writeable, ToXContentObject {
         if (expectedShardSize != UNAVAILABLE_EXPECTED_SHARD_SIZE) {
             sb.append(", expected_shard_size[").append(expectedShardSize).append("]");
         }
+        if (recoveringChildShardIds != null) {
+            sb.append(", recovering_child_shard ids[");
+            for (ShardId childShard : recoveringChildShardIds) {
+                sb.append(childShard.toString());
+            }
+            sb.append("]");
+        }
         return sb.toString();
     }
 
@@ -851,12 +1104,20 @@ public class ShardRouting implements Writeable, ToXContentObject {
         if (unassignedInfo != null) {
             unassignedInfo.toXContent(builder, params);
         }
+        if (recoveringChildShardIds != null) {
+            builder.startArray("recovering_child_shard_ids");
+            for (ShardId childShardId : recoveringChildShardIds) {
+                childShardId.toXContent(builder, params);
+            }
+            builder.endArray();
+        }
         return builder.endObject();
     }
 
     /**
-     * Returns the expected shard size for {@link ShardRoutingState#RELOCATING} and {@link ShardRoutingState#INITIALIZING}
-     * shards. If it's size is not available {@value #UNAVAILABLE_EXPECTED_SHARD_SIZE} will be returned.
+     * Returns the expected shard size for {@link ShardRoutingState#RELOCATING}, {@link ShardRoutingState#INITIALIZING}
+     * and {@link ShardRoutingState#SPLITTING} shards. If it's size is not available {@value #UNAVAILABLE_EXPECTED_SHARD_SIZE}
+     * will be returned.
      */
     public long getExpectedShardSize() {
         return expectedShardSize;
@@ -877,5 +1138,19 @@ public class ShardRouting implements Writeable, ToXContentObject {
             return unassignedInfo.getReason() == UnassignedInfo.Reason.INDEX_CREATED;
         }
         return false;
+    }
+
+    @Nullable
+    public ShardRouting[] getRecoveringChildShards() {
+        // Not returning copy because in RoutingNodes shards are removed based on their object identity.
+        return recoveringChildShards;
+    }
+
+    public ShardId[] getRecoveringChildShardIds() {
+        return recoveringChildShardIds;
+    }
+
+    public ShardId getSplittingShardId() {
+        return splittingShardId;
     }
 }

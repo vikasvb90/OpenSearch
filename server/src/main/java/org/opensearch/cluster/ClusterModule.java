@@ -64,7 +64,7 @@ import org.opensearch.cluster.routing.allocation.decider.ConcurrentRecoveriesAll
 import org.opensearch.cluster.routing.allocation.decider.DiskThresholdDecider;
 import org.opensearch.cluster.routing.allocation.decider.EnableAllocationDecider;
 import org.opensearch.cluster.routing.allocation.decider.FilterAllocationDecider;
-import org.opensearch.cluster.routing.allocation.decider.LocalShardSplitAllocationDecider;
+import org.opensearch.cluster.routing.allocation.decider.InPlaceShardSplitAllocationDecider;
 import org.opensearch.cluster.routing.allocation.decider.MaxRetryAllocationDecider;
 import org.opensearch.cluster.routing.allocation.decider.NodeLoadAwareAllocationDecider;
 import org.opensearch.cluster.routing.allocation.decider.NodeVersionAllocationDecider;
@@ -354,7 +354,6 @@ public class ClusterModule extends AbstractModule {
         Map<Class, AllocationDecider> deciders = new LinkedHashMap<>();
         addAllocationDecider(deciders, new MaxRetryAllocationDecider());
         addAllocationDecider(deciders, new ResizeAllocationDecider());
-        addAllocationDecider(deciders, new LocalShardSplitAllocationDecider());
         addAllocationDecider(deciders, new ReplicaAfterPrimaryActiveAllocationDecider());
         addAllocationDecider(deciders, new RebalanceOnlyWhenActiveAllocationDecider());
         addAllocationDecider(deciders, new ClusterRebalanceAllocationDecider(settings, clusterSettings));
@@ -372,6 +371,7 @@ public class ClusterModule extends AbstractModule {
         addAllocationDecider(deciders, new AwarenessAllocationDecider(settings, clusterSettings));
         addAllocationDecider(deciders, new NodeLoadAwareAllocationDecider(settings, clusterSettings));
         addAllocationDecider(deciders, new TargetPoolAllocationDecider());
+        addAllocationDecider(deciders, new InPlaceShardSplitAllocationDecider());
 
         clusterPlugins.stream()
             .flatMap(p -> p.createAllocationDeciders(settings, clusterSettings).stream())

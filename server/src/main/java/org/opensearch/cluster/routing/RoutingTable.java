@@ -462,8 +462,9 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
             for (RoutingNode routingNode : routingNodes) {
                 for (ShardRouting shardRoutingEntry : routingNode) {
                     // every relocating shard has a double entry, ignore the target one.
-                    if (shardRoutingEntry.initializing() && shardRoutingEntry.relocatingNodeId() != null) continue;
-
+                    // Also, ignore initializing child shards.
+                    if (shardRoutingEntry.initializing()
+                        && (shardRoutingEntry.relocatingNodeId() != null || shardRoutingEntry.isSplitTarget())) continue;
                     addShard(indexRoutingTableBuilders, shardRoutingEntry);
                 }
             }
@@ -528,38 +529,6 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                 }
                 indicesRouting.put(index, builder.build());
             }
-            return this;
-        }
-
-        /**
-         * Update the number of shard for the specified index.
-         *
-         * @param shardsToAdd      the number of new child shards to add.
-         * @param index            the index of shard with shardId
-         * @return the builder
-         */
-        public Builder addSplitChildShards(int shardsToAdd, String index, ShardId sourceShardId, IndexMetadata indexMetadata) {
-            if (indicesRouting == null) {
-                throw new IllegalStateException("once build is called the builder cannot be reused");
-            }
-
-            IndexRoutingTable indexRoutingTable = indicesRouting.get(index);
-            if (indexRoutingTable == null) {
-                // ignore index missing failure, its closed...
-                return this;
-            }
-            IndexRoutingTable.Builder indexRoutingBuilder = new IndexRoutingTable.Builder(indexRoutingTable.getIndex());
-            // re-add all the shards.
-            for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
-                indexRoutingBuilder.addIndexShard(indexShardRoutingTable);
-            }
-            List<Integer> newShardIds = new ArrayList<>();
-            int maxShardId = indexRoutingTable.shards().size() + shardsToAdd;
-            for (int id = indexRoutingTable.shards().size(); id < maxShardId; id++) {
-                newShardIds.add(id);
-            }
-            indexRoutingBuilder.addSplitChildShards(sourceShardId, indexMetadata, newShardIds);
-            indicesRouting.put(index, indexRoutingBuilder.build());
             return this;
         }
 

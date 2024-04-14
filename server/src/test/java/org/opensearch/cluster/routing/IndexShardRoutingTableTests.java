@@ -59,9 +59,9 @@ public class IndexShardRoutingTableTests extends OpenSearchTestCase {
         Index index = new Index("a", "b");
         ShardId shardId = new ShardId(index, 1);
         ShardId shardId2 = new ShardId(index, 2);
-        IndexShardRoutingTable table1 = new IndexShardRoutingTable(shardId, new ArrayList<>(), new ArrayList<>());
-        IndexShardRoutingTable table2 = new IndexShardRoutingTable(shardId, new ArrayList<>(), new ArrayList<>());
-        IndexShardRoutingTable table3 = new IndexShardRoutingTable(shardId2, new ArrayList<>(), new ArrayList<>());
+        IndexShardRoutingTable table1 = new IndexShardRoutingTable(shardId, new ArrayList<>());
+        IndexShardRoutingTable table2 = new IndexShardRoutingTable(shardId, new ArrayList<>());
+        IndexShardRoutingTable table3 = new IndexShardRoutingTable(shardId2, new ArrayList<>());
         String s = "Some other random object";
         assertEquals(table1, table1);
         assertEquals(table1, table2);

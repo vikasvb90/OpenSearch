@@ -6,7 +6,7 @@
  * compatible open source license.
  */
 
-package org.opensearch.action.admin.indices.localsplit;
+package org.opensearch.action.admin.indices.split;
 
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.clustermanager.TransportClusterManagerNodeAction;
@@ -16,7 +16,7 @@ import org.opensearch.cluster.block.ClusterBlockException;
 import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
-import org.opensearch.cluster.metadata.MetadataLocalShardSplitService;
+import org.opensearch.cluster.metadata.MetadataInPlaceShardSplitService;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.inject.Inject;
 import org.opensearch.core.action.ActionListener;
@@ -28,9 +28,11 @@ import org.opensearch.transport.TransportService;
 
 import java.io.IOException;
 
-public class TransportLocalShardSplitAction extends TransportClusterManagerNodeAction<LocalShardSplit, LocalShardSplitResponse> {
+public class TransportInPlaceShardSplitAction extends TransportClusterManagerNodeAction<
+    InPlaceShardSplitRequest,
+    InPlaceShardSplitResponse> {
 
-    private final MetadataLocalShardSplitService metadataLocalShardSplitService;
+    private final MetadataInPlaceShardSplitService metadataInPlaceShardSplitService;
     private final Client client;
 
     @Override
@@ -39,12 +41,12 @@ public class TransportLocalShardSplitAction extends TransportClusterManagerNodeA
     }
 
     @Override
-    protected LocalShardSplitResponse read(StreamInput in) throws IOException {
-        return new LocalShardSplitResponse(in);
+    protected InPlaceShardSplitResponse read(StreamInput in) throws IOException {
+        return new InPlaceShardSplitResponse(in);
     }
 
     @Override
-    protected ClusterBlockException checkBlock(LocalShardSplit request, ClusterState state) {
+    protected ClusterBlockException checkBlock(InPlaceShardSplitRequest request, ClusterState state) {
         ClusterBlockException clusterBlockException = state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);
         if (clusterBlockException != null) {
             return clusterBlockException;
@@ -63,81 +65,98 @@ public class TransportLocalShardSplitAction extends TransportClusterManagerNodeA
     }
 
     @Inject
-    public TransportLocalShardSplitAction(
+    public TransportInPlaceShardSplitAction(
         TransportService transportService,
         ClusterService clusterService,
         ThreadPool threadPool,
-        MetadataLocalShardSplitService metadataLocalShardSplitService,
+        MetadataInPlaceShardSplitService metadataInPlaceShardSplitService,
         ActionFilters actionFilters,
         IndexNameExpressionResolver indexNameExpressionResolver,
         Client client
     ) {
         this(
-            LocalShardSplitAction.NAME,
+            InPlaceShardSplitAction.NAME,
             transportService,
             clusterService,
             threadPool,
-            metadataLocalShardSplitService,
+            metadataInPlaceShardSplitService,
             actionFilters,
             indexNameExpressionResolver,
             client
         );
     }
 
-    protected TransportLocalShardSplitAction(
+    protected TransportInPlaceShardSplitAction(
         String actionName,
         TransportService transportService,
         ClusterService clusterService,
         ThreadPool threadPool,
-        MetadataLocalShardSplitService metadataLocalShardSplitService,
+        MetadataInPlaceShardSplitService metadataInPlaceShardSplitService,
         ActionFilters actionFilters,
         IndexNameExpressionResolver indexNameExpressionResolver,
         Client client
     ) {
-        super(actionName, transportService, clusterService, threadPool, actionFilters, LocalShardSplit::new, indexNameExpressionResolver);
-        this.metadataLocalShardSplitService = metadataLocalShardSplitService;
+        super(
+            actionName,
+            transportService,
+            clusterService,
+            threadPool,
+            actionFilters,
+            InPlaceShardSplitRequest::new,
+            indexNameExpressionResolver
+        );
+        this.metadataInPlaceShardSplitService = metadataInPlaceShardSplitService;
         this.client = client;
     }
 
     @Override
     protected void clusterManagerOperation(
-        final LocalShardSplit localShardSplit,
+        final InPlaceShardSplitRequest inPlaceShardSplitRequest,
         final ClusterState clusterState,
-        final ActionListener<LocalShardSplitResponse> listener
+        final ActionListener<InPlaceShardSplitResponse> listener
     ) {
-        final String index = indexNameExpressionResolver.resolveDateMathExpression(localShardSplit.getIndex());
-        ShardId shardId = clusterState.getRoutingTable().shardRoutingTable(index, localShardSplit.getShardId()).shardId();
-        LocalShardSplitClusterStateUpdateRequest updateRequest = prepareLocalShardSplitRequest(localShardSplit, shardId, clusterState);
-        metadataLocalShardSplitService.splitLocalShard(
+        final String index = indexNameExpressionResolver.resolveDateMathExpression(inPlaceShardSplitRequest.getIndex());
+        ShardId shardId = clusterState.getRoutingTable().shardRoutingTable(index, inPlaceShardSplitRequest.getShardId()).shardId();
+        InPlaceShardSplitClusterStateUpdateRequest updateRequest = prepareInPlaceShardSplitRequest(
+            inPlaceShardSplitRequest,
+            shardId,
+            clusterState
+        );
+        metadataInPlaceShardSplitService.split(
             updateRequest,
             ActionListener.map(
                 listener,
-                response -> new LocalShardSplitResponse(response.isAcknowledged(), index, shardId.id(), localShardSplit.getSplitInto())
+                response -> new InPlaceShardSplitResponse(
+                    response.isAcknowledged(),
+                    index,
+                    shardId.id(),
+                    inPlaceShardSplitRequest.getSplitInto()
+                )
             )
         );
     }
 
-    private LocalShardSplitClusterStateUpdateRequest prepareLocalShardSplitRequest(
-        LocalShardSplit localShardSplit,
+    private InPlaceShardSplitClusterStateUpdateRequest prepareInPlaceShardSplitRequest(
+        InPlaceShardSplitRequest inPlaceShardSplitRequest,
         ShardId shardId,
         final ClusterState state
     ) {
-        final IndexMetadata metadata = state.metadata().index(localShardSplit.getIndex());
+        final IndexMetadata metadata = state.metadata().index(inPlaceShardSplitRequest.getIndex());
         if (metadata == null) {
-            throw new IndexNotFoundException(localShardSplit.getIndex());
+            throw new IndexNotFoundException(inPlaceShardSplitRequest.getIndex());
         }
 
         if (IndexMetadata.INDEX_READ_ONLY_SETTING.get(metadata.getSettings()) == true) {
             throw new IllegalArgumentException(
-                "local shard split cannot be triggered on index [" + shardId.getIndexName() + "] as it has read-only block"
+                "in place shard split cannot be triggered on index [" + shardId.getIndexName() + "] as it has read-only block"
             );
         }
 
-        return new LocalShardSplitClusterStateUpdateRequest(
-            "local_shard_split",
+        return new InPlaceShardSplitClusterStateUpdateRequest(
+            "in_place_shard_split_request",
             shardId.getIndexName(),
             shardId.id(),
-            localShardSplit.getSplitInto()
-        ).masterNodeTimeout(localShardSplit.clusterManagerNodeTimeout()).ackTimeout(localShardSplit.ackTimeout());
+            inPlaceShardSplitRequest.getSplitInto()
+        ).masterNodeTimeout(inPlaceShardSplitRequest.clusterManagerNodeTimeout()).ackTimeout(inPlaceShardSplitRequest.ackTimeout());
     }
 }

@@ -161,6 +161,10 @@ public class DiskThresholdDecider extends AllocationDecider {
                 if (actualPath == null) {
                     // we might know the path of this shard from before when it was relocating
                     actualPath = clusterInfo.getDataPath(routing.cancelRelocation());
+                    // Check if path exists before split
+                    if (actualPath == null) {
+                        actualPath = clusterInfo.getDataPath(routing.cancelSplit());
+                    }
                 }
                 if (dataPath.equals(actualPath)) {
                     totalSize -= getExpectedShardSize(routing, 0L, clusterInfo, null, metadata, routingTable);
@@ -716,13 +720,6 @@ public class DiskThresholdDecider extends AllocationDecider {
                 }
             }
             return targetShardSize == 0 ? defaultValue : targetShardSize;
-        } else if (shard.recoverySource().getType() == RecoverySource.Type.LOCAL_SHARD_SPLIT) {
-            assert shard.recoverySource() instanceof RecoverySource.LocalShardSplitRecoverySource;
-            RecoverySource.LocalShardSplitRecoverySource recoverySource = (RecoverySource.LocalShardSplitRecoverySource) shard
-                .recoverySource();
-            ShardRouting sourceShardRouting = routingTable.shardRoutingTable(recoverySource.getSourceShardId()).getShards().get(0);
-            // We return source shard size because all child shards are recovered together.
-            return clusterInfo.getShardSize(sourceShardRouting, defaultValue);
         } else {
             if (shard.unassigned() && shard.recoverySource().getType() == RecoverySource.Type.SNAPSHOT) {
                 return snapshotShardSizeInfo.getShardSize(shard, defaultValue);

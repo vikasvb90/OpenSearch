@@ -229,9 +229,6 @@ import org.opensearch.action.admin.indices.get.GetIndexAction;
 import org.opensearch.action.admin.indices.get.GetIndexRequest;
 import org.opensearch.action.admin.indices.get.GetIndexRequestBuilder;
 import org.opensearch.action.admin.indices.get.GetIndexResponse;
-import org.opensearch.action.admin.indices.localsplit.LocalShardSplit;
-import org.opensearch.action.admin.indices.localsplit.LocalShardSplitAction;
-import org.opensearch.action.admin.indices.localsplit.LocalShardSplitResponse;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsAction;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequest;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequestBuilder;
@@ -289,6 +286,9 @@ import org.opensearch.action.admin.indices.shrink.ResizeAction;
 import org.opensearch.action.admin.indices.shrink.ResizeRequest;
 import org.opensearch.action.admin.indices.shrink.ResizeRequestBuilder;
 import org.opensearch.action.admin.indices.shrink.ResizeResponse;
+import org.opensearch.action.admin.indices.split.InPlaceShardSplitAction;
+import org.opensearch.action.admin.indices.split.InPlaceShardSplitRequest;
+import org.opensearch.action.admin.indices.split.InPlaceShardSplitResponse;
 import org.opensearch.action.admin.indices.stats.IndicesStatsAction;
 import org.opensearch.action.admin.indices.stats.IndicesStatsRequest;
 import org.opensearch.action.admin.indices.stats.IndicesStatsRequestBuilder;
@@ -2010,8 +2010,8 @@ public abstract class AbstractClient implements Client {
         }
 
         @Override
-        public void localShardSplit(LocalShardSplit request, ActionListener<LocalShardSplitResponse> listener) {
-            execute(LocalShardSplitAction.INSTANCE, request, listener);
+        public void inPlaceShardSplit(InPlaceShardSplitRequest request, ActionListener<InPlaceShardSplitResponse> listener) {
+            execute(InPlaceShardSplitAction.INSTANCE, request, listener);
         }
 
         @Override

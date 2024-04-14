@@ -71,7 +71,8 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     @Override
     public void shardInitialized(ShardRouting unassignedShard, ShardRouting initializedShard) {
-        assert initializedShard.isRelocationTarget() == false : "shardInitialized is not called on relocation target: " + initializedShard;
+        assert initializedShard.isRelocationTarget() == false && initializedShard.isSplitTarget() == false
+            : "shardInitialized is not called on relocation/split target: " + initializedShard;
         if (initializedShard.primary()) {
             increasePrimaryTerm(initializedShard.shardId());
 
@@ -118,6 +119,11 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     @Override
     public void relocationCompleted(ShardRouting removedRelocationSource) {
         removeAllocationId(removedRelocationSource);
+    }
+
+    @Override
+    public void splitCompleted(ShardRouting removedSplitSource) {
+        removeAllocationId(removedSplitSource);
     }
 
     /**
@@ -176,11 +182,6 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 + updates.addedAllocationIds
                 + ", removed ids: "
                 + updates.removedAllocationIds;
-
-        if (updates.initializedPrimary != null &&
-            updates.initializedPrimary.recoverySource().getType() == RecoverySource.Type.LOCAL_SHARD_SPLIT) {
-            return indexMetadataBuilder;
-        }
 
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
 

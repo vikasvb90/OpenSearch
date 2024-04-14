@@ -37,6 +37,8 @@ import org.opensearch.cluster.routing.RoutingNodes;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.routing.UnassignedInfo;
 
+import java.util.List;
+
 /**
  * Records if changes were made to {@link RoutingNodes} during an allocation round.
  *
@@ -74,6 +76,13 @@ public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     }
 
     @Override
+    public void splitStarted(ShardRouting startedShard, List<ShardRouting> childSplitShards) {
+        assert startedShard.started() : "expected started shard " + startedShard;
+        childSplitShards.forEach(childShard -> { assert childShard.isSplitTarget() : "expected split target shard " + childShard; });
+        setChanged();
+    }
+
+    @Override
     public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
         assert unassignedShard.unassigned() : "expected unassigned shard " + unassignedShard;
         setChanged();
@@ -95,6 +104,12 @@ public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     public void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource) {
         assert removedReplicaRelocationSource.primary() == false && removedReplicaRelocationSource.isRelocationTarget()
             : "expected replica relocation target shard " + removedReplicaRelocationSource;
+        setChanged();
+    }
+
+    @Override
+    public void splitCompleted(ShardRouting removedSplitSource) {
+        assert removedSplitSource.splitting() : "expected splitting shard " + removedSplitSource;
         setChanged();
     }
 

@@ -566,4 +566,29 @@ public final class DiffableUtils {
             return Collections.unmodifiableSet(new HashSet<>(Arrays.asList(in.readStringArray())));
         }
     }
+
+    /**
+     * Implementation of ValueSerializer that serializes immutable sets
+     *
+     * @param <K> type of map key
+     *
+     * @opensearch.internal
+     */
+    public static class IntegerSetValueSerializer<K> extends NonDiffableValueSerializer<K, Set<Integer>> {
+        private static final IntegerSetValueSerializer INSTANCE = new IntegerSetValueSerializer();
+
+        public static <K> IntegerSetValueSerializer<K> getInstance() {
+            return INSTANCE;
+        }
+
+        @Override
+        public void write(Set<Integer> value, StreamOutput out) throws IOException {
+            out.writeCollection(value, StreamOutput::writeVInt);
+        }
+
+        @Override
+        public Set<Integer> read(StreamInput in, K key) throws IOException {
+            return Collections.unmodifiableSet(in.readSet(StreamInput::readVInt));
+        }
+    }
 }

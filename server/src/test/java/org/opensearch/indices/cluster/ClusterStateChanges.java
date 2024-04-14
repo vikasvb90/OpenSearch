@@ -481,7 +481,9 @@ public class ClusterStateChanges {
             clusterState,
             startedShards.entrySet()
                 .stream()
-                .map(e -> new StartedShardEntry(e.getKey().shardId(), e.getKey().allocationId().getId(), e.getValue(), "shard started"))
+                .map(
+                    e -> new StartedShardEntry(e.getKey().shardId(), e.getKey().allocationId().getId(), e.getValue(), "shard started", null)
+                )
                 .collect(Collectors.toList())
         );
     }

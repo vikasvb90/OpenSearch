@@ -161,7 +161,9 @@ public class ShardRoutingTests extends OpenSearchTestCase {
                         otherRouting.recoverySource(),
                         otherRouting.unassignedInfo(),
                         otherRouting.allocationId(),
-                        otherRouting.getExpectedShardSize()
+                        otherRouting.getExpectedShardSize(),
+                        otherRouting.getRecoveringChildShardIds(),
+                        otherRouting.getSplittingShardId()
                     );
                     break;
                 case 1:
@@ -175,7 +177,9 @@ public class ShardRoutingTests extends OpenSearchTestCase {
                         otherRouting.recoverySource(),
                         otherRouting.unassignedInfo(),
                         otherRouting.allocationId(),
-                        otherRouting.getExpectedShardSize()
+                        otherRouting.getExpectedShardSize(),
+                        otherRouting.getRecoveringChildShardIds(),
+                        otherRouting.getSplittingShardId()
                     );
                     break;
                 case 2:
@@ -192,7 +196,9 @@ public class ShardRoutingTests extends OpenSearchTestCase {
                             otherRouting.recoverySource(),
                             otherRouting.unassignedInfo(),
                             otherRouting.allocationId(),
-                            otherRouting.getExpectedShardSize()
+                            otherRouting.getExpectedShardSize(),
+                            otherRouting.getRecoveringChildShardIds(),
+                            otherRouting.getSplittingShardId()
                         );
                     }
                     break;
@@ -210,7 +216,9 @@ public class ShardRoutingTests extends OpenSearchTestCase {
                             otherRouting.recoverySource(),
                             otherRouting.unassignedInfo(),
                             otherRouting.allocationId(),
-                            otherRouting.getExpectedShardSize()
+                            otherRouting.getExpectedShardSize(),
+                            otherRouting.getRecoveringChildShardIds(),
+                            otherRouting.getSplittingShardId()
                         );
                     }
                     break;
@@ -233,7 +241,9 @@ public class ShardRoutingTests extends OpenSearchTestCase {
                             ),
                             otherRouting.unassignedInfo(),
                             otherRouting.allocationId(),
-                            otherRouting.getExpectedShardSize()
+                            otherRouting.getExpectedShardSize(),
+                            otherRouting.getRecoveringChildShardIds(),
+                            otherRouting.getSplittingShardId()
                         );
                     }
                     break;

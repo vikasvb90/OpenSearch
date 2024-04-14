@@ -6,7 +6,7 @@
  * compatible open source license.
  */
 
-package org.opensearch.action.admin.indices.localsplit;
+package org.opensearch.action.admin.indices.split;
 
 import org.opensearch.action.ActionRequestValidationException;
 import org.opensearch.action.support.master.AcknowledgedRequest;
@@ -30,31 +30,31 @@ import static org.opensearch.core.xcontent.ConstructingObjectParser.constructorA
  * @opensearch.experimental
  */
 @ExperimentalApi
-public class LocalShardSplit extends AcknowledgedRequest<LocalShardSplit> implements ToXContentObject {
-    public static final ObjectParser<LocalShardSplit, Void> PARSER = new ObjectParser<>("local_shard_split_request");
+public class InPlaceShardSplitRequest extends AcknowledgedRequest<InPlaceShardSplitRequest> implements ToXContentObject {
+    public static final ObjectParser<InPlaceShardSplitRequest, Void> PARSER = new ObjectParser<>("in_place_shard_split_request");
 
     static {
         PARSER.declareString(constructorArg(), new ParseField("index"));
         PARSER.declareInt(constructorArg(), new ParseField("shard_id"));
-        PARSER.declareInt(constructorArg(), new ParseField("split_into"));
+        PARSER.declareInt(constructorArg(), new ParseField("number_of_splits"));
     }
 
     private final String index;
     private final int shardId;
-    private final int splitInto;
+    private final int numberOfSplits;
     private boolean shouldStoreResult;
 
-    public LocalShardSplit(StreamInput in) throws IOException {
+    public InPlaceShardSplitRequest(StreamInput in) throws IOException {
         super(in);
         index = in.readString();
         shardId = in.readInt();
-        splitInto = in.readInt();
+        numberOfSplits = in.readInt();
     }
 
-    public LocalShardSplit(String index, int shardId, int splitInto) {
+    public InPlaceShardSplitRequest(String index, int shardId, int numberOfSplits) {
         this.index = index;
         this.shardId = shardId;
-        this.splitInto = splitInto;
+        this.numberOfSplits = numberOfSplits;
     }
 
     @Override
@@ -62,7 +62,7 @@ public class LocalShardSplit extends AcknowledgedRequest<LocalShardSplit> implem
         super.writeTo(out);
         out.writeString(index);
         out.writeInt(shardId);
-        out.writeInt(splitInto);
+        out.writeInt(numberOfSplits);
     }
 
     /**
@@ -86,7 +86,7 @@ public class LocalShardSplit extends AcknowledgedRequest<LocalShardSplit> implem
     }
 
     public int getSplitInto() {
-        return splitInto;
+        return numberOfSplits;
     }
 
     @Override
@@ -95,7 +95,7 @@ public class LocalShardSplit extends AcknowledgedRequest<LocalShardSplit> implem
         {
             builder.field("index", index);
             builder.field("shard_id", shardId);
-            builder.field("split_into", splitInto);
+            builder.field("number_of_splits", numberOfSplits);
         }
         builder.endObject();
         return builder;
@@ -107,7 +107,7 @@ public class LocalShardSplit extends AcknowledgedRequest<LocalShardSplit> implem
 
     @Override
     public String toString() {
-        return "Local shard split of index [" + index + "] shard id [" + shardId + "] into [" + splitInto + "] shards";
+        return "In place shard split of index [" + index + "] shard id [" + shardId + "] into [" + numberOfSplits + "] shards";
     }
 
     @Override
@@ -119,7 +119,7 @@ public class LocalShardSplit extends AcknowledgedRequest<LocalShardSplit> implem
         if (shardId < 0) {
             validationException = addValidationError("invalid shard id", validationException);
         }
-        if (splitInto < 2) {
+        if (numberOfSplits < 2) {
             validationException = addValidationError("invalid split configuration.", validationException);
         }
 

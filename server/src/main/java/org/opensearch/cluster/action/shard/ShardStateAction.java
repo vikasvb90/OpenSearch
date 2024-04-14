@@ -37,6 +37,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchException;
+import org.opensearch.Version;
 import org.opensearch.cluster.ClusterChangedEvent;
 import org.opensearch.cluster.ClusterManagerNodeChangePredicate;
 import org.opensearch.cluster.ClusterState;
@@ -79,6 +80,7 @@ import org.opensearch.transport.TransportService;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -503,7 +505,7 @@ public class ShardStateAction {
                         // mark shard copies without routing entries that are in in-sync allocations set only as stale if the reason why
                         // they were failed is because a write made it into the primary but not to this copy (which corresponds to
                         // the check "primaryTerm > 0").
-                        if (task.primaryTerm > 0 && inSyncAllocationIds.contains(task.allocationId)) {
+                        if (task.primaryTerm > 0 && (inSyncAllocationIds != null || inSyncAllocationIds.contains(task.allocationId))) {
                             logger.debug("{} marking shard {} as stale (shard failed task: [{}])", task.shardId, task.allocationId, task);
                             tasksToBeApplied.add(task);
                             staleShardsToBeApplied.add(new StaleShard(task.shardId, task.allocationId));
@@ -669,7 +671,13 @@ public class ShardStateAction {
         final ActionListener<Void> listener,
         final ClusterState currentState
     ) {
-        StartedShardEntry entry = new StartedShardEntry(shardRouting.shardId(), shardRouting.allocationId().getId(), primaryTerm, message);
+        StartedShardEntry entry = new StartedShardEntry(
+            shardRouting.shardId(),
+            shardRouting.allocationId().getId(),
+            primaryTerm,
+            message,
+            null
+        );
         sendShardAction(SHARD_STARTED_ACTION_NAME, currentState, entry, listener);
     }
 
@@ -772,7 +780,7 @@ public class ShardStateAction {
                             continue;
                         }
                     }
-                    if (matched.initializing() == false) {
+                    if (matched.initializing() == false && Boolean.FALSE.equals(task.childShardsStartedEvent)) {
                         assert matched.active() : "expected active shard routing for task " + task + " but found " + matched;
                         // same as above, this might have been a stale in-flight request, so we just ignore.
                         logger.debug(
@@ -793,15 +801,21 @@ public class ShardStateAction {
                             );
                             tasksToBeApplied.add(task);
                         } else {
-                            logger.debug("{} starting shard {} (shard started task: [{}])", task.shardId, matched, task);
                             tasksToBeApplied.add(task);
-                            shardRoutingsToBeApplied.add(matched);
+                            if (Boolean.TRUE.equals(task.childShardsStartedEvent)) {
+                                logger.debug("{} starting child shards of {} (shard started task: [{}])", task.shardId, matched, task);
+                                // matched shard is source shard in this case.
+                                assert matched.splitting() && matched.started();
+                                shardRoutingsToBeApplied.addAll(Arrays.asList(matched.getRecoveringChildShards()));
+                            } else {
+                                logger.debug("{} starting shard {} (shard started task: [{}])", task.shardId, matched, task);
+                                shardRoutingsToBeApplied.add(matched);
+                            }
                             seenShardRoutings.add(matched);
                         }
                     }
                 }
             }
-            assert tasksToBeApplied.size() >= shardRoutingsToBeApplied.size();
 
             ClusterState maybeUpdatedState = currentState;
             try {
@@ -848,19 +862,34 @@ public class ShardStateAction {
         final long primaryTerm;
         final String message;
 
+        @Nullable
+        final Boolean childShardsStartedEvent;
+
         StartedShardEntry(StreamInput in) throws IOException {
             super(in);
             shardId = new ShardId(in);
             allocationId = in.readString();
             primaryTerm = in.readVLong();
             this.message = in.readString();
+            if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+                childShardsStartedEvent = in.readOptionalBoolean();
+            } else {
+                childShardsStartedEvent = null;
+            }
         }
 
-        public StartedShardEntry(final ShardId shardId, final String allocationId, final long primaryTerm, final String message) {
+        public StartedShardEntry(
+            final ShardId shardId,
+            final String allocationId,
+            final long primaryTerm,
+            final String message,
+            Boolean childShardsStartedEvent
+        ) {
             this.shardId = shardId;
             this.allocationId = allocationId;
             this.primaryTerm = primaryTerm;
             this.message = message;
+            this.childShardsStartedEvent = childShardsStartedEvent;
         }
 
         @Override
@@ -870,17 +899,28 @@ public class ShardStateAction {
             out.writeString(allocationId);
             out.writeVLong(primaryTerm);
             out.writeString(message);
+            if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+                out.writeOptionalBoolean(childShardsStartedEvent);
+            } else {
+                if (childShardsStartedEvent != null) {
+                    // In-progress shard split is not allowed in a mixed cluster where node(s) with an unsupported split
+                    // version is present. Hence, we also don't want to allow a node with an unsupported version
+                    // to get this state while shard split is in-progress.
+                    throw new IllegalStateException("In-place split not allowed on older versions.");
+                }
+            }
         }
 
         @Override
         public String toString() {
             return String.format(
                 Locale.ROOT,
-                "StartedShardEntry{shardId [%s], allocationId [%s], primary term [%d], message [%s]}",
+                "StartedShardEntry{shardId [%s], allocationId [%s], primary term [%d], " + "message [%s], Child shards started event [%s]}",
                 shardId,
                 allocationId,
                 primaryTerm,
-                message
+                message,
+                Boolean.TRUE.equals(childShardsStartedEvent)
             );
         }
     }

@@ -65,8 +65,6 @@ import org.opensearch.action.admin.indices.forcemerge.ForceMergeResponse;
 import org.opensearch.action.admin.indices.get.GetIndexRequest;
 import org.opensearch.action.admin.indices.get.GetIndexRequestBuilder;
 import org.opensearch.action.admin.indices.get.GetIndexResponse;
-import org.opensearch.action.admin.indices.localsplit.LocalShardSplit;
-import org.opensearch.action.admin.indices.localsplit.LocalShardSplitResponse;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequest;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsRequestBuilder;
 import org.opensearch.action.admin.indices.mapping.get.GetFieldMappingsResponse;
@@ -108,6 +106,8 @@ import org.opensearch.action.admin.indices.shards.IndicesShardStoresResponse;
 import org.opensearch.action.admin.indices.shrink.ResizeRequest;
 import org.opensearch.action.admin.indices.shrink.ResizeRequestBuilder;
 import org.opensearch.action.admin.indices.shrink.ResizeResponse;
+import org.opensearch.action.admin.indices.split.InPlaceShardSplitRequest;
+import org.opensearch.action.admin.indices.split.InPlaceShardSplitResponse;
 import org.opensearch.action.admin.indices.stats.IndicesStatsRequest;
 import org.opensearch.action.admin.indices.stats.IndicesStatsRequestBuilder;
 import org.opensearch.action.admin.indices.stats.IndicesStatsResponse;
@@ -789,7 +789,7 @@ public interface IndicesAdminClient extends OpenSearchClient {
     /**
      * Split a given shard id into given number of shards.
      */
-    void localShardSplit(LocalShardSplit request, ActionListener<LocalShardSplitResponse> listener);
+    void inPlaceShardSplit(InPlaceShardSplitRequest request, ActionListener<InPlaceShardSplitResponse> listener);
 
     /**
      * Swaps the index pointed to by an alias given all provided conditions are satisfied

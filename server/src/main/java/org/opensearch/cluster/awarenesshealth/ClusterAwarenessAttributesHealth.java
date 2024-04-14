@@ -199,6 +199,7 @@ public class ClusterAwarenessAttributesHealth implements Iterable<ClusterAwarene
                 int active_shards = 0;
                 int initializing_shards = 0;
                 int relocating_shards = 0;
+                int splitting_shards = 0;
                 int unassigned_shards = 0;
                 int nodes = 0;
                 double weight = 0.0;
@@ -229,6 +230,14 @@ public class ClusterAwarenessAttributesHealth implements Iterable<ClusterAwarene
                                     );
                                 }
                                 relocating_shards = parser.intValue();
+                                break;
+                            case "splitting_shards":
+                                if (parser.nextToken() != XContentParser.Token.VALUE_NUMBER) {
+                                    throw new OpenSearchParseException(
+                                        "failed to parse splitting shards field, expected number but found unknown type"
+                                    );
+                                }
+                                splitting_shards = parser.intValue();
                                 break;
                             case "unassigned_shards":
                                 if (parser.nextToken() != XContentParser.Token.VALUE_NUMBER) {
@@ -266,7 +275,8 @@ public class ClusterAwarenessAttributesHealth implements Iterable<ClusterAwarene
                     relocating_shards,
                     unassigned_shards,
                     nodes,
-                    weight
+                    weight,
+                    splitting_shards
                 );
                 clusterAwarenessAttributeValueHealthMap.put(
                     clusterAwarenessAttributeValueHealth.getName(),
