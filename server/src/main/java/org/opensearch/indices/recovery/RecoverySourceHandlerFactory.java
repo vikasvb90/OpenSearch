@@ -8,6 +8,7 @@
 
 package org.opensearch.indices.recovery;
 
+import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.index.shard.IndexShard;
 
 /**
@@ -21,7 +22,9 @@ public class RecoverySourceHandlerFactory {
         IndexShard shard,
         RecoveryTargetHandler recoveryTarget,
         StartRecoveryRequest request,
-        RecoverySettings recoverySettings
+        RecoverySettings recoverySettings,
+        boolean skipSegmentFilesTransfer,
+        CancellableThreads cancellableThreads
     ) {
         boolean isReplicaRecoveryWithRemoteTranslog = request.isPrimaryRelocation() == false && shard.isRemoteTranslogEnabled();
         if (isReplicaRecoveryWithRemoteTranslog) {
@@ -32,7 +35,9 @@ public class RecoverySourceHandlerFactory {
                 request,
                 Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
                 recoverySettings.getMaxConcurrentFileChunks(),
-                recoverySettings.getMaxConcurrentOperations()
+                recoverySettings.getMaxConcurrentOperations(),
+                skipSegmentFilesTransfer,
+                cancellableThreads
             );
         } else {
             return new LocalStorePeerRecoverySourceHandler(
@@ -42,7 +47,9 @@ public class RecoverySourceHandlerFactory {
                 request,
                 Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
                 recoverySettings.getMaxConcurrentFileChunks(),
-                recoverySettings.getMaxConcurrentOperations()
+                recoverySettings.getMaxConcurrentOperations(),
+                skipSegmentFilesTransfer,
+                cancellableThreads
             );
         }
     }

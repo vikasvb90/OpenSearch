@@ -45,7 +45,9 @@ import org.opensearch.index.engine.SafeCommitInfo;
 import org.opensearch.test.IndexSettingsModule;
 import org.junit.Before;
 
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;

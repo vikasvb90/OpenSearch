@@ -225,7 +225,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             request,
             Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
             between(1, 5),
-            between(1, 5)
+            between(1, 5),
+            false,
+            new CancellableThreads()
         );
         PlainActionFuture<Void> sendFilesFuture = new PlainActionFuture<>();
         handler.sendFiles(store, metas.toArray(new StoreFileMetadata[0]), () -> 0, sendFilesFuture);
@@ -256,7 +258,8 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             metadataSnapshot,
             randomBoolean(),
             randomNonNegativeLong(),
-            randomBoolean() || metadataSnapshot.getHistoryUUID() == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : randomNonNegativeLong()
+            randomBoolean() || metadataSnapshot.getHistoryUUID() == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : randomNonNegativeLong(),
+            null
         );
     }
 
@@ -306,7 +309,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             request,
             fileChunkSizeInBytes,
             between(1, 10),
-            between(1, 10)
+            between(1, 10),
+            false,
+            new CancellableThreads()
         );
         PlainActionFuture<RecoverySourceHandler.SendSnapshotResult> future = new PlainActionFuture<>();
         handler.phase2(
@@ -369,7 +374,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             request,
             fileChunkSizeInBytes,
             between(1, 10),
-            between(1, 10)
+            between(1, 10),
+            false,
+            new CancellableThreads()
         );
         PlainActionFuture<RecoverySourceHandler.SendSnapshotResult> future = new PlainActionFuture<>();
         final long startingSeqNo = randomLongBetween(0, ops.size() - 1L);
@@ -443,7 +450,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             getStartRecoveryRequest(),
             between(1, 10 * 1024),
             between(1, 5),
-            between(1, 5)
+            between(1, 5),
+            false,
+            new CancellableThreads()
         );
         handler.phase2(
             startingSeqNo,
@@ -562,7 +571,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             request,
             Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
             between(1, 8),
-            between(1, 8)
+            between(1, 8),
+            false,
+            new CancellableThreads()
         );
         SetOnce<Exception> sendFilesError = new SetOnce<>();
         CountDownLatch latch = new CountDownLatch(1);
@@ -637,7 +648,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             request,
             Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
             between(1, 10),
-            between(1, 4)
+            between(1, 4),
+            false,
+            new CancellableThreads()
         );
         PlainActionFuture<Void> sendFilesFuture = new PlainActionFuture<>();
         handler.sendFiles(store, metas.toArray(new StoreFileMetadata[0]), () -> 0, sendFilesFuture);
@@ -690,7 +703,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             request,
             Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
             between(1, 8),
-            between(1, 8)
+            between(1, 8),
+            false,
+            new CancellableThreads()
         ) {
 
             @Override
@@ -706,13 +721,13 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             }
 
             @Override
-            void prepareTargetForTranslog(int totalTranslogOps, ActionListener<TimeValue> listener) {
+            protected void prepareTargetForTranslog(int totalTranslogOps, ActionListener<TimeValue> listener) {
                 prepareTargetForTranslogCalled.set(true);
                 super.prepareTargetForTranslog(totalTranslogOps, listener);
             }
 
             @Override
-            void phase2(
+            protected void phase2(
                 long startingSeqNo,
                 long endingSeqNo,
                 Translog.Snapshot snapshot,
@@ -802,7 +817,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             getStartRecoveryRequest(),
             chunkSize,
             maxConcurrentChunks,
-            between(1, 10)
+            between(1, 10),
+            false,
+            new CancellableThreads()
         );
         Store store = newStore(createTempDir(), false);
         List<StoreFileMetadata> files = generateFiles(store, between(1, 10), () -> between(1, chunkSize * 20));
@@ -875,7 +892,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             getStartRecoveryRequest(),
             chunkSize,
             maxConcurrentChunks,
-            between(1, 5)
+            between(1, 5),
+            false,
+            new CancellableThreads()
         );
         Store store = newStore(createTempDir(), false);
         List<StoreFileMetadata> files = generateFiles(store, between(1, 10), () -> between(1, chunkSize * 20));
@@ -983,7 +1002,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             startRecoveryRequest,
             between(1, 16),
             between(1, 4),
-            between(1, 4)
+            between(1, 4),
+            false,
+            new CancellableThreads()
         ) {
             @Override
             void createRetentionLease(long startingSeqNo, ActionListener<RetentionLease> listener) {
@@ -1022,7 +1043,9 @@ public class LocalStorePeerRecoverySourceHandlerTests extends OpenSearchTestCase
             getStartRecoveryRequest(),
             between(1, 16),
             between(1, 4),
-            between(1, 4)
+            between(1, 4),
+            false,
+            new CancellableThreads()
         );
 
         String syncId = UUIDs.randomBase64UUID();

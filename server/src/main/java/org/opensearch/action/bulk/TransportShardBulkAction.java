@@ -64,6 +64,8 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.AllocationId;
+import org.opensearch.cluster.routing.OperationRouting;
+import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.collect.Tuple;
@@ -93,6 +95,7 @@ import org.opensearch.index.mapper.SourceToParse;
 import org.opensearch.index.remote.RemoteStorePressureService;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
+import org.opensearch.index.shard.IndexShardState;
 import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.IndicesService;
@@ -825,6 +828,16 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             final BulkItemRequest item = request.items()[i];
             final BulkItemResponse response = item.getPrimaryResponse();
             final Engine.Result operationResult;
+            boolean discardOperation = false;
+            if (replica.routingEntry().isSplitTarget() == true) {
+                // Discard operations belonging to a different child shard. This can happen during in-place shard
+                // split recovery where after all child shards are added to replication tracker, bulk
+                // operations are replicated to all child primaries.
+                int computedShardId = OperationRouting.generateShardId(replica.indexSettings().getIndexMetadata(),
+                    item.request().id(), item.request().routing());
+                discardOperation = computedShardId != replica.shardId().id();
+            }
+
             if (item.getPrimaryResponse().isFailed()) {
                 if (response.getFailure().getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO) {
                     continue; // ignore replication as we didn't generate a sequence number for this request.
@@ -847,7 +860,15 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     continue; // ignore replication as it's a noop
                 }
                 assert response.getResponse().getSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO;
-                operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);
+                if (discardOperation) {
+                    operationResult = replica.markSeqNoAsNoop(
+                        response.getResponse().getSeqNo(),
+                        response.getResponse().getPrimaryTerm(),
+                        "op belongs to another child shard"
+                    );
+                } else {
+                    operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);
+                }
             }
             assert operationResult != null : "operation result must never be null when primary response has no failure";
             location = syncOperationResultOrThrow(operationResult, location);

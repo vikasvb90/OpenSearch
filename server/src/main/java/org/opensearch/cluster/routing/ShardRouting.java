@@ -545,7 +545,7 @@ public class ShardRouting implements Writeable, ToXContentObject {
         for (Integer childShardId : childShardIds) {
             childShards[idx++] = new ShardId(shardId.getIndex(), childShardId);
         }
-        ;
+
         return new ShardRouting(
             shardId,
             currentNodeId,

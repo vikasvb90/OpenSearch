@@ -18,6 +18,7 @@ import org.opensearch.common.SetOnce;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.engine.RecoveryEngineException;
 import org.opensearch.index.seqno.ReplicationTracker;
@@ -28,11 +29,13 @@ import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.RunUnderPrimaryPermit;
+import org.opensearch.indices.replication.SegmentFileTransferHandler;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.Transports;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 
 /**
@@ -50,9 +53,12 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
         StartRecoveryRequest request,
         int fileChunkSizeInBytes,
         int maxConcurrentFileChunks,
-        int maxConcurrentOperations
+        int maxConcurrentOperations,
+        boolean skipSegmentFilesTransfer,
+        CancellableThreads cancellableThreads
     ) {
-        super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations);
+        super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations,
+            skipSegmentFilesTransfer, cancellableThreads);
     }
 
     @Override
@@ -73,7 +79,7 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
             assert targetShardRouting.initializing() : "expected recovery target to be initializing but was " + targetShardRouting;
             retentionLeaseRef.set(shard.getRetentionLeases().get(ReplicationTracker.getPeerRecoveryRetentionLeaseId(targetShardRouting)));
         }, shardId + " validating recovery target [" + request.targetAllocationId() + "] registered ", shard, cancellableThreads, logger);
-        final Closeable retentionLock = shard.acquireHistoryRetentionLock();
+        final Closeable retentionLock = acquireRetentionLock();
         resources.add(retentionLock);
         final long startingSeqNo;
         final boolean isSequenceNumberBasedRecovery = request.startingSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO
@@ -163,7 +169,7 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
                 deleteRetentionLeaseStep.whenComplete(ignored -> {
                     logger.debug("deleteRetentionLeaseStep completed");
                     assert Transports.assertNotTransportThread(this + "[phase1]");
-                    phase1(wrappedSafeCommit.get(), startingSeqNo, () -> estimateNumOps, sendFileStep, false);
+                    phase1(wrappedSafeCommit.get(), startingSeqNo, () -> estimateNumOps, sendFileStep, shouldSkipCreateRetentionLeaseStep());
                 }, onFailure);
 
             } catch (final Exception e) {
@@ -200,34 +206,65 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
             if (logger.isTraceEnabled()) {
                 logger.trace("snapshot translog for recovery; current size is [{}]", countNumberOfHistoryOperations(startingSeqNo));
             }
-            final Translog.Snapshot phase2Snapshot = shard.newChangesSnapshot(
-                PEER_RECOVERY_NAME,
-                startingSeqNo,
-                Long.MAX_VALUE,
-                false,
-                true
-            );
+            final Translog.Snapshot phase2Snapshot = phase2Snapshot(startingSeqNo, PEER_RECOVERY_NAME);
             resources.add(phase2Snapshot);
             retentionLock.close();
-
-            // we have to capture the max_seen_auto_id_timestamp and the max_seq_no_of_updates to make sure that these values
-            // are at least as high as the corresponding values on the primary when any of these operations were executed on it.
-            final long maxSeenAutoIdTimestamp = shard.getMaxSeenAutoIdTimestamp();
-            final long maxSeqNoOfUpdatesOrDeletes = shard.getMaxSeqNoOfUpdatesOrDeletes();
-            final RetentionLeases retentionLeases = shard.getRetentionLeases();
-            final long mappingVersionOnPrimary = shard.indexSettings().getIndexMetadata().getMappingVersion();
-            phase2(
-                startingSeqNo,
-                endingSeqNo,
-                phase2Snapshot,
-                maxSeenAutoIdTimestamp,
-                maxSeqNoOfUpdatesOrDeletes,
-                retentionLeases,
-                mappingVersionOnPrimary,
-                sendSnapshotStep
-            );
-
+            executePhase2Snapshot(startingSeqNo, endingSeqNo, phase2Snapshot, sendSnapshotStep, shard);
         }, onFailure);
+
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, onFailure);
+    }
+
+    /**
+     * Counts the number of history operations from the starting sequence number
+     *
+     * @param startingSeqNo the starting sequence number to count; included
+     * @return number of history operations
+     */
+    @Override
+    public int countNumberOfHistoryOperations(long startingSeqNo) throws IOException {
+        return shard.countNumberOfHistoryOperations(PEER_RECOVERY_NAME, startingSeqNo, Long.MAX_VALUE);
+    }
+
+    @Override
+    public Closeable acquireRetentionLock() {
+        return shard.acquireHistoryRetentionLock();
+    }
+
+    @Override
+    public Translog.Snapshot phase2Snapshot(long startingSeqNo, String recoveryName) throws IOException {
+        return shard.newChangesSnapshot(
+            recoveryName,
+            startingSeqNo,
+            Long.MAX_VALUE,
+            false,
+            true
+        );
+    }
+
+    @Override
+    public void executePhase2Snapshot(long startingSeqNo, long endingSeqNo, Translog.Snapshot phase2Snapshot,
+                                      StepListener<SendSnapshotResult> sendSnapshotStep, IndexShard shard) throws IOException {
+        // we have to capture the max_seen_auto_id_timestamp and the max_seq_no_of_updates to make sure that these values
+        // are at least as high as the corresponding values on the primary when any of these operations were executed on it.
+        final long maxSeenAutoIdTimestamp = shard.getMaxSeenAutoIdTimestamp();
+        final long maxSeqNoOfUpdatesOrDeletes = shard.getMaxSeqNoOfUpdatesOrDeletes();
+        final RetentionLeases retentionLeases = shard.getRetentionLeases();
+        final long mappingVersionOnPrimary = shard.indexSettings().getIndexMetadata().getMappingVersion();
+        phase2(
+            startingSeqNo,
+            endingSeqNo,
+            phase2Snapshot,
+            maxSeenAutoIdTimestamp,
+            maxSeqNoOfUpdatesOrDeletes,
+            retentionLeases,
+            mappingVersionOnPrimary,
+            sendSnapshotStep
+        );
+    }
+
+    @Override
+    public boolean shouldSkipCreateRetentionLeaseStep() {
+        return false;
     }
 }

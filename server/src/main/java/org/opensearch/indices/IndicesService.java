@@ -143,6 +143,9 @@ import org.opensearch.index.translog.TranslogStats;
 import org.opensearch.indices.cluster.IndicesClusterStateService;
 import org.opensearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.opensearch.indices.mapper.MapperRegistry;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardRecoveryContext;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryListener;
 import org.opensearch.indices.recovery.PeerRecoveryTargetService;
 import org.opensearch.indices.recovery.RecoveryListener;
 import org.opensearch.indices.recovery.RecoverySettings;
@@ -192,9 +195,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.emptyList;
-import static java.util.Collections.emptyMap;
-import static java.util.Collections.unmodifiableMap;
+import static java.util.Collections.*;
 import static org.opensearch.common.collect.MapBuilder.newMapBuilder;
 import static org.opensearch.common.util.concurrent.OpenSearchExecutors.daemonThreadFactory;
 import static org.opensearch.core.common.util.CollectionUtils.arrayAsArrayList;
@@ -493,7 +494,15 @@ public class IndicesService extends AbstractLifecycleComponent
         this.allowExpensiveQueries = ALLOW_EXPENSIVE_QUERIES.get(clusterService.getSettings());
         clusterService.getClusterSettings().addSettingsUpdateConsumer(ALLOW_EXPENSIVE_QUERIES, this::setAllowExpensiveQueries);
         this.remoteDirectoryFactory = remoteDirectoryFactory;
-        this.translogFactorySupplier = getTranslogFactorySupplier(repositoriesServiceSupplier, threadPool, remoteStoreStatsTrackerFactory);
+        Function<ShardId, ShardId> splittingParentShardIdSupplier = (shardId) -> {
+            IndexShard childShard = getShardOrNull(shardId);
+            if (childShard != null && childShard.getParentShardId() != null && childShard.routingEntry().isSplitTarget()) {
+                return childShard.getParentShardId();
+            }
+            return null;
+        };
+        this.translogFactorySupplier = getTranslogFactorySupplier(repositoriesServiceSupplier, threadPool, remoteStoreStatsTrackerFactory,
+            splittingParentShardIdSupplier);
         this.searchRequestStats = searchRequestStats;
         this.clusterDefaultRefreshInterval = CLUSTER_DEFAULT_INDEX_REFRESH_INTERVAL_SETTING.get(clusterService.getSettings());
         clusterService.getClusterSettings()
@@ -523,7 +532,8 @@ public class IndicesService extends AbstractLifecycleComponent
     private static BiFunction<IndexSettings, ShardRouting, TranslogFactory> getTranslogFactorySupplier(
         Supplier<RepositoriesService> repositoriesServiceSupplier,
         ThreadPool threadPool,
-        RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory
+        RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
+        Function<ShardId, ShardId> splittingParentShardIdSupplier
     ) {
         return (indexSettings, shardRouting) -> {
             if (indexSettings.isRemoteTranslogStoreEnabled() && shardRouting.primary()) {
@@ -531,7 +541,8 @@ public class IndicesService extends AbstractLifecycleComponent
                     repositoriesServiceSupplier,
                     threadPool,
                     indexSettings.getRemoteStoreTranslogRepository(),
-                    remoteStoreStatsTrackerFactory.getRemoteTranslogTransferTracker(shardRouting.shardId())
+                    remoteStoreStatsTrackerFactory.getRemoteTranslogTransferTracker(shardRouting.shardId()),
+                    splittingParentShardIdSupplier
                 );
             }
             return new InternalTranslogFactory();
@@ -1023,7 +1034,8 @@ public class IndicesService extends AbstractLifecycleComponent
             globalCheckpointSyncer,
             retentionLeaseSyncer,
             checkpointPublisher,
-            remoteStoreStatsTrackerFactory
+            remoteStoreStatsTrackerFactory,
+            null
         );
         indexShard.addShardFailureCallback(onShardFailure);
         indexShard.startRecovery(recoveryState, recoveryTargetService, recoveryListener, repositoriesService, mapping -> {
@@ -1037,6 +1049,50 @@ public class IndicesService extends AbstractLifecycleComponent
                 .get();
         }, this);
         return indexShard;
+    }
+
+    @Override
+    public void createChildShardsForSplit(
+        List<ShardRouting> shardRoutings,
+        ShardId parentShardId,
+        InPlaceShardSplitRecoveryService inPlaceShardSplitRecoveryService,
+        InPlaceShardSplitRecoveryListener recoveryListener,
+        Consumer<IndexShard.ShardFailure> onShardFailure,
+        DiscoveryNode node,
+        Consumer<ShardId> globalCheckpointSyncer,
+        RetentionLeaseSyncer retentionLeaseSyncer,
+        SegmentReplicationCheckpointPublisher checkpointPublisher,
+        RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory
+    ) throws IOException {
+        ensureChangesAllowed();
+        IndexService indexService = indexService(shardRoutings.get(0).index());
+        assert indexService != null;
+        IndexShard parentShard = indexService.getShard(parentShardId.id());
+
+        List<InPlaceShardRecoveryContext> recoveryContexts = new ArrayList<>();
+        List<ShardId> shardIds = new ArrayList<>();
+        for (ShardRouting shardRouting : shardRoutings) {
+            RecoveryState recoveryState = indexService.createRecoveryState(shardRouting, node, node);
+            IndexShard indexShard = indexService.createShard(
+                shardRouting,
+                globalCheckpointSyncer,
+                retentionLeaseSyncer,
+                checkpointPublisher,
+                remoteStoreStatsTrackerFactory,
+                parentShardId
+            );
+            indexShard.addShardFailureCallback(onShardFailure);
+            recoveryContexts.add(new InPlaceShardRecoveryContext(recoveryState, indexShard, parentShard));
+            shardIds.add(indexShard.shardId());
+        }
+
+        for (InPlaceShardRecoveryContext recoveryContext : recoveryContexts) {
+            // mark the shard as recovering on the cluster state thread
+            recoveryContext.getIndexShard().markAsRecovering("from in-place shard split", recoveryContext.getRecoveryState());
+        }
+
+        threadPool.generic().execute(() -> inPlaceShardSplitRecoveryService.addAndStartRecovery(
+            recoveryContexts, node, parentShard, recoveryListener, shardIds));
     }
 
     @Override

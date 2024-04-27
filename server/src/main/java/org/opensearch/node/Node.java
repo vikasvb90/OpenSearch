@@ -158,6 +158,7 @@ import org.opensearch.indices.analysis.AnalysisModule;
 import org.opensearch.indices.breaker.BreakerSettings;
 import org.opensearch.indices.breaker.HierarchyCircuitBreakerService;
 import org.opensearch.indices.cluster.IndicesClusterStateService;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.indices.recovery.PeerRecoverySourceService;
 import org.opensearch.indices.recovery.PeerRecoveryTargetService;
 import org.opensearch.indices.recovery.RecoverySettings;
@@ -1259,19 +1260,21 @@ public class Node implements Closeable {
                         .toInstance(new PeerRecoverySourceService(transportService, indicesService, recoverySettings));
                     b.bind(PeerRecoveryTargetService.class)
                         .toInstance(new PeerRecoveryTargetService(threadPool, transportService, recoverySettings, clusterService));
+                    SegmentReplicationSourceFactory segRepFactory = new SegmentReplicationSourceFactory(transportService, recoverySettings, clusterService)
                     b.bind(SegmentReplicationTargetService.class)
                         .toInstance(
                             new SegmentReplicationTargetService(
                                 threadPool,
                                 recoverySettings,
                                 transportService,
-                                new SegmentReplicationSourceFactory(transportService, recoverySettings, clusterService),
+                                segRepFactory,
                                 indicesService,
                                 clusterService
                             )
                         );
                     b.bind(SegmentReplicationSourceService.class)
                         .toInstance(new SegmentReplicationSourceService(indicesService, transportService, recoverySettings));
+                    b.bind(InPlaceShardSplitRecoveryService.class).toInstance(new InPlaceShardSplitRecoveryService(indicesService, recoverySettings, segRepFactory));
                 }
                 b.bind(HttpServerTransport.class).toInstance(httpServerTransport);
                 pluginComponents.stream().forEach(p -> b.bind((Class) p.getClass()).toInstance(p));
@@ -1318,6 +1321,7 @@ public class Node implements Closeable {
             );
             resourcesToClose.addAll(pluginLifecycleComponents);
             resourcesToClose.add(injector.getInstance(PeerRecoverySourceService.class));
+            resourcesToClose.add(injector.getInstance(InPlaceShardSplitRecoveryService.class));
             this.pluginLifecycleComponents = Collections.unmodifiableList(pluginLifecycleComponents);
             DynamicActionRegistry dynamicActionRegistry = actionModule.getDynamicActionRegistry();
             dynamicActionRegistry.registerUnmodifiableActionMap(injector.getInstance(new Key<Map<ActionType, TransportAction>>() {
@@ -1440,6 +1444,7 @@ public class Node implements Closeable {
         injector.getInstance(PeerRecoverySourceService.class).start();
         injector.getInstance(SegmentReplicationTargetService.class).start();
         injector.getInstance(SegmentReplicationSourceService.class).start();
+        injector.getInstance(InPlaceShardSplitRecoveryService.class).start();
 
         final RemoteClusterStateService remoteClusterStateService = injector.getInstance(RemoteClusterStateService.class);
         if (remoteClusterStateService != null) {
@@ -1628,6 +1633,7 @@ public class Node implements Closeable {
         toClose.add(injector.getInstance(PeerRecoverySourceService.class));
         toClose.add(injector.getInstance(SegmentReplicationSourceService.class));
         toClose.add(injector.getInstance(SegmentReplicationTargetService.class));
+        toClose.add(injector.getInstance(InPlaceShardSplitRecoveryService.class));
         toClose.add(() -> stopWatch.stop().start("cluster"));
         toClose.add(injector.getInstance(ClusterService.class));
         toClose.add(() -> stopWatch.stop().start("node_connections_service"));

@@ -38,6 +38,7 @@ import org.apache.lucene.index.IndexFormatTooOldException;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.cluster.node.DiscoveryNode;
+import org.opensearch.cluster.routing.OperationRouting;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.lucene.Lucene;
@@ -95,11 +96,30 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
      * @param listener                          called when recovery is completed/failed
      */
     public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, ReplicationListener listener) {
-        super("recovery_status", indexShard, indexShard.recoveryState().getIndex(), listener);
+        this(indexShard, sourceNode, listener, new CancellableThreads(), true);
+    }
+
+    /**
+     * Creates a new recovery target object that represents a recovery to the provided shard.
+     *
+     * @param indexShard                        local shard where we want to recover to
+     * @param sourceNode                        source node of the recovery where we recover from
+     * @param listener                          called when recovery is completed/failed
+     * @param cancellableThreads                cancellable threads to use instead of using new threads internally on target.
+     * @param useMultiFileWriter                Whether multi-file writer is required
+     */
+    public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, ReplicationListener listener,
+                          CancellableThreads cancellableThreads, boolean useMultiFileWriter) {
+        super("recovery_status", indexShard, indexShard.recoveryState().getIndex(), listener,
+            cancellableThreads);
         this.sourceNode = sourceNode;
         indexShard.recoveryStats().incCurrentAsTarget();
-        final String tempFilePrefix = getPrefix() + UUIDs.randomBase64UUID() + ".";
-        this.multiFileWriter = new MultiFileWriter(indexShard.store(), stateIndex, tempFilePrefix, logger, this::ensureRefCount);
+        if (useMultiFileWriter == true) {
+            final String tempFilePrefix = getPrefix() + UUIDs.randomBase64UUID() + ".";
+            this.multiFileWriter = new MultiFileWriter(indexShard.store(), stateIndex, tempFilePrefix, logger, this::ensureRefCount);
+        } else {
+            this.multiFileWriter = null;
+        }
     }
 
     /**
@@ -177,7 +197,9 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
     @Override
     protected void closeInternal() {
         try {
-            multiFileWriter.close();
+            if (multiFileWriter != null) {
+                multiFileWriter.close();
+            }
         } finally {
             store.decRef();
             indexShard.recoveryStats().decCurrentAsTarget();

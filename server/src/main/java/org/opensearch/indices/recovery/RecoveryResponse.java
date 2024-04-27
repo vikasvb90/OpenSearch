@@ -115,4 +115,20 @@ public final class RecoveryResponse extends TransportResponse {
         out.writeVInt(phase2Operations);
         out.writeVLong(phase2Time);
     }
+
+    public int getPhase2Operations() {
+        return phase2Operations;
+    }
+
+    public long getStartTime() {
+        return startTime;
+    }
+
+    public long getPhase2Time() {
+        return phase2Time;
+    }
+
+    public long getPhase1Time() {
+        return phase1Time;
+    }
 }

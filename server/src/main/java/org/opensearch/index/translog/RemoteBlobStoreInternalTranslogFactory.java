@@ -8,6 +8,7 @@
 
 package org.opensearch.index.translog;
 
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.remote.RemoteTranslogTransferTracker;
 import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.repositories.Repository;
@@ -17,6 +18,7 @@ import org.opensearch.threadpool.ThreadPool;
 
 import java.io.IOException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -33,12 +35,14 @@ public class RemoteBlobStoreInternalTranslogFactory implements TranslogFactory {
     private final ThreadPool threadPool;
 
     private final RemoteTranslogTransferTracker remoteTranslogTransferTracker;
+    private final Function<ShardId, ShardId> splittingParentShardIdSupplier;
 
     public RemoteBlobStoreInternalTranslogFactory(
         Supplier<RepositoriesService> repositoriesServiceSupplier,
         ThreadPool threadPool,
         String repositoryName,
-        RemoteTranslogTransferTracker remoteTranslogTransferTracker
+        RemoteTranslogTransferTracker remoteTranslogTransferTracker,
+        Function<ShardId, ShardId> splittingParentShardIdSupplier
     ) {
         Repository repository;
         try {
@@ -49,6 +53,7 @@ public class RemoteBlobStoreInternalTranslogFactory implements TranslogFactory {
         this.repository = repository;
         this.threadPool = threadPool;
         this.remoteTranslogTransferTracker = remoteTranslogTransferTracker;
+        this.splittingParentShardIdSupplier = splittingParentShardIdSupplier;
     }
 
     @Override
@@ -74,7 +79,8 @@ public class RemoteBlobStoreInternalTranslogFactory implements TranslogFactory {
             blobStoreRepository,
             threadPool,
             startedPrimarySupplier,
-            remoteTranslogTransferTracker
+            remoteTranslogTransferTracker,
+            splittingParentShardIdSupplier
         );
     }
 

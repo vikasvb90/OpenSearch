@@ -48,6 +48,7 @@ import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.inject.Inject;
 import org.opensearch.common.lifecycle.AbstractLifecycleComponent;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.common.util.concurrent.FutureUtils;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
@@ -379,7 +380,8 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
                     throttleTime -> shard.recoveryStats().addThrottleTime(throttleTime),
                     shard.isRemoteTranslogEnabled()
                 );
-                handler = RecoverySourceHandlerFactory.create(shard, recoveryTarget, request, recoverySettings);
+                handler = RecoverySourceHandlerFactory.create(shard, recoveryTarget, request, recoverySettings, false,
+                    new CancellableThreads());
                 return Tuple.tuple(handler, recoveryTarget);
             }
         }

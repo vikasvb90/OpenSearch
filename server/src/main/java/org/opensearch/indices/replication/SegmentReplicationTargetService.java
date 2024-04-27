@@ -502,6 +502,7 @@ public class SegmentReplicationTargetService extends AbstractLifecycleComponent 
     ) {
         final SegmentReplicationTarget target = new SegmentReplicationTarget(
             indexShard,
+            indexShard,
             checkpoint,
             sourceFactory.get(indexShard),
             listener

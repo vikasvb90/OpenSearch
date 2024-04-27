@@ -90,12 +90,12 @@ import static org.opensearch.common.unit.TimeValue.timeValueMillis;
 import static org.opensearch.index.translog.Translog.CHECKPOINT_FILE_NAME;
 
 /**
- * This package private utility class encapsulates the logic to recover an index shard from either an existing index on
+ * This utility class encapsulates the logic to recover an index shard from either an existing index on
  * disk or from a snapshot in a repository.
  *
  * @opensearch.internal
  */
-final class StoreRecovery {
+public final class StoreRecovery {
 
     private final Logger logger;
     private final ShardId shardId;
@@ -210,7 +210,7 @@ final class StoreRecovery {
         }
     }
 
-    void addIndices(
+    public static void addIndices(
         final ReplicationLuceneIndex indexRecoveryStats,
         final Directory target,
         final Sort indexSort,

@@ -13,14 +13,18 @@ import org.opensearch.action.StepListener;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.index.engine.RecoveryEngineException;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
+import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.RunUnderPrimaryPermit;
+import org.opensearch.indices.replication.SegmentFileTransferHandler;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.Transports;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.function.Consumer;
 
@@ -38,9 +42,12 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
         StartRecoveryRequest request,
         int fileChunkSizeInBytes,
         int maxConcurrentFileChunks,
-        int maxConcurrentOperations
+        int maxConcurrentOperations,
+        boolean skipSegmentFilesTransfer,
+        CancellableThreads cancellableThreads
     ) {
-        super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations);
+        super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations,
+        skipSegmentFilesTransfer, cancellableThreads);
     }
 
     @Override
@@ -73,7 +80,7 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
             onSendFileStepComplete(sendFileStep, wrappedSafeCommit, releaseStore);
 
             assert Transports.assertNotTransportThread(this + "[phase1]");
-            phase1(wrappedSafeCommit.get(), startingSeqNo, () -> 0, sendFileStep, true);
+            phase1(wrappedSafeCommit.get(), startingSeqNo, () -> 0, sendFileStep, shouldSkipCreateRetentionLeaseStep());
         } catch (final Exception e) {
             throw new RecoveryEngineException(shard.shardId(), 1, "sendFileStep failed", e);
         }
@@ -97,9 +104,35 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
                 logger
             );
             final long endingSeqNo = shard.seqNoStats().getMaxSeqNo();
-            sendSnapshotStep.onResponse(new SendSnapshotResult(endingSeqNo, 0, TimeValue.ZERO));
+            executePhase2Snapshot(startingSeqNo, endingSeqNo, null, sendSnapshotStep, shard);
         }, onFailure);
 
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, onFailure);
+    }
+
+    @Override
+    public int countNumberOfHistoryOperations(long startingSeqNo) throws IOException {
+        return 0;
+    }
+
+    @Override
+    public Closeable acquireRetentionLock() {
+        return null;
+    }
+
+    @Override
+    public Translog.Snapshot phase2Snapshot(long startingSeqNo, String recoveryName){
+        return null;
+    }
+
+    @Override
+    public boolean shouldSkipCreateRetentionLeaseStep() {
+        return true;
+    }
+
+    @Override
+    public void executePhase2Snapshot(long startingSeqNo, long endingSeqNo, Translog.Snapshot phase2Snapshot,
+                                      StepListener<SendSnapshotResult> sendSnapshotStep, IndexShard shard) {
+        sendSnapshotStep.onResponse(new SendSnapshotResult(endingSeqNo, 0, TimeValue.ZERO));
     }
 }

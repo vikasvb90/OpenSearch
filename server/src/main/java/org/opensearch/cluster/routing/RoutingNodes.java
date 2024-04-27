@@ -598,7 +598,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     ) {
         ensureMutable();
         splittingShards++;
-        ShardRouting source = startedShard.split(indexMetadata.getChildShards(startedShard.shardId()), expectedShardSize);
+        ShardRouting source = startedShard.split(indexMetadata.getChildShardIds(startedShard.shardId()), expectedShardSize);
         updateAssigned(startedShard, source);
         ShardRouting[] childShards = source.getRecoveringChildShards();
         List<ShardRouting> childShardsList = Arrays.asList(childShards);

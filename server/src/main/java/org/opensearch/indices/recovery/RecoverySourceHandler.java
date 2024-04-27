@@ -79,12 +79,14 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.stream.StreamSupport;
@@ -107,39 +109,46 @@ public abstract class RecoverySourceHandler {
     protected final Logger logger;
     // Shard that is going to be recovered (the "source")
     protected final IndexShard shard;
-    protected final int shardId;
+    protected final Integer shardId;
     // Request containing source and target node information
     protected final StartRecoveryRequest request;
     private final int chunkSizeInBytes;
-    private final RecoveryTargetHandler recoveryTarget;
+    protected final RecoveryTargetHandler recoveryTarget;
     private final int maxConcurrentOperations;
     private final ThreadPool threadPool;
-    protected final CancellableThreads cancellableThreads = new CancellableThreads();
+    protected final CancellableThreads cancellableThreads;
     protected final List<Closeable> resources = new CopyOnWriteArrayList<>();
     protected final ListenableFuture<RecoveryResponse> future = new ListenableFuture<>();
     public static final String PEER_RECOVERY_NAME = "peer-recovery";
     private final SegmentFileTransferHandler transferHandler;
 
-    RecoverySourceHandler(
+    protected RecoverySourceHandler(
         IndexShard shard,
         RecoveryTargetHandler recoveryTarget,
         ThreadPool threadPool,
         StartRecoveryRequest request,
         int fileChunkSizeInBytes,
         int maxConcurrentFileChunks,
-        int maxConcurrentOperations
+        int maxConcurrentOperations,
+        boolean skipSegmentFilesTransfer,
+        CancellableThreads cancellableThreads
     ) {
+        this.cancellableThreads = cancellableThreads;
         this.logger = Loggers.getLogger(RecoverySourceHandler.class, request.shardId(), "recover to " + request.targetNode().getName());
-        this.transferHandler = new SegmentFileTransferHandler(
-            shard,
-            request.targetNode(),
-            recoveryTarget,
-            logger,
-            threadPool,
-            cancellableThreads,
-            fileChunkSizeInBytes,
-            maxConcurrentFileChunks
-        );
+        if (skipSegmentFilesTransfer == false) {
+            this.transferHandler = new SegmentFileTransferHandler(
+                shard,
+                request.targetNode(),
+                recoveryTarget,
+                logger,
+                threadPool,
+                cancellableThreads,
+                fileChunkSizeInBytes,
+                maxConcurrentFileChunks
+            );
+        } else {
+            this.transferHandler = null;
+        }
         this.shard = shard;
         this.threadPool = threadPool;
         this.request = request;
@@ -163,7 +172,10 @@ public abstract class RecoverySourceHandler {
      */
     public void recoverToTarget(ActionListener<RecoveryResponse> listener) {
         addListener(listener);
-        final Closeable releaseResources = () -> IOUtils.close(resources);
+        final Closeable releaseResources = () -> {
+            resources.addAll(getAdditionalResourcesToClose());
+            IOUtils.close(resources);
+        };
         try {
             cancellableThreads.setOnCancel((reason, beforeCancelEx) -> {
                 final RuntimeException e;
@@ -186,6 +198,14 @@ public abstract class RecoverySourceHandler {
         } catch (Exception e) {
             IOUtils.closeWhileHandlingException(releaseResources, () -> future.onFailure(e));
         }
+    }
+
+    public List<Closeable> getAdditionalResourcesToClose() {
+        return new ArrayList<>();
+    }
+
+    public List<Closeable> getResources() {
+        return Collections.unmodifiableList(resources);
     }
 
     protected abstract void innerRecoveryToTarget(ActionListener<RecoveryResponse> listener, Consumer<Exception> onFailure)
@@ -261,9 +281,7 @@ public abstract class RecoverySourceHandler {
      * @param startingSeqNo the starting sequence number to count; included
      * @return number of history operations
      */
-    protected int countNumberOfHistoryOperations(long startingSeqNo) throws IOException {
-        return shard.countNumberOfHistoryOperations(PEER_RECOVERY_NAME, startingSeqNo, Long.MAX_VALUE);
-    }
+    public abstract int countNumberOfHistoryOperations(long startingSeqNo) throws IOException;
 
     /**
      * Increases the store reference and returns a {@link Releasable} that will decrease the store reference using the generic thread pool.
@@ -304,7 +322,7 @@ public abstract class RecoverySourceHandler {
      *
      * @opensearch.internal
      */
-    static final class SendFileResult {
+    protected static final class SendFileResult {
         final List<String> phase1FileNames;
         final List<Long> phase1FileSizes;
         final long totalSize;
@@ -315,7 +333,7 @@ public abstract class RecoverySourceHandler {
 
         final TimeValue took;
 
-        SendFileResult(
+        public SendFileResult(
             List<String> phase1FileNames,
             List<Long> phase1FileSizes,
             long totalSize,
@@ -343,6 +361,14 @@ public abstract class RecoverySourceHandler {
             TimeValue.ZERO
         );
     }
+
+    public abstract Closeable acquireRetentionLock();
+
+    public abstract Translog.Snapshot phase2Snapshot(long startingSeqNo, String recoveryName) throws IOException;
+
+    public abstract void executePhase2Snapshot(long startingSeqNo, long endingSeqNo, Translog.Snapshot phase2Snapshot,
+                                      StepListener<SendSnapshotResult> sendSnapshotStep, IndexShard shard) throws IOException;
+    public abstract boolean shouldSkipCreateRetentionLeaseStep();
 
     /**
      * Perform phase1 of the recovery operations. Once this {@link IndexCommit}
@@ -617,7 +643,7 @@ public abstract class RecoverySourceHandler {
         return true;
     }
 
-    void prepareTargetForTranslog(int totalTranslogOps, ActionListener<TimeValue> listener) {
+    protected void prepareTargetForTranslog(int totalTranslogOps, ActionListener<TimeValue> listener) {
         StopWatch stopWatch = new StopWatch().start();
         final ActionListener<Void> wrappedListener = ActionListener.wrap(nullVal -> {
             stopWatch.stop();
@@ -647,7 +673,7 @@ public abstract class RecoverySourceHandler {
      * @param maxSeqNoOfUpdatesOrDeletes the max seq_no of updates or deletes on the primary after these operations were executed on it.
      * @param listener                   a listener which will be notified with the local checkpoint on the target.
      */
-    void phase2(
+    protected void phase2(
         final long startingSeqNo,
         final long endingSeqNo,
         final Translog.Snapshot snapshot,
@@ -812,34 +838,17 @@ public abstract class RecoverySourceHandler {
         cancellableThreads.checkForCancel();
         StopWatch stopWatch = new StopWatch().start();
         logger.trace("finalizing recovery");
-        /*
-         * Before marking the shard as in-sync we acquire an operation permit. We do this so that there is a barrier between marking a
-         * shard as in-sync and relocating a shard. If we acquire the permit then no relocation handoff can complete before we are done
-         * marking the shard as in-sync. If the relocation handoff holds all the permits then after the handoff completes and we acquire
-         * the permit then the state of the shard will be relocated and this recovery will fail.
-         */
-        RunUnderPrimaryPermit.run(
-            () -> shard.markAllocationIdAsInSync(request.targetAllocationId(), targetLocalCheckpoint),
-            shardId + " marking " + request.targetAllocationId() + " as in sync",
-            shard,
-            cancellableThreads,
-            logger
-        );
+        markAllocationIdAsInSync(targetLocalCheckpoint);
+
         final long globalCheckpoint = shard.getLastKnownGlobalCheckpoint(); // this global checkpoint is persisted in finalizeRecovery
         final StepListener<Void> finalizeListener = new StepListener<>();
         cancellableThreads.checkForCancel();
         recoveryTarget.finalizeRecovery(globalCheckpoint, trimAboveSeqNo, finalizeListener);
         finalizeListener.whenComplete(r -> {
             logger.debug("finalizeListenerStep completed");
-            RunUnderPrimaryPermit.run(
-                () -> shard.updateGlobalCheckpointForShard(request.targetAllocationId(), globalCheckpoint),
-                shardId + " updating " + request.targetAllocationId() + "'s global checkpoint",
-                shard,
-                cancellableThreads,
-                logger
-            );
+            updateGlobalCheckpointForShard(globalCheckpoint);
 
-            if (request.isPrimaryRelocation()) {
+            if (request.isPrimaryRelocation() || shard.routingEntry().splitting()) {
                 logger.trace("performing relocation hand-off");
                 final Runnable forceSegRepRunnable = shard.indexSettings().isSegRepEnabled()
                     ? recoveryTarget::forceSegmentFileSync
@@ -847,7 +856,7 @@ public abstract class RecoverySourceHandler {
                 // TODO: make relocated async
                 // this acquires all IndexShard operation permits and will thus delay new recoveries until it is done
                 cancellableThreads.execute(
-                    () -> shard.relocated(request.targetAllocationId(), recoveryTarget::handoffPrimaryContext, forceSegRepRunnable)
+                    () -> relocateShard(forceSegRepRunnable)
                 );
                 /*
                  * if the recovery process fails after disabling primary mode on the source shard, both relocation source and
@@ -865,12 +874,43 @@ public abstract class RecoverySourceHandler {
         }, listener::onFailure);
     }
 
+    protected void markAllocationIdAsInSync(long targetLocalCheckpoint) {
+        /*
+         * Before marking the shard as in-sync we acquire an operation permit. We do this so that there is a barrier between marking a
+         * shard as in-sync and relocating a shard. If we acquire the permit then no relocation handoff can complete before we are done
+         * marking the shard as in-sync. If the relocation handoff holds all the permits then after the handoff completes and we acquire
+         * the permit then the state of the shard will be relocated and this recovery will fail.
+         */
+        RunUnderPrimaryPermit.run(
+            () -> shard.markAllocationIdAsInSync(request.targetAllocationId(), targetLocalCheckpoint),
+            shardId + " marking " + request.targetAllocationId() + " as in sync",
+            shard,
+            cancellableThreads,
+            logger
+        );
+    }
+
+    protected void updateGlobalCheckpointForShard(long globalCheckpoint) {
+        RunUnderPrimaryPermit.run(
+            () -> shard.updateGlobalCheckpointForShard(request.targetAllocationId(), globalCheckpoint),
+            shardId + " updating " + request.targetAllocationId() + "'s global checkpoint",
+            shard,
+            cancellableThreads,
+            logger
+        );
+    }
+
+    protected void relocateShard(Runnable forceSegRepRunnable) throws InterruptedException {
+        shard.relocated(new HashSet<>(Collections.singletonList(request.targetAllocationId())),
+            recoveryTarget::handoffPrimaryContext, forceSegRepRunnable);
+    }
+
     /**
      * A result for a send snapshot
      *
      * @opensearch.internal
      */
-    static final class SendSnapshotResult {
+    public static final class SendSnapshotResult {
         final long targetLocalCheckpoint;
         final int sentOperations;
         final TimeValue tookTime;

@@ -82,7 +82,7 @@ public class MetadataInPlaceShardSplitService {
         final ActionListener<ClusterStateUpdateResponse> listener
     ) {
         clusterService.submitStateUpdateTask(
-            "online-split-shard [" + request.getShardId() + "] of index [" + request.getIndex() + "], cause [" + request.cause() + "]",
+            "in-place-split-shard [" + request.getShardId() + "] of index [" + request.getIndex() + "], cause [" + request.cause() + "]",
             new AckedClusterStateUpdateTask<>(Priority.URGENT, request, listener) {
                 @Override
                 protected ClusterStateUpdateResponse newResponse(boolean acknowledged) {
@@ -140,7 +140,7 @@ public class MetadataInPlaceShardSplitService {
         for (int shardId = newShardId; shardId < newShardId + request.getSplitInto(); shardId++) {
             childShardIds.add(shardId);
         }
-        indexMetadataBuilder.putParentShard(sourceShardId.id(), childShardIds);
+        indexMetadataBuilder.putParentToChildShardIDs(sourceShardId.id(), childShardIds);
         RoutingTable routingTable = routingTableBuilder.build();
         metadataBuilder.put(indexMetadataBuilder);
 

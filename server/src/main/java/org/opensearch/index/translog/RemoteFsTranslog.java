@@ -44,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 
@@ -94,7 +95,8 @@ public class RemoteFsTranslog extends Translog {
         BlobStoreRepository blobStoreRepository,
         ThreadPool threadPool,
         BooleanSupplier startedPrimarySupplier,
-        RemoteTranslogTransferTracker remoteTranslogTransferTracker
+        RemoteTranslogTransferTracker remoteTranslogTransferTracker,
+        Function<ShardId, ShardId> splittingParentShardIdSupplier
     ) throws IOException {
         super(config, translogUUID, deletionPolicy, globalCheckpointSupplier, primaryTermSupplier, persistedSequenceNumberConsumer);
         logger = Loggers.getLogger(getClass(), shardId);
@@ -109,7 +111,21 @@ public class RemoteFsTranslog extends Translog {
             remoteTranslogTransferTracker
         );
         try {
-            download(translogTransferManager, location, logger);
+            ShardId parentShardIdOrNull = splittingParentShardIdSupplier.apply(shardId());
+            boolean uploadRequired = false;
+            if (parentShardIdOrNull != null) {
+                TranslogTransferManager parentShardTransferManager = buildTranslogTransferManager(
+                    blobStoreRepository,
+                    threadPool,
+                    parentShardIdOrNull,
+                    fileTransferTracker,
+                    remoteTranslogTransferTracker
+                );
+                download(parentShardTransferManager, location, logger);
+                uploadRequired = true;
+            } else {
+                download(translogTransferManager, location, logger);
+            }
             Checkpoint checkpoint = readCheckpoint(location);
             logger.info("Downloaded data from remote translog till maxSeqNo = {}", checkpoint.maxSeqNo);
             this.readers.addAll(recoverFromFiles(checkpoint));
@@ -127,6 +143,9 @@ public class RemoteFsTranslog extends Translog {
                     checkpoint.globalCheckpoint,
                     persistedSequenceNumberConsumer
                 );
+                if (uploadRequired) {
+                    prepareAndUpload(primaryTermSupplier.getAsLong(), current.getGeneration());
+                }
                 success = true;
             } finally {
                 // we have to close all the recovered ones otherwise we leak file handles here

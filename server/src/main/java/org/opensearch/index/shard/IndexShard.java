@@ -68,6 +68,7 @@ import org.opensearch.cluster.metadata.DataStream;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.routing.IndexShardRoutingTable;
+import org.opensearch.cluster.routing.OperationRouting;
 import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.RecoverySource.SnapshotRecoverySource;
 import org.opensearch.cluster.routing.ShardRouting;
@@ -346,6 +347,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     private final List<ReferenceManager.RefreshListener> internalRefreshListener = new ArrayList<>();
     private final RemoteStoreFileDownloader fileDownloader;
     private final RecoverySettings recoverySettings;
+    private final ShardId parentShardId;
 
     public IndexShard(
         final ShardRouting shardRouting,
@@ -374,7 +376,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
         final Supplier<TimeValue> clusterRemoteTranslogBufferIntervalSupplier,
         final String nodeId,
-        final RecoverySettings recoverySettings
+        final RecoverySettings recoverySettings,
+        final ShardId parentShardId
     ) throws IOException {
         super(shardRouting.shardId(), indexSettings);
         assert shardRouting.initializing();
@@ -477,6 +480,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         this.remoteStoreStatsTrackerFactory = remoteStoreStatsTrackerFactory;
         this.recoverySettings = recoverySettings;
         this.fileDownloader = new RemoteStoreFileDownloader(shardRouting.shardId(), threadPool, recoverySettings);
+        this.parentShardId = parentShardId;
     }
 
     public ThreadPool getThreadPool() {
@@ -576,6 +580,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     public RecoverySettings getRecoverySettings() {
         return recoverySettings;
+    }
+
+    public ShardId getParentShardId() {
+        return parentShardId;
     }
 
     public RemoteStoreFileDownloader getFileDownloader() {
@@ -863,7 +871,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @throws InterruptedException            if blocking operations is interrupted
      */
     public void relocated(
-        final String targetAllocationId,
+        final Set<String> targetAllocationIds,
         final Consumer<ReplicationTracker.PrimaryContext> consumer,
         final Runnable performSegRep
     ) throws IllegalIndexShardStateException, IllegalStateException, InterruptedException {
@@ -903,7 +911,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                  * network operation. Doing this under the mutex can implicitly block the cluster state update thread on network operations.
                  */
                 verifyRelocatingState();
-                final ReplicationTracker.PrimaryContext primaryContext = replicationTracker.startRelocationHandoff(targetAllocationId);
+                final ReplicationTracker.PrimaryContext primaryContext = replicationTracker.startRelocationHandoff(targetAllocationIds);
                 try {
                     consumer.accept(primaryContext);
                     synchronized (mutex) {
@@ -2278,6 +2286,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // If a translog op is replayed on the primary (eg. ccr), we need to use external instead of null for its version type.
         final VersionType versionType = (origin == Engine.Operation.Origin.PRIMARY) ? VersionType.EXTERNAL : null;
         final Engine.Result result;
+        operation = overrideToNoOpIfOperationNotForShard(operation);
         switch (operation.opType()) {
             case INDEX:
                 final Translog.Index index = (Translog.Index) operation;
@@ -2326,6 +2335,30 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 throw new IllegalStateException("No operation defined for [" + operation + "]");
         }
         return result;
+    }
+
+    /**
+     * Compute cost of figuring out a child shard ID for a child shard would depend on the depth of routing
+     * i.e., how many times root shard was split to produce this child shard. This cost is minimal
+     * and we also don't have it in regular indexing path when shard is in started state. This is because
+     * translog recoveries today only happen in case of shard recoveries or during primary term bump.
+     * Also, keeping it here ensures that any new translog based recoveries on child shards in future
+     * honour this filtering.
+     */
+    private Translog.Operation overrideToNoOpIfOperationNotForShard(Translog.Operation operation) {
+        if (getParentShardId() == null || operation.opType() != Translog.Operation.Type.INDEX) {
+            // It is ok to send delete and no-op operations to all child shards.
+            return operation;
+        }
+
+        final Translog.Index index = (Translog.Index) operation;
+        int computedShardId = OperationRouting.generateShardId(indexSettings().getIndexMetadata(),
+            index.id(), index.routing());
+        if (computedShardId != shardId().id()) {
+            return new Translog.NoOp(index.seqNo(), index.primaryTerm(), "overridden index op");
+        }
+
+        return operation;
     }
 
     /**
@@ -3288,6 +3321,17 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
+     * Called when the recovery process for a shard has opened the engine on target child shards. Ensures that the right data structures
+     * have been set up locally to track local checkpoint information for the shards and that the shards are added to the replication group.
+     *
+     * @param allocationIds  the allocation IDs of child shards for which recovery was initiated
+     */
+    public synchronized void initiateTrackingOfBulkShards(final List<String> allocationIds) {
+        assert assertPrimaryMode();
+        replicationTracker.initiateTrackingOfBulkShards(allocationIds);
+    }
+
+    /**
      * Marks the shard with the provided allocation ID as in-sync with the primary shard. See
      * {@link ReplicationTracker#markAllocationIdAsInSync(String, long)}
      * for additional details.
@@ -3405,6 +3449,17 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
+     * Returns allocation id of the current allocation of this shard.
+     *
+     * @return current allocation id.
+     */
+    public String getAllocationId() {
+        assert assertPrimaryMode();
+        verifyNotClosed();
+        return shardRouting.allocationId().getId();
+    }
+
+    /**
      * Updates the global checkpoint on a replica shard after it has been updated by the primary.
      *
      * @param globalCheckpoint the global checkpoint
@@ -3425,6 +3480,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
              * to recovery finalization, or even finished recovery before the update arrives here.
              * When remote translog is enabled for an index, replication operation is limited to primary term validation and does not
              * update local checkpoint at replica, so the local checkpoint at replica can be less than globalCheckpoint.
+             * This can also happen on a recovering child shard during in-place shard split recovery after all child shards are added
+             * in the replication group and checkpoints are published to all child shards including the ones which do not own the respective
+             * replicated bulk operations.
              */
             assert (state() != IndexShardState.POST_RECOVERY && state() != IndexShardState.STARTED)
                 || indexSettings.isRemoteTranslogStoreEnabled() : "supposedly in-sync shard copy received a global checkpoint ["
@@ -3715,8 +3773,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     throw e;
                 }
                 break;
-            case IN_PLACE_SHARD_SPLIT:
-                return;
             default:
                 throw new IllegalArgumentException("Unknown recovery source " + recoveryState.getRecoverySource());
         }

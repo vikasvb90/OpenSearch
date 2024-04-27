@@ -83,6 +83,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -535,7 +536,7 @@ public class SegmentReplicationIndexShardTests extends OpenSearchIndexLevelRepli
         String id = shard.routingEntry().allocationId().getId();
 
         // Starting relocation handoff
-        shard.getReplicationTracker().startRelocationHandoff(id);
+        shard.getReplicationTracker().startRelocationHandoff(new HashSet<>(Collections.singletonList(id)));
 
         // Completing relocation handoff
         shard.getReplicationTracker().completeRelocationHandoff();
@@ -560,7 +561,7 @@ public class SegmentReplicationIndexShardTests extends OpenSearchIndexLevelRepli
         String id = primaryShard.routingEntry().allocationId().getId();
 
         // Starting relocation handoff
-        primaryShard.getReplicationTracker().startRelocationHandoff(id);
+        primaryShard.getReplicationTracker().startRelocationHandoff(new HashSet<>(Collections.singletonList(id)));
 
         // Completing relocation handoff.
         primaryShard.getReplicationTracker().completeRelocationHandoff();
@@ -586,7 +587,9 @@ public class SegmentReplicationIndexShardTests extends OpenSearchIndexLevelRepli
         Thread recoveryThread = new Thread(() -> {
             latch.countDown();
             try {
-                shard.relocated(routing.getTargetRelocatingShard().allocationId().getId(), primaryContext -> {}, () -> {});
+                shard.relocated(
+                    new HashSet<>(Collections.singletonList(routing.getTargetRelocatingShard().allocationId().getId())),
+                    primaryContext -> {}, () -> {});
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
@@ -621,7 +624,7 @@ public class SegmentReplicationIndexShardTests extends OpenSearchIndexLevelRepli
             try {
                 startRecovery.await();
                 shard.relocated(
-                    routing.getTargetRelocatingShard().allocationId().getId(),
+                    new HashSet<>(Collections.singletonList(routing.getTargetRelocatingShard().allocationId().getId())),
                     primaryContext -> relocationStarted.countDown(),
                     () -> {}
                 );

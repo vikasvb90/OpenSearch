@@ -188,7 +188,8 @@ public class RemoteFsTranslogTests extends OpenSearchTestCase {
             repository,
             threadPool,
             primaryMode::get,
-            new RemoteTranslogTransferTracker(shardId, 10)
+            new RemoteTranslogTransferTracker(shardId, 10),
+            shardId -> null
         );
     }
 
@@ -458,7 +459,8 @@ public class RemoteFsTranslogTests extends OpenSearchTestCase {
                 repository,
                 threadPool,
                 () -> Boolean.TRUE,
-                new RemoteTranslogTransferTracker(shardId, 10)
+                new RemoteTranslogTransferTracker(shardId, 10),
+                shardId -> null
             ) {
                 @Override
                 ChannelFactory getChannelFactory() {
@@ -1507,7 +1509,8 @@ public class RemoteFsTranslogTests extends OpenSearchTestCase {
                 repository,
                 threadPool,
                 () -> Boolean.TRUE,
-                new RemoteTranslogTransferTracker(shardId, 10)
+                new RemoteTranslogTransferTracker(shardId, 10),
+                shardId -> null
             ) {
                 @Override
                 ChannelFactory getChannelFactory() {
@@ -1615,7 +1618,8 @@ public class RemoteFsTranslogTests extends OpenSearchTestCase {
                 repository,
                 threadPool,
                 () -> Boolean.TRUE,
-                new RemoteTranslogTransferTracker(shardId, 10)
+                new RemoteTranslogTransferTracker(shardId, 10),
+                shardId -> null
             ) {
                 @Override
                 ChannelFactory getChannelFactory() {

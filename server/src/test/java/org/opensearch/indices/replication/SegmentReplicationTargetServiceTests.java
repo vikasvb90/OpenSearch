@@ -232,6 +232,7 @@ public class SegmentReplicationTargetServiceTests extends IndexShardTestCase {
         };
         final SegmentReplicationTarget target = new SegmentReplicationTarget(
             replicaShard,
+            replicaShard,
             primaryShard.getLatestReplicationCheckpoint(),
             source,
             new SegmentReplicationTargetService.SegmentReplicationListener() {
@@ -299,6 +300,7 @@ public class SegmentReplicationTargetServiceTests extends IndexShardTestCase {
         };
         final SegmentReplicationTarget target = spy(
             new SegmentReplicationTarget(
+                replicaShard,
                 replicaShard,
                 primaryShard.getLatestReplicationCheckpoint(),
                 source,
@@ -373,6 +375,7 @@ public class SegmentReplicationTargetServiceTests extends IndexShardTestCase {
 
         final SegmentReplicationTarget targetSpy = spy(
             new SegmentReplicationTarget(
+                replicaShard,
                 replicaShard,
                 updatedCheckpoint,
                 source,
@@ -622,6 +625,7 @@ public class SegmentReplicationTargetServiceTests extends IndexShardTestCase {
     public void testTargetCancelledBeforeStartInvoked() {
         final String cancelReason = "test";
         final SegmentReplicationTarget target = new SegmentReplicationTarget(
+            replicaShard,
             replicaShard,
             primaryShard.getLatestReplicationCheckpoint(),
             mock(SegmentReplicationSource.class),

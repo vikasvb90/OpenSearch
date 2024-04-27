@@ -32,6 +32,7 @@
 
 package org.opensearch.indices.recovery;
 
+import org.opensearch.Version;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.core.common.io.stream.StreamInput;
@@ -39,9 +40,11 @@ import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.store.Store;
+import org.opensearch.search.fetch.subphase.FieldAndFormat;
 import org.opensearch.transport.TransportRequest;
 
 import java.io.IOException;
+import java.util.Set;
 
 /**
  * Represents a request for starting a peer recovery.
@@ -54,6 +57,7 @@ public class StartRecoveryRequest extends TransportRequest {
     private long recoveryId;
     private ShardId shardId;
     private String targetAllocationId;
+    private Set<String> childShardsAllocationIds;
     private DiscoveryNode sourceNode;
     private DiscoveryNode targetNode;
     private Store.MetadataSnapshot metadataSnapshot;
@@ -70,6 +74,11 @@ public class StartRecoveryRequest extends TransportRequest {
         metadataSnapshot = new Store.MetadataSnapshot(in);
         primaryRelocation = in.readBoolean();
         startingSeqNo = in.readLong();
+        if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+            if (in.readBoolean()) {
+                childShardsAllocationIds = in.readSet(StreamInput::readString);
+            }
+        }
     }
 
     /**
@@ -92,7 +101,8 @@ public class StartRecoveryRequest extends TransportRequest {
         final Store.MetadataSnapshot metadataSnapshot,
         final boolean primaryRelocation,
         final long recoveryId,
-        final long startingSeqNo
+        final long startingSeqNo,
+        final Set<String> childShardsAllocationIds
     ) {
         this.recoveryId = recoveryId;
         this.shardId = shardId;
@@ -104,6 +114,7 @@ public class StartRecoveryRequest extends TransportRequest {
         this.startingSeqNo = startingSeqNo;
         assert startingSeqNo == SequenceNumbers.UNASSIGNED_SEQ_NO || metadataSnapshot.getHistoryUUID() != null
             : "starting seq no is set but not history uuid";
+        this.childShardsAllocationIds = childShardsAllocationIds;
     }
 
     public long recoveryId() {
@@ -138,6 +149,10 @@ public class StartRecoveryRequest extends TransportRequest {
         return startingSeqNo;
     }
 
+    public Set<String> getChildShardsAllocationIds() {
+        return childShardsAllocationIds;
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
@@ -149,6 +164,17 @@ public class StartRecoveryRequest extends TransportRequest {
         metadataSnapshot.writeTo(out);
         out.writeBoolean(primaryRelocation);
         out.writeLong(startingSeqNo);
+        // We don't receive/send recovery request of child shards from/to another node but let's still handle it.
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            out.writeBoolean(childShardsAllocationIds != null);
+            if (childShardsAllocationIds != null) {
+                out.writeCollection(childShardsAllocationIds, StreamOutput::writeString);
+            }
+        } else {
+            if (childShardsAllocationIds != null) {
+                throw new IllegalStateException("In-place split not allowed on older versions.");
+            }
+        }
     }
 
 }
