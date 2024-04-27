@@ -32,6 +32,7 @@
 
 package org.opensearch.cluster.routing.allocation;
 
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.routing.RoutingChangesObserver;
 import org.opensearch.cluster.routing.RoutingNodes;
 import org.opensearch.cluster.routing.ShardRouting;
@@ -108,7 +109,7 @@ public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     }
 
     @Override
-    public void splitCompleted(ShardRouting removedSplitSource) {
+    public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
         assert removedSplitSource.splitting() : "expected splitting shard " + removedSplitSource;
         setChanged();
     }

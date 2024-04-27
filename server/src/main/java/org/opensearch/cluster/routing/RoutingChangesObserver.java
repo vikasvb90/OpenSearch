@@ -32,6 +32,7 @@
 
 package org.opensearch.cluster.routing;
 
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.annotation.PublicApi;
 
 import java.util.List;
@@ -87,7 +88,7 @@ public interface RoutingChangesObserver {
     /**
      * Called when split completes after child shards are started.
      */
-    void splitCompleted(ShardRouting removedSplitSource);
+    void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata);
 
     /**
      * Called when started replica is promoted to primary.
@@ -147,7 +148,7 @@ public interface RoutingChangesObserver {
         }
 
         @Override
-        public void splitCompleted(ShardRouting removedSplitSource) {
+        public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
 
         }
 
@@ -232,9 +233,9 @@ public interface RoutingChangesObserver {
         }
 
         @Override
-        public void splitCompleted(ShardRouting removedSplitSource) {
+        public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
-                routingChangesObserver.splitCompleted(removedSplitSource);
+                routingChangesObserver.splitCompleted(removedSplitSource, indexMetadata);
             }
         }
 

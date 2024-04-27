@@ -122,7 +122,7 @@ public class MetadataInPlaceShardSplitService {
     ) {
         IndexMetadata curIndexMetadata = currentState.metadata().index(request.getIndex());
         ShardId sourceShardId = new ShardId(curIndexMetadata.getIndex(), request.getShardId());
-        if (curIndexMetadata.isParentShard(sourceShardId)) {
+        if (curIndexMetadata.isParentShard(sourceShardId.id())) {
             try {
                 currentState.getRoutingTable().shardRoutingTable(request.getIndex(), request.getShardId());
                 throw new IllegalArgumentException("Splitting of this shard is already in progress");
@@ -135,12 +135,16 @@ public class MetadataInPlaceShardSplitService {
         RoutingTable.Builder routingTableBuilder = RoutingTable.builder(currentState.routingTable());
         Metadata.Builder metadataBuilder = Metadata.builder(currentState.metadata());
         IndexMetadata.Builder indexMetadataBuilder = IndexMetadata.builder(curIndexMetadata);
-        int newShardId = curIndexMetadata.getNumberOfShards();
         Set<Integer> childShardIds = new HashSet<>();
-        for (int shardId = newShardId; shardId < newShardId + request.getSplitInto(); shardId++) {
-            childShardIds.add(shardId);
+        for (int i = 0; i < request.getSplitInto(); i++) {
+            childShardIds.add(curIndexMetadata.getNumberOfShards() + i);
         }
-        indexMetadataBuilder.putParentToChildShardIDs(sourceShardId.id(), childShardIds);
+        int parentRoutingFactor = curIndexMetadata.isParentShard(sourceShardId.id()) ?
+            curIndexMetadata.getSplitMetadata(sourceShardId.id()).getRoutingFactor() :
+            curIndexMetadata.getRoutingFactor();
+        SplitMetadata splitMetadata = new SplitMetadata(sourceShardId.id(), childShardIds, parentRoutingFactor);
+
+        indexMetadataBuilder.putParentToChildShardMetadata(splitMetadata);
         RoutingTable routingTable = routingTableBuilder.build();
         metadataBuilder.put(indexMetadataBuilder);
 

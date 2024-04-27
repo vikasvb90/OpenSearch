@@ -24,7 +24,8 @@ public class InPlaceShardSplitAllocationDecider extends AllocationDecider {
     public static Decision canRemainDecision(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
         // If shardRouting is a started parent shard and fact that it exists is sufficient to conclude
         // that it needs to be split.
-        if (allocation.metadata().getIndexSafe(shardRouting.index()).isParentShard(shardRouting.shardId()) && shardRouting.started()) {
+        if (allocation.metadata().getIndexSafe(shardRouting.index()).isParentShard(shardRouting.shardId().id())
+            && shardRouting.started()) {
             return Decision.SPLIT;
         }
         return Decision.ALWAYS;

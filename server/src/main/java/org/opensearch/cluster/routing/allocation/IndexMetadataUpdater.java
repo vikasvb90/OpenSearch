@@ -122,8 +122,9 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     }
 
     @Override
-    public void splitCompleted(ShardRouting removedSplitSource) {
+    public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
         removeAllocationId(removedSplitSource);
+
     }
 
     /**
