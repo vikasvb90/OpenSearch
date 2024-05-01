@@ -8,6 +8,7 @@
 
 package org.opensearch.indices.recovery.inplacesplit;
 
+import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.indices.cluster.IndicesClusterStateService;
@@ -24,14 +25,17 @@ public class InPlaceShardSplitRecoveryListener implements ReplicationListener {
     private final Map<ShardId, ShardRouting> recoveringShards;
     private final IndicesClusterStateService indicesClusterStateService;
     private final ShardRouting sourceShard;
+    private final long primaryTerm;
 
     public InPlaceShardSplitRecoveryListener (
         final List<ShardRouting> shardRoutings,
         IndicesClusterStateService indicesClusterStateService,
-        final ShardRouting sourceShard
+        final ShardRouting sourceShard,
+        final long primaryTerm
     ) {
         this.sourceShard = sourceShard;
         this.recoveringShards = new HashMap<>();
+        this.primaryTerm = primaryTerm;
         shardRoutings.forEach(shardRouting -> {
             this.recoveringShards.put(shardRouting.shardId(), shardRouting);
         });
@@ -43,7 +47,8 @@ public class InPlaceShardSplitRecoveryListener implements ReplicationListener {
      */
     @Override
     public synchronized void onDone(ReplicationState state) {
-        indicesClusterStateService.handleChildRecoveriesDone(recoveringShards.values(), sourceShard);
+        indicesClusterStateService.handleChildRecoveriesDone(sourceShard, primaryTerm,
+            RecoverySource.InPlaceShardSplitRecoverySource.INSTANCE);
     }
 
     /**

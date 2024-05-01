@@ -36,6 +36,7 @@ import org.opensearch.indices.recovery.RecoverySourceHandler;
 import org.opensearch.indices.recovery.RecoverySourceHandlerFactory;
 import org.opensearch.indices.recovery.StartRecoveryRequest;
 import org.opensearch.indices.replication.SegmentReplicationSourceFactory;
+import org.opensearch.indices.replication.common.ReplicationFailedException;
 import org.opensearch.indices.replication.common.ReplicationTimer;
 
 import java.io.IOException;
@@ -107,77 +108,80 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
                                     DiscoveryNode node,
                                     IndexShard sourceShard,
                                     InPlaceShardSplitRecoveryListener replicationListener,
-                                    List<ShardId> shardIds) {
+                                    List<ShardId> shardIds,
+                                    StartRecoveryRequest request) {
         Set<String> childShardAllocationIds = new HashSet<>();
-        recoveryContexts.forEach(context -> childShardAllocationIds.add(context.getIndexShard().getAllocationId()));
-        // targetAllocationId can't be set to null since it is not read as optional field from stream
-        StartRecoveryRequest request = new StartRecoveryRequest(
-            sourceShard.shardId(),
-            "N/A",
-            node,
-            node,
-            Store.MetadataSnapshot.EMPTY,
-            false,
-            -1,
-            SequenceNumbers.UNASSIGNED_SEQ_NO,
-            childShardAllocationIds
-        );
+        recoveryContexts.forEach(context -> childShardAllocationIds.add(context.getIndexShard()
+            .routingEntry().allocationId().getId()));
+
         List<ReplicationTimer> timers = new ArrayList<>();
         recoveryContexts.forEach(context -> timers.add(context.getRecoveryState().getTimer()));
         ActionListener<RecoveryResponse> recoveryResponseListener = new InPlaceShardSplitResponseHandler(
-            replicationListener, request, timers);
+            replicationListener, request, timers, ongoingRecoveries, sourceShard);
 
         InPlaceShardSplitRecoverySourceHandler handler = ongoingRecoveries.addNewRecovery(sourceShard, node,
-            recoveryContexts, request, shardIds, childShardAllocationIds);
+            recoveryContexts, request, shardIds, childShardAllocationIds, replicationListener);
         logger.trace(
             "[{}] starting in-place recovery from [{}]",
             sourceShard.shardId().getIndex().getName(),
             sourceShard.shardId().id()
         );
 
-        handler.recoverToTarget(ActionListener.runBefore(recoveryResponseListener, () ->
-            ongoingRecoveries.remove(sourceShard, handler)));
+        handler.recoverToTarget(recoveryResponseListener);
     }
 
-    class OngoingRecoveries {
-        private final Map<ShardId, InPlaceShardSplitRecoverySourceHandler> recoveryHandlers = new HashMap<>();
+    public class OngoingRecoveries {
+        private final Map<ShardId, Recovery> recoveries = new HashMap<>();
 
         @Nullable
         private List<ActionListener<Void>> emptyListeners;
 
+        private class Recovery {
+            private final InPlaceShardSplitRecoveryTargetHandler targetHandler;
+            private final InPlaceShardSplitRecoverySourceHandler sourceHandler;
+            private final InPlaceShardSplitRecoveryListener replicationListener;
+
+            public Recovery(InPlaceShardSplitRecoveryTargetHandler targetHandler,
+                            InPlaceShardSplitRecoverySourceHandler sourceHandler,
+                            InPlaceShardSplitRecoveryListener replicationListener) {
+                this.targetHandler = targetHandler;
+                this.sourceHandler = sourceHandler;
+                this.replicationListener = replicationListener;
+            }
+        }
+
         synchronized InPlaceShardSplitRecoverySourceHandler addNewRecovery(
             IndexShard sourceShard, DiscoveryNode node, List<InPlaceShardRecoveryContext> recoveryContexts,
-            StartRecoveryRequest request, List<ShardId> shardIds, Set<String> childShardsAllocationIds) {
+            StartRecoveryRequest request, List<ShardId> shardIds, Set<String> childShardsAllocationIds,
+            InPlaceShardSplitRecoveryListener replicationListener) {
             assert lifecycle.started();
-            if (recoveryHandlers.containsKey(sourceShard.shardId())) {
+            if (recoveries.containsKey(sourceShard.shardId())) {
                 throw new IllegalStateException("In-place shard recovery from shard " + sourceShard.shardId() + "  already already in progress");
             }
             CancellableThreads cancellableThreads = new CancellableThreads();
             List<IndexShard> targetShards = new ArrayList<>();
             recoveryContexts.forEach(context -> targetShards.add(context.getIndexShard()));
 
-            InPlaceShardSplitRecoveryTargetHandler recoveryTarget = new InPlaceShardSplitRecoveryTargetHandler(targetShards,
+            InPlaceShardSplitRecoveryTargetHandler targetHandler = new InPlaceShardSplitRecoveryTargetHandler(targetShards,
                 node, cancellableThreads, recoveryContexts, childShardsAllocationIds ,sourceShard, segRepFactory);
             RecoverySourceHandler delegatingRecoveryHandler = RecoverySourceHandlerFactory.create(
-                sourceShard, recoveryTarget, request,
+                sourceShard, targetHandler, request,
                 recoverySettings, true, cancellableThreads);
 
             InPlaceShardSplitRecoverySourceHandler sourceHandler = new InPlaceShardSplitRecoverySourceHandler(sourceShard,
-                sourceShard.getThreadPool(), recoveryTarget, delegatingRecoveryHandler, request,
+                sourceShard.getThreadPool(), targetHandler, delegatingRecoveryHandler, request,
                 Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
                 recoverySettings.getMaxConcurrentFileChunks(), recoverySettings.getMaxConcurrentOperations(),
                 cancellableThreads, recoveryContexts, shardIds, childShardsAllocationIds);
 
-            recoveryHandlers.put(sourceShard.shardId(), sourceHandler);
+            recoveries.put(sourceShard.shardId(), new Recovery(targetHandler, sourceHandler, replicationListener));
             sourceShard.recoveryStats().incCurrentAsSource();
             return sourceHandler;
         }
 
-        synchronized void remove(IndexShard shard, InPlaceShardSplitRecoverySourceHandler handler) {
-            final InPlaceShardSplitRecoverySourceHandler removed = recoveryHandlers.get(shard.shardId());
-            assert removed != null : "Handler was not registered [" + handler + "]";
-            shard.recoveryStats().decCurrentAsSource();
-            if (recoveryHandlers.isEmpty()) {
+        synchronized void remove(InPlaceShardSplitRecoverySourceHandler sourceHandler) {
+            sourceHandler.getSourceShard().recoveryStats().decCurrentAsSource();
+            if (recoveries.isEmpty()) {
                 if (emptyListeners != null) {
                     final List<ActionListener<Void>> onEmptyListeners = emptyListeners;
                     emptyListeners = null;
@@ -186,9 +190,30 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             }
         }
 
+        public synchronized void markAsDone(IndexShard sourceShard) {
+            Recovery removed = recoveries.remove(sourceShard.shardId());
+            if (removed != null) {
+                assert sourceShard.routingEntry().splitting();
+                remove(removed.sourceHandler);
+                removed.targetHandler.onDone();
+                removed.replicationListener.onDone(null);
+            }
+        }
+
+        public synchronized void fail(IndexShard sourceShard, ReplicationFailedException ex, boolean sendShardFailure) {
+            Recovery removed = recoveries.remove(sourceShard.shardId());
+            if (removed != null) {
+                remove(removed.sourceHandler);
+                removed.replicationListener.onFailure(null, ex, sendShardFailure);
+            }
+        }
+
         synchronized void cancel(IndexShard shard, String reason) {
             try {
-                recoveryHandlers.get(shard.shardId()).cancel(reason);
+                ShardId sourceShardId = getSplittingSourceShardId(shard);
+                if (sourceShardId != null && recoveries.containsKey(sourceShardId)) {
+                    recoveries.get(sourceShardId).sourceHandler.cancel(reason);
+                }
             } catch (Exception ex) {
                 throw new OpenSearchException(ex);
             } finally {
@@ -196,11 +221,20 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             }
         }
 
+        private ShardId getSplittingSourceShardId(IndexShard shard) {
+            if (shard.routingEntry().splitting()) {
+                return shard.shardId();
+            } else if (shard.routingEntry().isSplitTarget()) {
+                return shard.routingEntry().getSplittingShardId();
+            }
+            return null;
+        }
+
         void awaitEmpty() {
             assert lifecycle.stoppedOrClosed();
             final PlainActionFuture<Void> future;
             synchronized (this) {
-                if (recoveryHandlers.isEmpty()) {
+                if (recoveries.isEmpty()) {
                     return;
                 }
                 future = new PlainActionFuture<>();

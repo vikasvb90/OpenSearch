@@ -681,6 +681,22 @@ public class ShardStateAction {
         sendShardAction(SHARD_STARTED_ACTION_NAME, currentState, entry, listener);
     }
 
+    public void childShardsStarted(
+        final ShardRouting sourceShardRouting,
+        final long primaryTerm,
+        final String message,
+        final ActionListener<Void> listener
+    ) {
+        StartedShardEntry entry = new StartedShardEntry(
+            sourceShardRouting.shardId(),
+            sourceShardRouting.allocationId().getId(),
+            primaryTerm,
+            message,
+            true
+        );
+        sendShardAction(SHARD_STARTED_ACTION_NAME, clusterService.state(), entry, listener);
+    }
+
     /**
      * Handler for a shard started action.
      *
@@ -805,7 +821,7 @@ public class ShardStateAction {
                             if (Boolean.TRUE.equals(task.childShardsStartedEvent)) {
                                 logger.debug("{} starting child shards of {} (shard started task: [{}])", task.shardId, matched, task);
                                 // matched shard is source shard in this case.
-                                assert matched.splitting() && matched.started();
+                                assert matched.splitting();
                                 shardRoutingsToBeApplied.addAll(Arrays.asList(matched.getRecoveringChildShards()));
                             } else {
                                 logger.debug("{} starting shard {} (shard started task: [{}])", task.shardId, matched, task);

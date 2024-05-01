@@ -56,6 +56,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -451,6 +452,12 @@ public class OperationRouting {
     }
 
     public static int generateShardId(IndexMetadata indexMetadata, @Nullable String id, @Nullable String routing) {
+        return generateShardId(indexMetadata, id, routing, (shardId) ->
+            indexMetadata.primaryTerm(shardId) == IndexMetadata.SPLIT_PARENT_TERM);
+    }
+
+    public static int generateShardId(IndexMetadata indexMetadata, @Nullable String id, @Nullable String routing,
+                                      Predicate<Integer> canIncludeRecoveringChildShardIds) {
         final String effectiveRouting;
         final int partitionOffset;
 
@@ -468,17 +475,23 @@ public class OperationRouting {
             partitionOffset = 0;
         }
 
-        return calculateScaledShardId(indexMetadata, effectiveRouting, partitionOffset);
+        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, canIncludeRecoveringChildShardIds);
     }
 
     private static int calculateScaledShardId(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset) {
+        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, (shardId) ->
+            indexMetadata.primaryTerm(shardId) == IndexMetadata.SPLIT_PARENT_TERM);
+    }
+
+    private static int calculateShardIdOfChild(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset,
+                                               Predicate<Integer> canIncludeChildShardIds) {
         final int hash = Murmur3HashFunction.hash(effectiveRouting) + partitionOffset;
         int shardId = Math.floorMod(hash, indexMetadata.getRoutingNumShards()) / indexMetadata.getRoutingFactor();
 
-        while (indexMetadata.isParentShard(shardId) &&
-            indexMetadata.primaryTerm(shardId) == IndexMetadata.SPLIT_PARENT_TERM) {
+        while (indexMetadata.isParentShard(shardId) && canIncludeChildShardIds.test(shardId)) {
             final SplitMetadata splitMetadata = indexMetadata.getSplitMetadata(shardId);
-            shardId = Math.floorMod(hash, splitMetadata.getRoutingNumShards()) / splitMetadata.getRoutingFactor();
+            int childShardIdx = Math.floorMod(hash, splitMetadata.getRoutingNumShards()) / splitMetadata.getRoutingFactor();
+            shardId = splitMetadata.getChildShardIdAtIndex(childShardIdx);
         }
 
         // we don't use IMD#getNumberOfShards since the index might have been shrunk such that we need to use the size

@@ -29,7 +29,11 @@ import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.ShardLimitValidator;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
 
@@ -135,13 +139,17 @@ public class MetadataInPlaceShardSplitService {
         RoutingTable.Builder routingTableBuilder = RoutingTable.builder(currentState.routingTable());
         Metadata.Builder metadataBuilder = Metadata.builder(currentState.metadata());
         IndexMetadata.Builder indexMetadataBuilder = IndexMetadata.builder(curIndexMetadata);
-        Set<Integer> childShardIds = new HashSet<>();
-        for (int i = 0; i < request.getSplitInto(); i++) {
-            childShardIds.add(curIndexMetadata.getNumberOfShards() + i);
+        List<Integer> childShardIds = new ArrayList<>();
+
+        int maxUsedShardId = curIndexMetadata.getNumberOfServingShards() + curIndexMetadata.getNumOfNonServingShards() - 1;
+        for (int i = 1; i <= request.getSplitInto(); i++) {
+            childShardIds.add(maxUsedShardId + i);
         }
-        int parentRoutingFactor = curIndexMetadata.isParentShard(sourceShardId.id()) ?
-            curIndexMetadata.getSplitMetadata(sourceShardId.id()).getRoutingFactor() :
-            curIndexMetadata.getRoutingFactor();
+
+        Integer parentShardId = curIndexMetadata.getParentShardIdOrNull(sourceShardId.id());
+        int parentRoutingFactor = parentShardId == null ? curIndexMetadata.getRoutingFactor() :
+            curIndexMetadata.getSplitMetadata(parentShardId).getRoutingFactor();
+
         SplitMetadata splitMetadata = new SplitMetadata(sourceShardId.id(), childShardIds, parentRoutingFactor);
 
         indexMetadataBuilder.putParentToChildShardMetadata(splitMetadata);
@@ -151,5 +159,6 @@ public class MetadataInPlaceShardSplitService {
         ClusterState updatedState = ClusterState.builder(currentState).metadata(metadataBuilder).routingTable(routingTable).build();
         return rerouteRoutingTable.apply(updatedState, "shard [" + request.getShardId() + "] of index [" + request.getIndex() + "] split");
     }
+
 
 }

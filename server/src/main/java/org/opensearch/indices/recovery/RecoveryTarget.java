@@ -84,6 +84,7 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
 
     private final DiscoveryNode sourceNode;
     protected final MultiFileWriter multiFileWriter;
+    private final boolean recoveryFromLocalShards;
 
     // latch that can be used to blockingly wait for RecoveryTarget to be closed
     private final CountDownLatch closedLatch = new CountDownLatch(1);
@@ -96,7 +97,7 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
      * @param listener                          called when recovery is completed/failed
      */
     public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, ReplicationListener listener) {
-        this(indexShard, sourceNode, listener, new CancellableThreads(), true);
+        this(indexShard, sourceNode, listener, new CancellableThreads(), false);
     }
 
     /**
@@ -106,15 +107,16 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
      * @param sourceNode                        source node of the recovery where we recover from
      * @param listener                          called when recovery is completed/failed
      * @param cancellableThreads                cancellable threads to use instead of using new threads internally on target.
-     * @param useMultiFileWriter                Whether multi-file writer is required
+     * @param recoveryFromLocalShards           Whether target recovery is from local shards.
      */
     public RecoveryTarget(IndexShard indexShard, DiscoveryNode sourceNode, ReplicationListener listener,
-                          CancellableThreads cancellableThreads, boolean useMultiFileWriter) {
+                          CancellableThreads cancellableThreads, boolean recoveryFromLocalShards) {
         super("recovery_status", indexShard, indexShard.recoveryState().getIndex(), listener,
             cancellableThreads);
         this.sourceNode = sourceNode;
+        this.recoveryFromLocalShards = recoveryFromLocalShards;
         indexShard.recoveryStats().incCurrentAsTarget();
-        if (useMultiFileWriter == true) {
+        if (recoveryFromLocalShards == false) {
             final String tempFilePrefix = getPrefix() + UUIDs.randomBase64UUID() + ".";
             this.multiFileWriter = new MultiFileWriter(indexShard.store(), stateIndex, tempFilePrefix, logger, this::ensureRefCount);
         } else {
@@ -373,18 +375,22 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
             // first, we go and move files that were created with the recovery id suffix to
             // the actual names, its ok if we have a corrupted index here, since we have replicas
             // to recover from in case of a full cluster shutdown just when this code executes...
-            multiFileWriter.renameAllTempFiles();
+            if (multiFileWriter != null) {
+                multiFileWriter.renameAllTempFiles();
+            }
             final Store store = store();
             store.incRef();
             try {
-                store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
+                if (recoveryFromLocalShards == false) {
+                    store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
+                }
 
                 // Replicas for segment replication or remote snapshot indices do not create
                 // their own commit points and therefore do not modify the commit user data
                 // in their store. In these cases, reuse the primary's translog UUID.
                 final boolean reuseTranslogUUID = indexShard.indexSettings().isSegRepEnabled()
                     || indexShard.indexSettings().isRemoteSnapshot();
-                if (reuseTranslogUUID) {
+                if (reuseTranslogUUID && recoveryFromLocalShards == false) {
                     final String translogUUID = store.getMetadata().getCommitUserData().get(TRANSLOG_UUID_KEY);
                     Translog.createEmptyTranslog(
                         indexShard.shardPath().resolveTranslog(),
@@ -430,11 +436,15 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
                     ex.addSuppressed(e);
                 }
                 RecoveryFailedException rfe = new RecoveryFailedException(state(), "failed to clean after recovery", ex);
-                fail(rfe, true);
+                if (recoveryFromLocalShards == false) {
+                    fail(rfe, true);
+                }
                 throw rfe;
             } catch (Exception ex) {
                 RecoveryFailedException rfe = new RecoveryFailedException(state(), "failed to clean after recovery", ex);
-                fail(rfe, true);
+                if (recoveryFromLocalShards == false) {
+                    fail(rfe, true);
+                }
                 throw rfe;
             } finally {
                 store.decRef();

@@ -897,7 +897,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         // when in primary mode, the current allocation ID is the allocation ID of the primary or the relocation allocation ID
         assert !primaryMode
             || (routingTable.primaryShard().allocationId().getId().equals(shardAllocationId)
-                || routingTable.primaryShard().allocationId().getRelocationId().equals(shardAllocationId));
+                || routingTable.primaryShard().allocationId().getRelocationId() != null &&
+            routingTable.primaryShard().allocationId().getRelocationId().equals(shardAllocationId) ||
+            routingTable.primaryShard().allocationId().getSplitChildAllocationIds() != null &&
+                routingTable.primaryShard().allocationId().getSplitChildAllocationIds().contains(shardAllocationId));
 
         // during relocation handoff there are no entries blocking global checkpoint advancement
         assert !handoffInProgress || pendingInSync.isEmpty() : "entries blocking global checkpoint advancement during relocation handoff: "

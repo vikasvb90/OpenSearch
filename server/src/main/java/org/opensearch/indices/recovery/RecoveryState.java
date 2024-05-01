@@ -144,8 +144,9 @@ public class RecoveryState implements ReplicationState, ToXContentFragment, Writ
     ) {
         assert shardRouting.initializing() : "only allow initializing shard routing to be recovered: " + shardRouting;
         RecoverySource recoverySource = shardRouting.recoverySource();
-        assert (recoverySource.getType() == RecoverySource.Type.PEER) == (sourceNode != null)
-            : "peer recovery requires source node, recovery type: " + recoverySource.getType() + " source node: " + sourceNode;
+        assert (recoverySource.getType() == RecoverySource.Type.PEER ||
+            recoverySource.getType() == RecoverySource.Type.IN_PLACE_SHARD_SPLIT) == (sourceNode != null)
+            : "peer recovery or split requires source node, recovery type: " + recoverySource.getType() + " source node: " + sourceNode;
         this.shardId = shardRouting.shardId();
         this.primary = shardRouting.primary();
         this.recoverySource = recoverySource;

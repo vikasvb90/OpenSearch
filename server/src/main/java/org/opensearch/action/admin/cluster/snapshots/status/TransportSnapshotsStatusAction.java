@@ -429,8 +429,7 @@ public class TransportSnapshotsStatusAction extends TransportClusterManagerNodeA
             IndexId indexId = repositoryData.resolveIndexId(index);
             IndexMetadata indexMetadata = repository.getSnapshotIndexMetaData(repositoryData, snapshotInfo.snapshotId(), indexId);
             if (indexMetadata != null) {
-                int numberOfShards = indexMetadata.getNumberOfShards();
-                for (int i = 0; i < numberOfShards; i++) {
+                for (int i : indexMetadata.getServingShardIds()) {
                     ShardId shardId = new ShardId(indexMetadata.getIndex(), i);
                     SnapshotShardFailure shardFailure = findShardFailure(snapshotInfo.shardFailures(), shardId);
                     if (shardFailure != null) {

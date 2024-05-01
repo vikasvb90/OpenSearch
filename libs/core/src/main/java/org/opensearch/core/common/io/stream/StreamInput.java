@@ -903,6 +903,18 @@ public abstract class StreamInput extends InputStream {
         return values;
     }
 
+    public long[] readZLongArray() throws IOException {
+        int length = readArraySize();
+        if (length == 0) {
+            return EMPTY_LONG_ARRAY;
+        }
+        long[] values = new long[length];
+        for (int i = 0; i < length; i++) {
+            values[i] = readZLong();
+        }
+        return values;
+    }
+
     private static final float[] EMPTY_FLOAT_ARRAY = new float[0];
 
     public float[] readFloatArray() throws IOException {

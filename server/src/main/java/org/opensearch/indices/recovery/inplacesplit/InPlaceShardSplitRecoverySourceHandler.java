@@ -9,7 +9,6 @@
 package org.opensearch.indices.recovery.inplacesplit;
 
 import org.apache.lucene.index.IndexCommit;
-import org.apache.lucene.store.Directory;
 import org.opensearch.action.StepListener;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
@@ -18,10 +17,11 @@ import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.engine.Engine;
+import org.opensearch.index.seqno.RetentionLeases;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
-import org.opensearch.index.shard.StoreRecovery;
 import org.opensearch.index.store.Store;
+import org.opensearch.index.store.StoreFileMetadata;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.RunUnderPrimaryPermit;
 import org.opensearch.indices.recovery.RecoveryResponse;
@@ -34,12 +34,18 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.IntSupplier;
 
 public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandler {
     private final List<InPlaceShardRecoveryContext> recoveryContexts;
+    private final InPlaceShardSplitRecoveryTargetHandler recoveryTarget;
     private final IndexShard sourceShard;
     private final String IN_PLACE_SHARD_SPLIT_RECOVERY_NAME = "in-place-shard-split-recovery";
     private final RecoverySourceHandler delegatingRecoveryHandler;
@@ -64,11 +70,23 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks,
             maxConcurrentOperations, true, cancellableThreads);
 
+        this.resources.add(recoveryTarget);
         this.recoveryContexts = recoveryContexts;
         this.sourceShard = sourceShard;
         this.delegatingRecoveryHandler = delegatingRecoveryHandler;
         this.shardIds = shardIds;
         this.childShardsAllocationIds = childShardsAllocationIds;
+        this.recoveryTarget = recoveryTarget;
+
+        recoveryTarget.initStoreAcquirer((requestStore) -> {
+            Releasable releasable = acquireStore(requestStore);
+            resources.add(releasable);
+            return releasable;
+        });
+    }
+
+    public IndexShard getSourceShard() {
+        return sourceShard;
     }
 
     public List<Closeable> getAdditionalResourcesToClose() {
@@ -80,30 +98,36 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         // Clean up shard directories if previous shard closures failed.
         cleanupChildShardDirectories();
 
-        recoveryContexts.forEach(context -> context.getIndexShard().preRecovery());
-        recoveryContexts.forEach(context -> context.getIndexShard().prepareForIndexRecovery());
-
         cancellableThreads.checkForCancel();
         final Closeable retentionLock = delegatingRecoveryHandler.acquireRetentionLock();
         if (retentionLock != null) {
             resources.add(retentionLock);
         }
 
-        long startingSeqNo;
-        try(GatedCloseable<IndexCommit> wrappedSafeCommit = acquireSafeCommit(sourceShard);
-            Releasable releaseStore = acquireStore(sourceShard.store())) {
-            resources.add(wrappedSafeCommit);
-            resources.add(releaseStore);
-            addLuceneIndices(wrappedSafeCommit);
-            startingSeqNo = Long.parseLong(wrappedSafeCommit.get().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) + 1L;
-        }
+        final StepListener<SendFileResult> sendFileStep = new StepListener<>();
+        final StepListener<TimeValue> prepareEngineStep = new StepListener<>();
+        final StepListener<List<SendSnapshotResult>> sendSnapshotStep = new StepListener<>();
 
+        final GatedCloseable<IndexCommit> wrappedSafeCommit = acquireSafeCommit(shard);
+        resources.add(wrappedSafeCommit);
+        Releasable releaseStore = acquireStore(sourceShard.store());
+        resources.add(releaseStore);
+
+        long startingSeqNo = Long.parseLong(wrappedSafeCommit.get().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) + 1L;
+        int estimatedOps = countNumberOfHistoryOperations(startingSeqNo);
+        onSendFileStepComplete(sendFileStep, wrappedSafeCommit, releaseStore);
+
+        assert Transports.assertNotTransportThread(this + "[phase1]");
         // We don't need to clone retention leases here even in DocRep case because we always restart the recovery
         // of child shards from the beginning after any failure.
+        phase1(wrappedSafeCommit.get(), startingSeqNo, () -> estimatedOps, sendFileStep, true);
 
-        final StepListener<TimeValue> prepareEngineStep = new StepListener<>();
-        final StepListener<SendSnapshotResult> sendSnapshotStep = new StepListener<>();
-        prepareTargetForTranslog(countNumberOfHistoryOperations(startingSeqNo), prepareEngineStep);
+        sendFileStep.whenComplete(r -> {
+            logger.debug("sendFileStep completed");
+            assert Transports.assertNotTransportThread(this + "[prepareTargetForTranslog]");
+            // For a sequence based recovery, the target can keep its local translog
+            prepareTargetForTranslog(estimatedOps, prepareEngineStep);
+        }, onFailure);
 
         // We don't need to rely on recovery target callbacks in listener because at present executions in targets are
         // synchronous. But we still handle callbacks in listener so that any future changes to make targets async do
@@ -124,8 +148,20 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             if (retentionLock != null) {
                 retentionLock.close();
             }
+            if (phase2Snapshot != null) {
+                final long mappingVersionOnPrimary = shard.indexSettings().getIndexMetadata().getMappingVersion();
+                phase2(
+                    startingSeqNo,
+                    endingSeqNo,
+                    phase2Snapshot,
+                    shard.getMaxSeenAutoIdTimestamp(),
+                    shard.getMaxSeqNoOfUpdatesOrDeletes(),
+                    shard.getRetentionLeases(),
+                    mappingVersionOnPrimary,
+                    sendSnapshotStep
+                );
+            }
 
-            executePhase2Snapshot(startingSeqNo, endingSeqNo, phase2Snapshot, sendSnapshotStep, sourceShard);
         }, onFailure);
 
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStepWithEmptyResult(), prepareEngineStep, onFailure);
@@ -152,31 +188,6 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     }
 
     @Override
-    public void executePhase2Snapshot(long startingSeqNo, long endingSeqNo, Translog.Snapshot phase2Snapshot,
-                                      StepListener<SendSnapshotResult> sendSnapshotStep, IndexShard shard) throws IOException {
-        delegatingRecoveryHandler.executePhase2Snapshot(startingSeqNo, endingSeqNo, phase2Snapshot, sendSnapshotStep, shard);
-    }
-
-    @Override
-    protected void markAllocationIdAsInSync(long targetLocalCheckpoint) {
-        /*
-         * Before marking the shard as in-sync we acquire an operation permit. We do this so that there is a barrier between marking a
-         * shard as in-sync and relocating a shard. If we acquire the permit then no relocation handoff can complete before we are done
-         * marking the shard as in-sync. If the relocation handoff holds all the permits then after the handoff completes and we acquire
-         * the permit then the state of the shard will be relocated and this recovery will fail.
-         */
-        childShardsAllocationIds.forEach(allocationID -> {
-            RunUnderPrimaryPermit.run(
-                () -> shard.markAllocationIdAsInSync(allocationID, targetLocalCheckpoint),
-                shardId + " marking " + allocationID + " as in sync",
-                shard,
-                cancellableThreads,
-                logger
-            );
-        });
-    }
-
-    @Override
     protected void updateGlobalCheckpointForShard(long globalCheckpoint) {
         childShardsAllocationIds.forEach(allocationID -> {
             RunUnderPrimaryPermit.run(
@@ -195,44 +206,38 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     }
 
     private void cleanupChildShardDirectories() throws IOException {
-        for (InPlaceShardRecoveryContext context : recoveryContexts) {
-            cancellableThreads.checkForCancel();
-            try(Releasable releasable = acquireStore(context.getIndexShard().store())) {
-                resources.add(releasable);
-                Store store = context.getIndexShard().store();
-                Directory storeDirectory = store.directory();
-                for (String file : storeDirectory.listAll()) {
-                    storeDirectory.deleteFile(file);
-                }
-            }
+        recoveryTarget.cleanShardDirectories();
+    }
+
+    protected void sendFiles(Store store, StoreFileMetadata[] files, IntSupplier translogOps,
+                             ActionListener<Void> listener, IndexCommit snapshot) {
+
+        try {
+            long maxSeqNo = Long.parseLong(snapshot.getUserData().get(SequenceNumbers.MAX_SEQ_NO));
+            long maxUnsafeAutoIdTimestamp = Long.parseLong(snapshot.getUserData().get(
+                Engine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID));
+            recoveryTarget.receiveFilesAndSplit(store, files, maxSeqNo, maxUnsafeAutoIdTimestamp);
+            listener.onResponse(null);
+        } catch (IOException e) {
+            listener.onFailure(e);
         }
     }
 
-    private void addLuceneIndices(GatedCloseable<IndexCommit> wrappedSafeCommit) throws IOException {
-        long maxSeqNo = Long.parseLong(wrappedSafeCommit.get().getUserData().get(SequenceNumbers.MAX_SEQ_NO));
-        long maxUnsafeAutoIdTimestamp = Long.parseLong(wrappedSafeCommit.get().getUserData().get(Engine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID));
-        resources.add(wrappedSafeCommit);
-        for (InPlaceShardRecoveryContext recoveryContext : recoveryContexts) {
-            cancellableThreads.checkForCancel();
-            StoreRecovery.addIndices(
-                recoveryContext.getRecoveryState().getIndex(),
-                recoveryContext.getIndexShard().store().directory(),
-                sourceShard.getIndexSort(),
-                new Directory[]{sourceShard.store().directory()},
-                maxSeqNo,
-                maxUnsafeAutoIdTimestamp,
-                sourceShard.indexSettings().getIndexMetadata(),
-                recoveryContext.getIndexShard().shardId().id(),
-                true,
-                sourceShard.mapperService().hasNested()
-            );
-        }
+    protected void cleanFiles(
+        Store store,
+        Store.MetadataSnapshot sourceMetadata,
+        IntSupplier translogOps,
+        long globalCheckpoint,
+        ActionListener<Void> listener
+    ) {
+        recoveryTarget.cleanFiles(translogOps.getAsInt(), globalCheckpoint, sourceMetadata, listener);
     }
 
     private void initiateTracking() {
         cancellableThreads.checkForCancel();
         List<String> allocationIDs = new ArrayList<>();
-        recoveryContexts.forEach(context -> allocationIDs.add(context.getIndexShard().getAllocationId()));
+        recoveryContexts.forEach(context -> allocationIDs.add(context.getIndexShard()
+            .routingEntry().allocationId().getId()));
 
         RunUnderPrimaryPermit.run(
             () -> shard.initiateTrackingOfBulkShards(allocationIDs),
@@ -257,5 +262,69 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         );
 
         return sendFileStep;
+    }
+
+    @Override
+    protected OperationBatchSender createSender(
+        final long startingSeqNo,
+        final long endingSeqNo,
+        final Translog.Snapshot snapshot,
+        final long maxSeenAutoIdTimestamp,
+        final long maxSeqNoOfUpdatesOrDeletes,
+        final RetentionLeases retentionLeases,
+        final long mappingVersion,
+        StepListener<Void> sendListener
+    ) {
+        return new AllShardsOperationBatchSender(startingSeqNo, endingSeqNo, snapshot, maxSeenAutoIdTimestamp,
+            maxSeqNoOfUpdatesOrDeletes, retentionLeases, mappingVersion, sendListener);
+    }
+
+    @Override
+    protected List<SendSnapshotResult> createSnapshotResult(OperationBatchSender sender, int totalSentOps,
+                                                            TimeValue tookTime) {
+        assert sender instanceof AllShardsOperationBatchSender;
+        AllShardsOperationBatchSender allShardsSender = (AllShardsOperationBatchSender) sender;
+        List<SendSnapshotResult> sendSnapshotResults = new ArrayList<>(childShardsAllocationIds.size());
+        allShardsSender.targetLocalCheckpoints.forEach((allocationId, checkpoint) -> {
+            sendSnapshotResults.add(new SendSnapshotResult(checkpoint.get(), totalSentOps,
+                tookTime, allocationId));
+        });
+        return sendSnapshotResults;
+    }
+
+    protected class AllShardsOperationBatchSender extends OperationBatchSender {
+        private final Map<String, AtomicLong> targetLocalCheckpoints = new HashMap<>();
+
+        protected AllShardsOperationBatchSender(
+            long startingSeqNo, long endingSeqNo, Translog.Snapshot snapshot,
+            long maxSeenAutoIdTimestamp, long maxSeqNoOfUpdatesOrDeletes,
+            RetentionLeases retentionLeases, long mappingVersion, ActionListener<Void> listener) {
+            super(startingSeqNo, endingSeqNo, snapshot, maxSeenAutoIdTimestamp,
+                maxSeqNoOfUpdatesOrDeletes, retentionLeases, mappingVersion, listener);
+
+            childShardsAllocationIds.forEach(childShardsAllocationId -> {
+                targetLocalCheckpoints.put(childShardsAllocationId, new AtomicLong(SequenceNumbers.NO_OPS_PERFORMED));
+            });
+        }
+
+        @Override
+        protected void executeChunkRequest(OperationChunkRequest request, ActionListener<Void> listener) {
+            cancellableThreads.checkForCancel();
+            recoveryTarget.indexTranslogOperationsOnShards(
+                request.getOperations(),
+                snapshot.totalOperations(),
+                maxSeenAutoIdTimestamp,
+                maxSeqNoOfUpdatesOrDeletes,
+                retentionLeases,
+                mappingVersion,
+                ActionListener.delegateFailure(listener, (l, allocationCheckpoints) -> {
+                    allocationCheckpoints.forEach(allocationCheckpoint -> {
+                        targetLocalCheckpoints.get(allocationCheckpoint.allocationId).updateAndGet(curr ->
+                            SequenceNumbers.max(curr, allocationCheckpoint.checkpoint));
+                    });
+                    l.onResponse(null);
+                })
+            );
+        }
     }
 }

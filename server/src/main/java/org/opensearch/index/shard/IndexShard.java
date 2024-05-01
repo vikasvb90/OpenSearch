@@ -427,7 +427,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final String aId = shardRouting.allocationId().getId();
         final long primaryTerm;
         if (shardRouting.isSplitTarget()) {
-            primaryTerm = SequenceNumbers.UNASSIGNED_PRIMARY_TERM;
+            primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardRouting.getSplittingShardId().id());
         } else {
             primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardId.id());
         }
@@ -582,6 +582,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return recoverySettings;
     }
 
+    @Override
     public ShardId getParentShardId() {
         return parentShardId;
     }
@@ -964,7 +965,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
          * says otherwise.
          */
 
-        if (shardRouting.relocating() == false) {
+        if (shardRouting.relocating() == false && shardRouting.splitting() == false) {
             throw new IllegalIndexShardStateException(shardId, IndexShardState.STARTED, ": shard is no longer relocating " + shardRouting);
         }
 
@@ -2353,7 +2354,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         final Translog.Index index = (Translog.Index) operation;
         int computedShardId = OperationRouting.generateShardId(indexSettings().getIndexMetadata(),
-            index.id(), index.routing());
+            index.id(), index.routing(), (shardId) -> true);
         if (computedShardId != shardId().id()) {
             return new Translog.NoOp(index.seqNo(), index.primaryTerm(), "overridden index op");
         }
@@ -2443,7 +2444,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * The translog is kept but its operations won't be replayed.
      */
     public void openEngineAndSkipTranslogRecovery() throws IOException {
-        assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
+        assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER ||
+            routingEntry().recoverySource().getType() == RecoverySource.Type.IN_PLACE_SHARD_SPLIT
+            : "not a peer recovery [" + routingEntry() + "]";
         recoveryState.validateCurrentStage(RecoveryState.Stage.TRANSLOG);
         loadGlobalCheckpointToReplicationTracker();
         innerOpenEngineAndTranslog(replicationTracker);
@@ -2586,7 +2589,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * If a file-based recovery occurs, a recovery target calls this method to reset the recovery stage.
      */
     public void resetRecoveryStage() {
-        assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
+        assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER ||
+            routingEntry().recoverySource().getType() == RecoverySource.Type.IN_PLACE_SHARD_SPLIT
+            : "not a peer recovery [" + routingEntry() + "]";
         assert currentEngineReference.get() == null;
         if (state != IndexShardState.RECOVERING) {
             throw new IndexShardNotRecoveringException(shardId, state);

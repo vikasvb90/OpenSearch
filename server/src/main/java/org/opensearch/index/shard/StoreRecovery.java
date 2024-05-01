@@ -49,6 +49,7 @@ import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.RecoverySource.SnapshotRecoverySource;
 import org.opensearch.common.UUIDs;
+import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.lucene.Lucene;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.action.ActionListener;
@@ -84,6 +85,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static org.opensearch.common.unit.TimeValue.timeValueMillis;
@@ -222,11 +224,32 @@ public final class StoreRecovery {
         boolean split,
         boolean hasNested
     ) throws IOException {
+        final Directory hardLinkOrCopyTarget = new org.apache.lucene.misc.store.HardlinkCopyDirectoryWrapper(target);
+        Directory statsDirectory = new StatsDirectoryWrapper(hardLinkOrCopyTarget, indexRecoveryStats);
 
+        Tuple<Boolean, Directory> addIndexDirectoryTuple = new Tuple<>(true, statsDirectory);
+        addIndices(indexRecoveryStats, indexSort, sources, maxSeqNo, maxUnsafeAutoIdTimestamp, indexMetadata,
+            shardId, split, hasNested, addIndexDirectoryTuple,  (childShardId) ->
+                indexMetadata.primaryTerm(childShardId) == IndexMetadata.SPLIT_PARENT_TERM,
+            IndexWriterConfig.OpenMode.CREATE);
+    }
+
+    public static void addIndices(
+        final ReplicationLuceneIndex indexRecoveryStats,
+        final Sort indexSort,
+        final Directory[] sources,
+        final long maxSeqNo,
+        final long maxUnsafeAutoIdTimestamp,
+        IndexMetadata indexMetadata,
+        int shardId,
+        boolean split,
+        boolean hasNested,
+        Tuple<Boolean, Directory> addIndexDirectoryTuple,
+        Predicate<Integer> canIncludeRecoveringChildShardIds,
+        IndexWriterConfig.OpenMode openMode
+    ) throws IOException {
         assert sources.length > 0;
         final int luceneIndexCreatedVersionMajor = Lucene.readSegmentInfos(sources[0]).getIndexCreatedVersionMajor();
-
-        final Directory hardLinkOrCopyTarget = new org.apache.lucene.misc.store.HardlinkCopyDirectoryWrapper(target);
 
         IndexWriterConfig iwc = new IndexWriterConfig(null).setSoftDeletesField(Lucene.SOFT_DELETES_FIELD)
             .setCommitOnClose(false)
@@ -234,17 +257,19 @@ public final class StoreRecovery {
             // later once we stared it up otherwise we would need to wait for it here
             // we also don't specify a codec here and merges should use the engines for this index
             .setMergePolicy(NoMergePolicy.INSTANCE)
-            .setOpenMode(IndexWriterConfig.OpenMode.CREATE)
+            .setOpenMode(openMode)
             .setIndexCreatedVersionMajor(luceneIndexCreatedVersionMajor);
         if (indexSort != null) {
             iwc.setIndexSort(indexSort);
         }
 
-        try (IndexWriter writer = new IndexWriter(new StatsDirectoryWrapper(hardLinkOrCopyTarget, indexRecoveryStats), iwc)) {
-            writer.addIndexes(sources);
+        try (IndexWriter writer = new IndexWriter(addIndexDirectoryTuple.v2(), iwc)) {
+            if (addIndexDirectoryTuple.v1() == true) {
+                writer.addIndexes(sources);
+            }
             indexRecoveryStats.setFileDetailsComplete();
             if (split) {
-                writer.deleteDocuments(new ShardSplittingQuery(indexMetadata, shardId, hasNested));
+                writer.deleteDocuments(new ShardSplittingQuery(indexMetadata, shardId, hasNested, canIncludeRecoveringChildShardIds));
             }
             /*
              * We set the maximum sequence number and the local checkpoint on the target to the maximum of the maximum sequence numbers on
@@ -267,10 +292,10 @@ public final class StoreRecovery {
      *
      * @opensearch.internal
      */
-    static final class StatsDirectoryWrapper extends FilterDirectory {
+    public static final class StatsDirectoryWrapper extends FilterDirectory {
         private final ReplicationLuceneIndex index;
 
-        StatsDirectoryWrapper(Directory in, ReplicationLuceneIndex indexRecoveryStats) {
+        public StatsDirectoryWrapper(Directory in, ReplicationLuceneIndex indexRecoveryStats) {
             super(in);
             this.index = indexRecoveryStats;
         }

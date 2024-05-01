@@ -143,6 +143,7 @@ import org.opensearch.index.translog.TranslogStats;
 import org.opensearch.indices.cluster.IndicesClusterStateService;
 import org.opensearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.opensearch.indices.mapper.MapperRegistry;
+import org.opensearch.indices.recovery.StartRecoveryRequest;
 import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.indices.recovery.inplacesplit.InPlaceShardRecoveryContext;
 import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryListener;
@@ -1062,12 +1063,14 @@ public class IndicesService extends AbstractLifecycleComponent
         Consumer<ShardId> globalCheckpointSyncer,
         RetentionLeaseSyncer retentionLeaseSyncer,
         SegmentReplicationCheckpointPublisher checkpointPublisher,
-        RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory
+        RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
+        StartRecoveryRequest request
     ) throws IOException {
         ensureChangesAllowed();
         IndexService indexService = indexService(shardRoutings.get(0).index());
         assert indexService != null;
         IndexShard parentShard = indexService.getShard(parentShardId.id());
+
 
         List<InPlaceShardRecoveryContext> recoveryContexts = new ArrayList<>();
         List<ShardId> shardIds = new ArrayList<>();
@@ -1092,7 +1095,7 @@ public class IndicesService extends AbstractLifecycleComponent
         }
 
         threadPool.generic().execute(() -> inPlaceShardSplitRecoveryService.addAndStartRecovery(
-            recoveryContexts, node, parentShard, recoveryListener, shardIds));
+            recoveryContexts, node, parentShard, recoveryListener, shardIds, request));
     }
 
     @Override

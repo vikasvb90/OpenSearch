@@ -180,7 +180,8 @@ public class RecoveryFromGatewayIT extends OpenSearchIntegTestCase {
         for (final IndexMetadata indexMetadata : state.metadata().indices().values()) {
             final String index = indexMetadata.getIndex().getName();
             final long[] previous = previousTerms.get(index);
-            final long[] current = IntStream.range(0, indexMetadata.getNumberOfShards()).mapToLong(indexMetadata::primaryTerm).toArray();
+            final long[] current = IntStream.range(0, indexMetadata.getNumberOfServingShards() + indexMetadata.getNumOfNonServingShards())
+                .mapToLong(indexMetadata::primaryTerm).toArray();
             if (previous == null) {
                 result.put(index, current);
             } else {

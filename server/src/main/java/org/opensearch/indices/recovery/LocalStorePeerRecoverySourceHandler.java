@@ -29,13 +29,13 @@ import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.RunUnderPrimaryPermit;
-import org.opensearch.indices.replication.SegmentFileTransferHandler;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.Transports;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.function.BiFunction;
+import java.util.Collections;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -106,7 +106,7 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
 
         final StepListener<SendFileResult> sendFileStep = new StepListener<>();
         final StepListener<TimeValue> prepareEngineStep = new StepListener<>();
-        final StepListener<SendSnapshotResult> sendSnapshotStep = new StepListener<>();
+        final StepListener<List<SendSnapshotResult>> sendSnapshotStep = new StepListener<>();
 
         if (isSequenceNumberBasedRecovery) {
             logger.trace("performing sequence numbers based recovery. starting at [{}]", request.startingSeqNo());
@@ -209,7 +209,23 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
             final Translog.Snapshot phase2Snapshot = phase2Snapshot(startingSeqNo, PEER_RECOVERY_NAME);
             resources.add(phase2Snapshot);
             retentionLock.close();
-            executePhase2Snapshot(startingSeqNo, endingSeqNo, phase2Snapshot, sendSnapshotStep, shard);
+
+            // we have to capture the max_seen_auto_id_timestamp and the max_seq_no_of_updates to make sure that these values
+            // are at least as high as the corresponding values on the primary when any of these operations were executed on it.
+            final long maxSeenAutoIdTimestamp = shard.getMaxSeenAutoIdTimestamp();
+            final long maxSeqNoOfUpdatesOrDeletes = shard.getMaxSeqNoOfUpdatesOrDeletes();
+            final RetentionLeases retentionLeases = shard.getRetentionLeases();
+            final long mappingVersionOnPrimary = shard.indexSettings().getIndexMetadata().getMappingVersion();
+            phase2(
+                startingSeqNo,
+                endingSeqNo,
+                phase2Snapshot,
+                maxSeenAutoIdTimestamp,
+                maxSeqNoOfUpdatesOrDeletes,
+                retentionLeases,
+                mappingVersionOnPrimary,
+                sendSnapshotStep
+            );
         }, onFailure);
 
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, onFailure);
@@ -239,27 +255,6 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
             Long.MAX_VALUE,
             false,
             true
-        );
-    }
-
-    @Override
-    public void executePhase2Snapshot(long startingSeqNo, long endingSeqNo, Translog.Snapshot phase2Snapshot,
-                                      StepListener<SendSnapshotResult> sendSnapshotStep, IndexShard shard) throws IOException {
-        // we have to capture the max_seen_auto_id_timestamp and the max_seq_no_of_updates to make sure that these values
-        // are at least as high as the corresponding values on the primary when any of these operations were executed on it.
-        final long maxSeenAutoIdTimestamp = shard.getMaxSeenAutoIdTimestamp();
-        final long maxSeqNoOfUpdatesOrDeletes = shard.getMaxSeqNoOfUpdatesOrDeletes();
-        final RetentionLeases retentionLeases = shard.getRetentionLeases();
-        final long mappingVersionOnPrimary = shard.indexSettings().getIndexMetadata().getMappingVersion();
-        phase2(
-            startingSeqNo,
-            endingSeqNo,
-            phase2Snapshot,
-            maxSeenAutoIdTimestamp,
-            maxSeqNoOfUpdatesOrDeletes,
-            retentionLeases,
-            mappingVersionOnPrimary,
-            sendSnapshotStep
         );
     }
 

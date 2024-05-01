@@ -200,7 +200,7 @@ public class RolloverIT extends OpenSearchIntegTestCase {
         final ClusterState state = client().admin().cluster().prepareState().get().getState();
         final IndexMetadata oldIndex = state.metadata().index("test_index-2");
         final IndexMetadata newIndex = state.metadata().index("test_index-000003");
-        assertThat(newIndex.getNumberOfShards(), equalTo(1));
+        assertThat(newIndex.getNumberOfServingShards(), equalTo(1));
         assertThat(newIndex.getNumberOfReplicas(), equalTo(0));
         assertTrue(newIndex.getAliases().containsKey("test_alias"));
         assertTrue(newIndex.getAliases().containsKey("extra_alias"));
@@ -318,7 +318,7 @@ public class RolloverIT extends OpenSearchIntegTestCase {
 
         final ClusterState state = client().admin().cluster().prepareState().get().getState();
         final IndexMetadata newIndex = state.metadata().index("test_index-000003");
-        assertThat(newIndex.getNumberOfShards(), equalTo(3));
+        assertThat(newIndex.getNumberOfServingShards(), equalTo(3));
         assertThat(newIndex.getNumberOfReplicas(), equalTo(2));
         manageReplicaSettingForDefaultReplica(false);
         randomIndexTemplate();
@@ -348,7 +348,7 @@ public class RolloverIT extends OpenSearchIntegTestCase {
         final ClusterState state = client().admin().cluster().prepareState().get().getState();
         final IndexMetadata oldIndex = state.metadata().index("test_index-2");
         final IndexMetadata newIndex = state.metadata().index("test_index-000003");
-        assertThat(newIndex.getNumberOfShards(), equalTo(1));
+        assertThat(newIndex.getNumberOfServingShards(), equalTo(1));
         assertThat(newIndex.getNumberOfReplicas(), equalTo(0));
         assertTrue(newIndex.getAliases().containsKey("test_alias"));
         assertTrue(newIndex.getAliases().containsKey("extra_alias"));

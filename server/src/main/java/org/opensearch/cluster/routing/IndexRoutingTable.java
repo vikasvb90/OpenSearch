@@ -125,10 +125,10 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         }
 
         // check the number of shards
-        if (indexMetadata.getNumberOfShards() != shards().size()) {
+        if (indexMetadata.getNumberOfServingShards() != shards().size()) {
             Set<Integer> expected = new HashSet<>();
-            for (int i = 0; i < indexMetadata.getNumberOfShards(); i++) {
-                expected.add(i);
+            for (int shardId : indexMetadata.getServingShardIds()) {
+                expected.add(shardId);
             }
             for (IndexShardRoutingTable indexShardRoutingTable : this) {
                 expected.remove(indexShardRoutingTable.shardId().id());
@@ -556,7 +556,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
             if (!shards.isEmpty()) {
                 throw new IllegalStateException("trying to initialize an index with fresh shards, but already has shards created");
             }
-            for (int shardNumber = 0; shardNumber < indexMetadata.getNumberOfShards(); shardNumber++) {
+            for (Integer shardNumber : indexMetadata.getServingShardIds()) {
                 ShardId shardId = new ShardId(index, shardNumber);
                 final RecoverySource primaryRecoverySource;
                 if (indexMetadata.inSyncAllocationIds(shardNumber).isEmpty() == false) {

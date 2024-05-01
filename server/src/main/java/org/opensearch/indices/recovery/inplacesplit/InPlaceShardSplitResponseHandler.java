@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.action.ActionListener;
+import org.opensearch.index.shard.IndexShard;
 import org.opensearch.indices.recovery.RecoveryFailedException;
 import org.opensearch.indices.recovery.RecoveryResponse;
 import org.opensearch.indices.recovery.StartRecoveryRequest;
@@ -30,24 +31,30 @@ public class InPlaceShardSplitResponseHandler implements ActionListener<Recovery
     private final StartRecoveryRequest request;
     private final long recoveryId;
     private final List<ReplicationTimer> timers;
+    private final InPlaceShardSplitRecoveryService.OngoingRecoveries ongoingRecoveries;
+    private final IndexShard sourceShard;
 
     public InPlaceShardSplitResponseHandler(final ReplicationListener replicationListener, StartRecoveryRequest request,
-                                            final List<ReplicationTimer> timers) {
+                                            final List<ReplicationTimer> timers,
+                                            InPlaceShardSplitRecoveryService.OngoingRecoveries ongoingRecoveries,
+                                            IndexShard sourceShard) {
         this.replicationListener = replicationListener;
         this.request = request;
         this.recoveryId = request.recoveryId();
         this.timers = timers;
+        this.ongoingRecoveries = ongoingRecoveries;
+        this.sourceShard = sourceShard;
     }
 
     @Override
     public void onResponse(RecoveryResponse recoveryResponse) {
+        ongoingRecoveries.markAsDone(sourceShard);
         long maxRecoveryTime = Long.MIN_VALUE;
         for (ReplicationTimer timer : timers) {
             maxRecoveryTime = Math.max(timer.time(), maxRecoveryTime);
         }
 
         final TimeValue recoveryTime = new TimeValue(maxRecoveryTime);
-        replicationListener.onDone(null);
         if (logger.isTraceEnabled()) {
             StringBuilder sb = new StringBuilder();
             sb.append('[')
@@ -80,9 +87,9 @@ public class InPlaceShardSplitResponseHandler implements ActionListener<Recovery
     @Override
     public void onFailure(Exception e) {
         if (e instanceof AlreadyClosedException) {
-            replicationListener.onFailure(null, new RecoveryFailedException(request, "source shard is closed", e.getCause()), false);
+            ongoingRecoveries.fail(sourceShard, new RecoveryFailedException(request, "source shard is closed", e.getCause()), false);
             return;
         }
-        replicationListener.onFailure(null, new RecoveryFailedException(request, e.getCause()), true);
+        ongoingRecoveries.fail(sourceShard, new RecoveryFailedException(request, e.getCause()), true);
     }
 }

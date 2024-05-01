@@ -16,29 +16,32 @@ import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.core.xcontent.XContentParser;
 
 import java.io.IOException;
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 
 public class SplitMetadata extends AbstractDiffable<SplitMetadata>  {
     private final int parentShardId;
-    private final Set<Integer> childShardIds;
+    private final List<Integer> childShardIds;
 
     private final int routingFactor;
     private final int routingNumShards;
 
-    public SplitMetadata(int parentShardId, Set<Integer> childShardIds, int parentRoutingFactor) {
+    public SplitMetadata(int parentShardId, List<Integer> childShardIds, int parentRoutingFactor) {
         this.parentShardId = parentShardId;
-        this.childShardIds = childShardIds;
+        Collections.sort(childShardIds);
+        this.childShardIds = Collections.unmodifiableList(childShardIds);
         int numChildShards = childShardIds.size();
         this.routingNumShards = calculateNumRoutingShards(parentRoutingFactor, numChildShards);
         this.routingFactor = this.routingNumShards / numChildShards;
     }
 
-    public SplitMetadata(int parentShardId, Set<Integer> childShardIds, int routingFactor, int routingNumShards) {
+    public SplitMetadata(int parentShardId, List<Integer> childShardIds, int routingFactor, int routingNumShards) {
         this.parentShardId = parentShardId;
-        this.childShardIds = childShardIds;
+        Collections.sort(childShardIds);
+        this.childShardIds = Collections.unmodifiableList(childShardIds);
         this.routingFactor = routingFactor;
         this.routingNumShards = routingNumShards;
     }
@@ -68,8 +71,12 @@ public class SplitMetadata extends AbstractDiffable<SplitMetadata>  {
         return routingNumShards;
     }
 
-    public Set<Integer> getChildShards() {
+    public List<Integer> getChildShards() {
         return childShardIds;
+    }
+
+    public Integer getChildShardIdAtIndex(int index) {
+        return childShardIds.get(index);
     }
 
     public int getParentShardId() {
@@ -78,7 +85,7 @@ public class SplitMetadata extends AbstractDiffable<SplitMetadata>  {
 
     public SplitMetadata(StreamInput in) throws IOException {
         parentShardId = in.readVInt();
-        childShardIds = in.readSet(StreamInput::readVInt);
+        childShardIds = in.readList(StreamInput::readVInt);
         routingFactor = in.readVInt();
         routingNumShards = in.readVInt();
     }
@@ -124,17 +131,20 @@ public class SplitMetadata extends AbstractDiffable<SplitMetadata>  {
         builder.endObject();
     }
 
-    public static SplitMetadata parse(XContentParser parser, String currentFieldName) throws IOException {
-        int parentShardId = Integer.parseInt(currentFieldName);
-        Set<Integer> childShardIds = new HashSet<>();
+    public static SplitMetadata parse(XContentParser parser, String parentShardIdText) throws IOException {
+        int parentShardId = Integer.parseInt(parentShardIdText);
+        List<Integer> childShardIds = new ArrayList<>();
         int routingFactor = 0;
-        int routingShard = 0;
-        while (parser.nextToken() != XContentParser.Token.END_OBJECT) {
-            if (parser.currentToken() == XContentParser.Token.FIELD_NAME) {
-                String fieldName = parser.currentName();
-                switch (fieldName) {
+        int routingNumShards = 0;
+        XContentParser.Token token;
+        String currentFieldName = null;
+        while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
+            if (token == XContentParser.Token.FIELD_NAME) {
+                currentFieldName = parser.currentName();
+            } else if (currentFieldName != null) {
+                switch (currentFieldName) {
                     case "child_shard_ids":
-                        if (parser.nextToken() == XContentParser.Token.START_ARRAY) {
+                        if (token == XContentParser.Token.START_ARRAY) {
                             while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
                                 childShardIds.add(parser.intValue());
                             }
@@ -144,12 +154,13 @@ public class SplitMetadata extends AbstractDiffable<SplitMetadata>  {
                         routingFactor = parser.intValue();
                         break;
                     case "routing_num_shards":
-                        routingShard = parser.intValue();
+                        routingNumShards = parser.intValue();
                         break;
                 }
             }
+
         }
-        return new SplitMetadata(parentShardId, childShardIds, routingFactor, routingShard);
+        return new SplitMetadata(parentShardId, childShardIds, routingFactor, routingNumShards);
     }
 
 }

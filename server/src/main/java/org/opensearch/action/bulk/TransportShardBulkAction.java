@@ -116,9 +116,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 
 /**
  * Performs shard-level bulk (index, delete or update) operations
@@ -830,11 +832,12 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             final Engine.Result operationResult;
             boolean discardOperation = false;
             if (replica.routingEntry().isSplitTarget() == true) {
+                IndexMetadata indexMetadata = replica.indexSettings().getIndexMetadata();
                 // Discard operations belonging to a different child shard. This can happen during in-place shard
                 // split recovery where after all child shards are added to replication tracker, bulk
                 // operations are replicated to all child primaries.
-                int computedShardId = OperationRouting.generateShardId(replica.indexSettings().getIndexMetadata(),
-                    item.request().id(), item.request().routing());
+                int computedShardId = OperationRouting.generateShardId(indexMetadata, item.request().id(),
+                    item.request().routing(), (shardId) -> true);
                 discardOperation = computedShardId != replica.shardId().id();
             }
 

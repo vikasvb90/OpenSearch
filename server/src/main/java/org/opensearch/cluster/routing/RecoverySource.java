@@ -92,7 +92,7 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
             case LOCAL_SHARDS:
                 return LocalShardsRecoverySource.INSTANCE;
             case IN_PLACE_SHARD_SPLIT:
-                return new InPlaceShardSplitRecoverySource(in);
+                return InPlaceShardSplitRecoverySource.INSTANCE;
             case REMOTE_STORE:
                 return new RemoteStoreRecoverySource(in);
             default:
@@ -258,53 +258,23 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
      */
     public static class InPlaceShardSplitRecoverySource extends RecoverySource {
 
-        private final ShardId sourceShardId;
+        public static final InPlaceShardSplitRecoverySource INSTANCE = new InPlaceShardSplitRecoverySource();
 
-        public InPlaceShardSplitRecoverySource(ShardId sourceShardId) {
-            this.sourceShardId = sourceShardId;
-        }
-
-        public InPlaceShardSplitRecoverySource(StreamInput in) throws IOException {
-            sourceShardId = new ShardId(in);
-        }
+        private InPlaceShardSplitRecoverySource() {}
 
         @Override
         public Type getType() {
             return Type.IN_PLACE_SHARD_SPLIT;
         }
 
-        public ShardId getSourceShardId() {
-            return sourceShardId;
-        }
-
         @Override
         public String toString() {
-            return "local shards split recovery with source shard id [" + sourceShardId + "]";
+            return "in-place shard split";
         }
 
         @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            if (!super.equals(o)) return false;
-            InPlaceShardSplitRecoverySource that = (InPlaceShardSplitRecoverySource) o;
-            return Objects.equals(sourceShardId, that.sourceShardId);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(super.hashCode(), sourceShardId);
-        }
-
-        @Override
-        public void addAdditionalFields(XContentBuilder builder, ToXContent.Params params) throws IOException {
-            builder.field("sourceShardId", sourceShardId.id());
-            builder.field("sourceIndex", sourceShardId.getIndexName());
-        }
-
-        @Override
-        protected void writeAdditionalFields(StreamOutput out) throws IOException {
-            sourceShardId.writeTo(out);
+        public boolean expectEmptyRetentionLeases() {
+            return false;
         }
     }
 

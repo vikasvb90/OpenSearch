@@ -165,7 +165,7 @@ public class ShardRouting implements Writeable, ToXContentObject {
                     null,
                     primary,
                     ShardRoutingState.INITIALIZING,
-                    new RecoverySource.InPlaceShardSplitRecoverySource(shardId),
+                    RecoverySource.InPlaceShardSplitRecoverySource.INSTANCE,
                     unassignedInfo,
                     AllocationId.newTargetSplit(allocationId, childShardAllocIds.get(idx)),
                     expectedShardSize,
@@ -591,7 +591,7 @@ public class ShardRouting implements Writeable, ToXContentObject {
     public ShardRouting cancelSplit() {
         assert state == ShardRoutingState.SPLITTING : this;
         assert assignedToNode() : this;
-        assert relocatingNodeId != null : this;
+        assert recoveringChildShards != null && recoveringChildShards.length > 0 : this;
         return new ShardRouting(
             shardId,
             currentNodeId,

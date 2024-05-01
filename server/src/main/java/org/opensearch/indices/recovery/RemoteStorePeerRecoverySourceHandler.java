@@ -20,12 +20,13 @@ import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.RunUnderPrimaryPermit;
-import org.opensearch.indices.replication.SegmentFileTransferHandler;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.Transports;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -58,7 +59,7 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
 
         final StepListener<SendFileResult> sendFileStep = new StepListener<>();
         final StepListener<TimeValue> prepareEngineStep = new StepListener<>();
-        final StepListener<SendSnapshotResult> sendSnapshotStep = new StepListener<>();
+        final StepListener<List<SendSnapshotResult>> sendSnapshotStep = new StepListener<>();
 
         // It is always file based recovery while recovering replicas which are not relocating primary where the
         // underlying indices are backed by remote store for storing segments and translog
@@ -104,11 +105,13 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
                 logger
             );
             final long endingSeqNo = shard.seqNoStats().getMaxSeqNo();
-            executePhase2Snapshot(startingSeqNo, endingSeqNo, null, sendSnapshotStep, shard);
+            sendSnapshotStep.onResponse(Collections.singletonList(new SendSnapshotResult(endingSeqNo,
+                0, TimeValue.ZERO, request.targetAllocationId())));
         }, onFailure);
 
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, onFailure);
     }
+
 
     @Override
     public int countNumberOfHistoryOperations(long startingSeqNo) throws IOException {
@@ -130,9 +133,4 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
         return true;
     }
 
-    @Override
-    public void executePhase2Snapshot(long startingSeqNo, long endingSeqNo, Translog.Snapshot phase2Snapshot,
-                                      StepListener<SendSnapshotResult> sendSnapshotStep, IndexShard shard) {
-        sendSnapshotStep.onResponse(new SendSnapshotResult(endingSeqNo, 0, TimeValue.ZERO));
-    }
 }

@@ -425,6 +425,11 @@ public abstract class AbstractIndicesClusterStateServiceTestCase extends OpenSea
         }
 
         @Override
+        public ShardId getParentShardId() {
+            return null;
+        }
+
+        @Override
         public IndexShardState state() {
             return null;
         }

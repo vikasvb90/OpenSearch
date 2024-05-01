@@ -46,6 +46,7 @@ import org.opensearch.common.util.set.Sets;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -124,7 +125,12 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     @Override
     public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
         removeAllocationId(removedSplitSource);
-
+        Updates updates = changes(removedSplitSource.shardId());
+        for (ShardRouting childShard : removedSplitSource.getRecoveringChildShards()) {
+            updates.addedChildShards.put(childShard.shardId(), childShard);
+            Updates childUpdates = changes(childShard.shardId());
+            childUpdates.isNewChildShard = true;
+        }
     }
 
     /**
@@ -149,8 +155,15 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             for (Map.Entry<ShardId, Updates> shardEntry : indexChanges.getValue()) {
                 ShardId shardId = shardEntry.getKey();
                 Updates updates = shardEntry.getValue();
-                indexMetadataBuilder = updateInSyncAllocations(newRoutingTable, oldIndexMetadata, indexMetadataBuilder, shardId, updates);
-                indexMetadataBuilder = updatePrimaryTerm(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                // Avoid updating primary term and in-sync allocations for parent and child shards here.
+                if (updates.isNewChildShard == false && updates.addedChildShards.isEmpty() == true) {
+                    indexMetadataBuilder = updateInSyncAllocations(newRoutingTable, oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                    indexMetadataBuilder = updatePrimaryTerm(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                }
+                // Invoke metadata update of in-place split only for the parent shard.
+                if (updates.addedChildShards.isEmpty() == false) {
+                    indexMetadataBuilder = updateMetadataInPlaceSplit(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                }
             }
 
             if (indexMetadataBuilder != null) {
@@ -185,7 +198,6 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 + updates.removedAllocationIds;
 
         Set<String> oldInSyncAllocationIds = oldIndexMetadata.inSyncAllocationIds(shardId.id());
-
         // check if we have been force-initializing an empty primary or a stale primary
         if (updates.initializedPrimary != null
             && oldInSyncAllocationIds.isEmpty() == false
@@ -354,6 +366,32 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     }
 
     /**
+     * Adds primary terms of child shards and updates number of shards.
+     */
+    private IndexMetadata.Builder updateMetadataInPlaceSplit(
+        IndexMetadata oldIndexMetadata,
+        IndexMetadata.Builder indexMetadataBuilder,
+        ShardId parentShardId,
+        Updates updates
+    ) {
+        if (updates.addedChildShards.isEmpty()) {
+            return indexMetadataBuilder;
+        }
+
+        if (indexMetadataBuilder == null) {
+            indexMetadataBuilder = IndexMetadata.builder(oldIndexMetadata);
+        }
+
+        Map<Integer, String> shardIdToAllocationId = new HashMap<>();
+        updates.addedChildShards.forEach((shardId, shardRouting) -> {
+            shardIdToAllocationId.put(shardId.id(), shardRouting.allocationId().getId());
+        });
+
+        indexMetadataBuilder.updateMetadataForNewChildShards(shardIdToAllocationId, parentShardId.id());
+        return indexMetadataBuilder;
+    }
+
+    /**
      * Helper method that creates update entry for the given shard id if such an entry does not exist yet.
      */
     private Updates changes(ShardId shardId) {
@@ -378,6 +416,10 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     private static class Updates {
         private boolean increaseTerm; // whether primary term should be increased
+        // Child shard ids for this shard which is now split. To be added in in-sync, assign primary term of this shard
+        // and update number of current shards.
+        private Map<ShardId, ShardRouting> addedChildShards = new HashMap<>();
+        private boolean isNewChildShard;
         private Set<String> addedAllocationIds = new HashSet<>(); // allocation ids that should be added to the in-sync set
         private Set<String> removedAllocationIds = new HashSet<>(); // allocation ids that should be removed from the in-sync set
         private ShardRouting initializedPrimary = null; // primary that was initialized from unassigned

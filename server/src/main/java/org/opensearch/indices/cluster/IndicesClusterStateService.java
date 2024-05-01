@@ -45,6 +45,7 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.routing.IndexShardRoutingTable;
+import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.RecoverySource.Type;
 import org.opensearch.cluster.routing.RoutingNode;
 import org.opensearch.cluster.routing.RoutingTable;
@@ -79,7 +80,10 @@ import org.opensearch.index.shard.IndexShardState;
 import org.opensearch.index.shard.PrimaryReplicaSyncer;
 import org.opensearch.index.shard.PrimaryReplicaSyncer.ResyncTask;
 import org.opensearch.index.shard.ShardNotFoundException;
+import org.opensearch.index.store.Store;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.recovery.RecoveryFailedException;
+import org.opensearch.indices.recovery.StartRecoveryRequest;
 import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryListener;
 import org.opensearch.indices.recovery.PeerRecoverySourceService;
@@ -89,6 +93,7 @@ import org.opensearch.indices.recovery.RecoveryState;
 import org.opensearch.indices.replication.SegmentReplicationSourceService;
 import org.opensearch.indices.replication.SegmentReplicationTargetService;
 import org.opensearch.indices.replication.checkpoint.SegmentReplicationCheckpointPublisher;
+import org.opensearch.indices.replication.common.ReplicationListener;
 import org.opensearch.indices.replication.common.ReplicationState;
 import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.search.SearchService;
@@ -495,6 +500,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         // remove shards based on routing nodes (no deletion of data)
         RoutingNode localRoutingNode = state.getRoutingNodes().node(localNodeId);
         for (AllocatedIndex<? extends Shard> indexService : indicesService) {
+            IndexMetadata indexMetadata = state.metadata().index(indexService.index());
+            Map<ShardId, List<ShardId>> activeChildRoutings = new HashMap<>();
             for (Shard shard : indexService) {
                 ShardRouting currentRoutingEntry = shard.routingEntry();
                 ShardId shardId = currentRoutingEntry.shardId();
@@ -524,10 +531,14 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     // and assigning an initializing primary to this node
                     logger.debug("{} removing shard (not active, current {}, new {})", shardId, currentRoutingEntry, newShardRouting);
                     indexService.removeShard(shardId.id(), "removing shard (stale copy)");
+                } else if (localRoutingNode.getByShardId(shard.getParentShardId()) != null && shard.state() == IndexShardState.STARTED){
+                    activeChildRoutings.computeIfAbsent(newShardRouting.shardId(), k -> new ArrayList<>());
                 }
             }
         }
     }
+
+
 
     private void createIndices(final ClusterState state) {
         // we only create indices for shards that are allocated
@@ -657,9 +668,9 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                 assert indexService != null : "index " + shardId.getIndex() + " should have been created by createIndices";
                 Shard shard = indexService.getShardOrNull(shardId.id());
                 if (shard == null) {
-                    Shard sourceShard = indexService.getShardOrNull(shardRouting.getSplittingShardId().id());
-                    assert sourceShard!= null : "Source shard not found for shard id " + shardRouting.getSplittingShardId();
                     if (shardRouting.isSplitTarget()) {
+                        Shard sourceShard = indexService.getShardOrNull(shardRouting.getSplittingShardId().id());
+                        assert sourceShard!= null : "Source shard not found for shard id " + shardRouting.getSplittingShardId();
                         childShardRoutings.computeIfAbsent(shardRouting.getSplittingShardId(), k ->
                             new Tuple<>(sourceShard.routingEntry(), new ArrayList<>()));
                         childShardRoutings.get(shardRouting.getSplittingShardId()).v2().add(shardRouting);
@@ -674,32 +685,52 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         }
 
         if (!childShardRoutings.isEmpty()) {
-            createChildShardsForSplit(nodes, childShardRoutings);
+            createChildShardsForSplit(nodes, childShardRoutings, state);
         }
 
     }
 
-    private void createChildShardsForSplit(DiscoveryNodes nodes, Map<ShardId, Tuple<ShardRouting, List<ShardRouting>>> childShardRoutings) {
+    private void createChildShardsForSplit(DiscoveryNodes nodes, Map<ShardId, Tuple<ShardRouting, List<ShardRouting>>> childShardRoutings,
+                                           ClusterState state) {
         // Before we begin creating child shards, previous iteration of shard routing made sure that source shard
         // routing is updated.
         childShardRoutings.forEach((parentShardId, routings) -> {
+            final long primaryTerm = state.metadata().index(parentShardId.getIndex()).primaryTerm(parentShardId.id());
+            InPlaceShardSplitRecoveryListener replicationListener = new InPlaceShardSplitRecoveryListener(routings.v2(),
+                this, routings.v1(), primaryTerm);
+
+            // targetAllocationId can't be set to null since it is not read as optional field from stream
+            StartRecoveryRequest request = new StartRecoveryRequest(
+                parentShardId,
+                "N/A",
+                nodes.getLocalNode(),
+                nodes.getLocalNode(),
+                Store.MetadataSnapshot.EMPTY,
+                false,
+                -1,
+                SequenceNumbers.UNASSIGNED_SEQ_NO,
+                new HashSet<>(routings.v1().allocationId().getSplitChildAllocationIds())
+            );
+
             try {
                 logger.debug("creating child shards from parent shard [{}]", parentShardId);
                 indicesService.createChildShardsForSplit(
                     routings.v2(),
                     parentShardId,
                     inPlaceShardSplitRecoveryService,
-                    new InPlaceShardSplitRecoveryListener(routings.v2(), this, routings.v1()),
+                    replicationListener,
                     failedShardHandler,
                     nodes.getLocalNode(),
                     globalCheckpointSyncer,
                     retentionLeaseSyncer,
                     checkpointPublisher,
-                    remoteStoreStatsTrackerFactory
+                    remoteStoreStatsTrackerFactory,
+                    request
                 );
             } catch (Exception e) {
-                e.printStackTrace();
-                //TODO: failAndRemoveShard all shards
+                routings.v2().forEach(routing ->
+                    failAndRemoveShard(routing, false, "failed to create child shards", e, state));
+                replicationListener.onFailure(null, new RecoveryFailedException(request, e.getCause()), true);
             }
         });
     }
@@ -717,12 +748,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         }
 
         try {
-            final long primaryTerm;
-            if (shardRouting.isSplitTarget()) {
-                primaryTerm = SequenceNumbers.UNASSIGNED_PRIMARY_TERM;
-            } else {
-                primaryTerm = state.metadata().index(shardRouting.index()).primaryTerm(shardRouting.id());
-            }
+            final long primaryTerm = state.metadata().index(shardRouting.index()).primaryTerm(shardRouting.id());
             logger.debug("{} creating shard with primary term [{}]", shardRouting.shardId(), primaryTerm);
             indicesService.createShard(
                 shardRouting,
@@ -858,8 +884,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         shardStateAction.shardStarted(shardRouting, primaryTerm, "after " + recoveryState.getRecoverySource(), SHARD_STATE_ACTION_LISTENER);
     }
 
-    public void handleChildRecoveriesDone(Collection<ShardRouting> shardRoutings, ShardRouting sourceShard) {
-        // shardStateAction.shardStarted(shardRoutings, primaryTerm, "after " + recoverySource, SHARD_STATE_ACTION_LISTENER);
+    public void handleChildRecoveriesDone(ShardRouting sourceShardRouting, long primaryTerm, RecoverySource recoverySource) {
+         shardStateAction.childShardsStarted(sourceShardRouting, primaryTerm, "after " + recoverySource, SHARD_STATE_ACTION_LISTENER);
     }
 
     private void failAndRemoveShard(
@@ -987,6 +1013,11 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
             Set<String> inSyncAllocationIds,
             IndexShardRoutingTable routingTable
         ) throws IOException;
+
+        /**
+         * Returns parent shard id if it is a child shard or otherwise null.
+         */
+        ShardId getParentShardId();
     }
 
     /**
@@ -1116,6 +1147,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
          * @param recoveryListener       a callback when recovery changes state (finishes or fails)
          * @param onShardFailure         a callback when this shard fails
          * @param node                   node where in-place recovery is performed.
+         * @param request                Start recovery request of in-place shard split.
          * @throws IOException if an I/O exception occurs when creating the shard
          */
         void createChildShardsForSplit(
@@ -1128,7 +1160,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
             Consumer<ShardId> globalCheckpointSyncer,
             RetentionLeaseSyncer retentionLeaseSyncer,
             SegmentReplicationCheckpointPublisher checkpointPublisher,
-            RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory
+            RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
+            StartRecoveryRequest request
         ) throws IOException;
 
         /**
