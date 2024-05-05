@@ -640,7 +640,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 if (indexShard != null) {
                     try {
                         // only flush if we are closed (closed index or shutdown) and if we are not deleted
-                        final boolean flushEngine = deleted.get() == false && closed.get();
+                        final boolean flushEngine = deleted.get() == false && closed.get() &&
+                            indexShard.routingEntry().isSplitTarget() == false;
                         indexShard.close(reason, flushEngine, deleted.get());
                     } catch (Exception e) {
                         logger.debug(() -> new ParameterizedMessage("[{}] failed to close index shard", shardId), e);

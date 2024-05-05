@@ -543,10 +543,11 @@ public class ShardStateActionTests extends OpenSearchTestCase {
         final long primaryTerm = randomIntBetween(0, 100);
         final String message = randomRealisticUnicodeOfCodepointLengthBetween(10, 100);
         final Exception failure = randomBoolean() ? null : getSimulatedFailure();
+        final Boolean childShardFailedEvent = randomBoolean() ? null : true;
         final boolean markAsStale = randomBoolean();
 
         final Version version = randomFrom(randomCompatibleVersion(random(), Version.CURRENT));
-        final FailedShardEntry failedShardEntry = new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale);
+        final FailedShardEntry failedShardEntry = new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale, childShardFailedEvent);
         try (StreamInput in = serialize(failedShardEntry, version).streamInput()) {
             in.setVersion(version);
             final FailedShardEntry deserialized = new FailedShardEntry(in);

@@ -100,16 +100,26 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
         this.storeAcquirer.set(storeAcquirer);
     }
 
-    public void cleanShardDirectories() throws IOException {
+    public void cleanShardDirectoriesForTargets() throws IOException {
         for (InPlaceShardRecoveryContext context : recoveryContexts) {
             cancellableThreads.checkForCancel();
-            try(Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(context.getIndexShard().store())) {
-                Store store = context.getIndexShard().store();
-                Directory storeDirectory = store.directory();
-                for (String file : storeDirectory.listAll()) {
-                    storeDirectory.deleteFile(file);
+            IndexShard childShard = context.getIndexShard();
+            try(Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(childShard.store())) {
+                cleanUpStoreDirectory(childShard.store());
+            }
+            Store remoteStore = childShard.remoteStore();
+            if (remoteStore != null) {
+                try(Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(remoteStore)) {
+                    cleanUpStoreDirectory(remoteStore);
                 }
             }
+        }
+    }
+
+    public void cleanUpStoreDirectory(Store store) throws IOException {
+        Directory storeDirectory = store.directory();
+        for (String file : storeDirectory.listAll()) {
+            storeDirectory.deleteFile(file);
         }
     }
 

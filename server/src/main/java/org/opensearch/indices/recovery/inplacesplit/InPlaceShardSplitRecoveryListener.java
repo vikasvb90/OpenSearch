@@ -56,7 +56,7 @@ public class InPlaceShardSplitRecoveryListener implements ReplicationListener {
      */
     @Override
     public void onFailure(ReplicationState state, ReplicationFailedException e, boolean sendShardFailure) {
-        indicesClusterStateService.handleRecoveryFailures(recoveringShards.values(), e);
+        indicesClusterStateService.handleChildRecoveriesFailure(sourceShard, sendShardFailure, e);
     }
 
 }

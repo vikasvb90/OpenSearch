@@ -46,7 +46,6 @@ import org.opensearch.common.util.set.Sets;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -107,7 +106,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     @Override
     public void shardFailed(ShardRouting failedShard, UnassignedInfo unassignedInfo) {
-        if (failedShard.active() && failedShard.primary()) {
+        if (failedShard.active() && failedShard.primary() && failedShard.isSplitTarget() == false) {
             Updates updates = changes(failedShard.shardId());
             if (updates.firstFailedPrimary == null) {
                 // more than one primary can be failed (because of batching, primary can be failed, replica promoted and then failed...)
@@ -131,6 +130,12 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             Updates childUpdates = changes(childShard.shardId());
             childUpdates.isNewChildShard = true;
         }
+    }
+
+    @Override
+    public void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata) {
+        Updates updates = changes(splitSource.shardId());
+        updates.splitFailed = true;
     }
 
     /**
@@ -162,7 +167,10 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 }
                 // Invoke metadata update of in-place split only for the parent shard.
                 if (updates.addedChildShards.isEmpty() == false) {
-                    indexMetadataBuilder = updateMetadataInPlaceSplit(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                    indexMetadataBuilder = updateMetadataForInPlaceSplitCompleted(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                }
+                if (updates.splitFailed) {
+                    updateMetadataForInPlaceSplitFailed(oldIndexMetadata, indexMetadataBuilder, shardId);
                 }
             }
 
@@ -368,7 +376,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     /**
      * Adds primary terms of child shards and updates number of shards.
      */
-    private IndexMetadata.Builder updateMetadataInPlaceSplit(
+    private IndexMetadata.Builder updateMetadataForInPlaceSplitCompleted(
         IndexMetadata oldIndexMetadata,
         IndexMetadata.Builder indexMetadataBuilder,
         ShardId parentShardId,
@@ -389,6 +397,18 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
         indexMetadataBuilder.updateMetadataForNewChildShards(shardIdToAllocationId, parentShardId.id());
         return indexMetadataBuilder;
+    }
+
+    /**
+     * Removes parent shard split metadata from index metadata parent shards.
+     */
+    private IndexMetadata.Builder updateMetadataForInPlaceSplitFailed(IndexMetadata oldIndexMetadata,
+                                                                         IndexMetadata.Builder indexMetadataBuilder,
+                                                                         ShardId parentShardId) {
+        if (indexMetadataBuilder == null) {
+            indexMetadataBuilder = IndexMetadata.builder(oldIndexMetadata);
+        }
+        return indexMetadataBuilder.removeParentToChildShardMetadata(parentShardId.id());
     }
 
     /**
@@ -420,6 +440,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         // and update number of current shards.
         private Map<ShardId, ShardRouting> addedChildShards = new HashMap<>();
         private boolean isNewChildShard;
+        private boolean splitFailed;
         private Set<String> addedAllocationIds = new HashSet<>(); // allocation ids that should be added to the in-sync set
         private Set<String> removedAllocationIds = new HashSet<>(); // allocation ids that should be removed from the in-sync set
         private ShardRouting initializedPrimary = null; // primary that was initialized from unassigned

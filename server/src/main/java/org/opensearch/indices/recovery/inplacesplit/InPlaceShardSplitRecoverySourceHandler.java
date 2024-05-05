@@ -8,6 +8,7 @@
 
 package org.opensearch.indices.recovery.inplacesplit;
 
+import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.index.IndexCommit;
 import org.opensearch.action.StepListener;
 import org.opensearch.common.concurrent.GatedCloseable;
@@ -40,7 +41,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.IntSupplier;
 
 public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandler {
@@ -93,8 +93,28 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         return delegatingRecoveryHandler.getResources();
     }
 
+    private Consumer<Exception> consumerForCleanupOnFailure(Consumer<Exception> onFailure) {
+        Consumer<Exception> cleanUpConsumer = (e) -> {
+            try {
+                cleanupChildShardDirectories();
+            } catch (Exception inner) {
+                inner.addSuppressed(e);
+                logger.warn(
+                    () -> new ParameterizedMessage(
+                        "[{}] failed to cleanup child shard directories failure ([{}])",
+                        sourceShard.shardId(),
+                        e.getMessage()
+                    ),
+                    inner
+                );
+            }
+        };
+        return cleanUpConsumer.andThen(onFailure);
+    }
+
     @Override
     protected void innerRecoveryToTarget(ActionListener<RecoveryResponse> listener, Consumer<Exception> onFailure) throws IOException {
+        onFailure = consumerForCleanupOnFailure(onFailure);
         // Clean up shard directories if previous shard closures failed.
         cleanupChildShardDirectories();
 
@@ -205,8 +225,8 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         shard.relocated(childShardsAllocationIds, recoveryTarget::handoffPrimaryContext, forceSegRepRunnable);
     }
 
-    private void cleanupChildShardDirectories() throws IOException {
-        recoveryTarget.cleanShardDirectories();
+    public void cleanupChildShardDirectories() throws IOException {
+        recoveryTarget.cleanShardDirectoriesForTargets();
     }
 
     protected void sendFiles(Store store, StoreFileMetadata[] files, IntSupplier translogOps,

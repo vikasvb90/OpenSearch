@@ -257,7 +257,7 @@ public class ShardStateAction {
     ) {
         assert primaryTerm > 0L : "primary term should be strictly positive";
         remoteFailedShardsDeduplicator.executeOnce(
-            new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale),
+            new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale, null),
             listener,
             (req, reqListener) -> sendShardAction(SHARD_FAILED_ACTION_NAME, clusterService.state(), req, reqListener)
         );
@@ -289,13 +289,28 @@ public class ShardStateAction {
         ActionListener<Void> listener,
         final ClusterState currentState
     ) {
+        localShardFailed(shardRouting, message, failure, listener, currentState, null);
+    }
+
+    /**
+     * Send a shard failed request to the cluster-manager node to update the cluster state when a shard on the local node failed.
+     */
+    public void localShardFailed(
+        final ShardRouting shardRouting,
+        final String message,
+        @Nullable final Exception failure,
+        ActionListener<Void> listener,
+        final ClusterState currentState,
+        final Boolean childShardsFailedEvent
+    ) {
         FailedShardEntry shardEntry = new FailedShardEntry(
             shardRouting.shardId(),
             shardRouting.allocationId().getId(),
             0L,
             message,
             failure,
-            true
+            true,
+            childShardsFailedEvent
         );
         sendShardAction(SHARD_FAILED_ACTION_NAME, currentState, shardEntry, listener);
     }
@@ -452,6 +467,7 @@ public class ShardStateAction {
             List<FailedShardEntry> tasksToBeApplied = new ArrayList<>();
             List<FailedShard> failedShardsToBeApplied = new ArrayList<>();
             List<StaleShard> staleShardsToBeApplied = new ArrayList<>();
+            int numberOfFailedChildShards = 0;
 
             for (FailedShardEntry task : tasks) {
                 IndexMetadata indexMetadata = currentState.metadata().index(task.shardId.getIndex());
@@ -514,6 +530,13 @@ public class ShardStateAction {
                             logger.debug("{} ignoring shard failed task [{}] (shard does not exist anymore)", task.shardId, task);
                             batchResultBuilder.success(task);
                         }
+                    } else if (Boolean.TRUE.equals(task.childShardsFailedEvent)) {
+                        logger.debug("{} failing child shards {} (shard failed task: [{}])", task.shardId, matched, task);
+                        tasksToBeApplied.add(task);
+                        for (ShardRouting childShard : matched.getRecoveringChildShards()) {
+                            numberOfFailedChildShards++;
+                            failedShardsToBeApplied.add(new FailedShard(childShard, task.message, task.failure, task.markAsStale));
+                        }
                     } else {
                         // failing a shard also possibly marks it as stale (see IndexMetadataUpdater)
                         logger.debug("{} failing shard {} (shard failed task: [{}])", task.shardId, matched, task);
@@ -522,7 +545,8 @@ public class ShardStateAction {
                     }
                 }
             }
-            assert tasksToBeApplied.size() == failedShardsToBeApplied.size() + staleShardsToBeApplied.size();
+            assert tasksToBeApplied.size() == failedShardsToBeApplied.size() + staleShardsToBeApplied.size()
+                - (numberOfFailedChildShards > 0 ? numberOfFailedChildShards - 1 : 0);
 
             ClusterState maybeUpdatedState = currentState;
             try {
@@ -578,6 +602,10 @@ public class ShardStateAction {
         final Exception failure;
         final boolean markAsStale;
 
+        @Nullable
+        final Boolean childShardsFailedEvent;
+
+
         FailedShardEntry(StreamInput in) throws IOException {
             super(in);
             shardId = new ShardId(in);
@@ -586,6 +614,11 @@ public class ShardStateAction {
             message = in.readString();
             failure = in.readException();
             markAsStale = in.readBoolean();
+            if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+                childShardsFailedEvent = in.readOptionalBoolean();
+            } else {
+                childShardsFailedEvent = null;
+            }
         }
 
         public FailedShardEntry(
@@ -594,7 +627,8 @@ public class ShardStateAction {
             long primaryTerm,
             String message,
             @Nullable Exception failure,
-            boolean markAsStale
+            boolean markAsStale,
+            Boolean childShardsFailedEvent
         ) {
             this.shardId = shardId;
             this.allocationId = allocationId;
@@ -602,6 +636,7 @@ public class ShardStateAction {
             this.message = message;
             this.failure = failure;
             this.markAsStale = markAsStale;
+            this.childShardsFailedEvent = childShardsFailedEvent;
         }
 
         public ShardId getShardId() {
@@ -621,6 +656,16 @@ public class ShardStateAction {
             out.writeString(message);
             out.writeException(failure);
             out.writeBoolean(markAsStale);
+            if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+                out.writeOptionalBoolean(childShardsFailedEvent);
+            } else {
+                if (childShardsFailedEvent != null) {
+                    // In-progress shard split is not allowed in a mixed cluster where node(s) with an unsupported split
+                    // version is present. Hence, we also don't want to allow a node with an unsupported version
+                    // to get this state while shard split is in-progress.
+                    throw new IllegalStateException("In-place split not allowed on older versions.");
+                }
+            }
         }
 
         @Override
@@ -634,6 +679,7 @@ public class ShardStateAction {
                 components.add("failure [" + ExceptionsHelper.detailedMessage(failure) + "]");
             }
             components.add("markAsStale [" + markAsStale + "]");
+            components.add("childShardsFailedEvent [" + Boolean.TRUE.equals(childShardsFailedEvent) + "]");
             return String.join(", ", components);
         }
 
@@ -646,12 +692,13 @@ public class ShardStateAction {
             return Objects.equals(this.shardId, that.shardId)
                 && Objects.equals(this.allocationId, that.allocationId)
                 && primaryTerm == that.primaryTerm
-                && markAsStale == that.markAsStale;
+                && markAsStale == that.markAsStale
+                && childShardsFailedEvent == that.childShardsFailedEvent;
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(shardId, allocationId, primaryTerm, markAsStale);
+            return Objects.hash(shardId, allocationId, primaryTerm, markAsStale, childShardsFailedEvent);
         }
     }
 

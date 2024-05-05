@@ -1071,7 +1071,6 @@ public class IndicesService extends AbstractLifecycleComponent
         assert indexService != null;
         IndexShard parentShard = indexService.getShard(parentShardId.id());
 
-
         List<InPlaceShardRecoveryContext> recoveryContexts = new ArrayList<>();
         List<ShardId> shardIds = new ArrayList<>();
         for (ShardRouting shardRouting : shardRoutings) {

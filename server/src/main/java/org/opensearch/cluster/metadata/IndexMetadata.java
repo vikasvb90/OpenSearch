@@ -1601,6 +1601,11 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return this;
         }
 
+        public Builder removeParentToChildShardMetadata(Integer parentShardId) {
+            parentToChildShardsMetadata.remove(parentShardId);
+            return this;
+        }
+
         public long version() {
             return this.version;
         }

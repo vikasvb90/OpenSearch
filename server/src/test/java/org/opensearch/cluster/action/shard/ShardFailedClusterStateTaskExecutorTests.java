@@ -180,7 +180,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     randomIntBetween(1, (int) primaryTerm - 1),
                     failingTask.message,
                     failingTask.failure,
-                    randomBoolean()
+                    randomBoolean(),
+                    failingTask.childShardsFailedEvent
                 )
             );
         }
@@ -219,7 +220,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                 primaryTerm,
                 "dummy",
                 null,
-                false
+                false,
+                null
             );
             ClusterState appliedState = executor.execute(clusterState, Collections.singletonList(failShardOnly)).resultingState;
             Set<String> newInSync = appliedState.metadata().index(INDEX).inSyncAllocationIds(0);
@@ -233,7 +235,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                 primaryTerm,
                 "dummy",
                 null,
-                true
+                true,
+                null
             );
             ClusterState appliedState = executor.execute(clusterState, Collections.singletonList(failAndMarkAsStale)).resultingState;
             Set<String> newInSync = appliedState.metadata().index(INDEX).inSyncAllocationIds(0);
@@ -293,7 +296,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     0L,
                     existingShard.message,
                     existingShard.failure,
-                    randomBoolean()
+                    randomBoolean(),
+                    existingShard.childShardsFailedEvent
                 )
             );
         }
@@ -307,7 +311,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     0L,
                     reason,
                     new CorruptIndexException("simulated", nonExistentIndexUUID),
-                    randomBoolean()
+                    randomBoolean(),
+                    null
                 )
             )
         );
@@ -397,7 +402,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     randomBoolean() ? 0L : currentState.metadata().getIndexSafe(shard.index()).primaryTerm(shard.id()),
                     message,
                     new CorruptIndexException("simulated", indexUUID),
-                    randomBoolean()
+                    randomBoolean(),
+                    null
                 )
             )
             .collect(Collectors.toList());

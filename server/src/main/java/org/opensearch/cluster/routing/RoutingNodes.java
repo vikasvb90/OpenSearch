@@ -798,8 +798,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 assert childShard.isSplitTargetOf(failedShard);
                 logger.trace("{} is removed due to the failure/cancellation of the source shard", childShard);
                 remove(childShard);
-                routingChangesObserver.shardFailed(childShard, unassignedInfo);
             }
+            routingChangesObserver.splitFailed(failedShard, indexMetadata);
         }
 
         // fail actual shard
@@ -818,22 +818,21 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                     failedShard.getSplittingShardId(),
                     failedShard.allocationId().getParentAllocationId()
                 );
-                assert sourceShard.isSplitSourceOf(failedShard);
-                logger.trace(
-                    "{}, resolved source to [{}]. canceling split ... ({})",
-                    failedShard.shardId(),
-                    sourceShard,
-                    unassignedInfo.shortSummary()
-                );
-                cancelSplit(sourceShard);
-                // If recovery of any child shard fails then we fail all child shards. It is right to fail all
-                // child shards here because this ensures entire recovery cleanup i.e. relocation cancellation
-                // of source shard and failing all child shards. Also, it aligns with primary failure approach where
-                // failing primary also ensures failing all replicas and AllocationService anyway ensures that we
-                // don't get missing failed shard routings here.
-                for (ShardRouting childShard : sourceShard.getRecoveringChildShards()) {
-                    remove(childShard);
-                    routingChangesObserver.shardFailed(childShard, unassignedInfo);
+                // If source shard is not splitting then we must have failed it in previous iteration of child shard.
+                if (sourceShard.splitting() == true) {
+                    assert sourceShard.isSplitSourceOf(failedShard);
+                    logger.trace(
+                        "{}, resolved source to [{}]. canceling split ... ({})",
+                        failedShard.shardId(),
+                        sourceShard,
+                        unassignedInfo.shortSummary()
+                    );
+                    cancelSplit(sourceShard);
+
+                    for (ShardRouting childShard : sourceShard.getRecoveringChildShards()) {
+                        remove(childShard);
+                    }
+                    routingChangesObserver.splitFailed(sourceShard, indexMetadata);
                 }
             } else {
                 // The shard is a target or child of a relocating shard. In that case we only need to remove the target/child shard(s) and

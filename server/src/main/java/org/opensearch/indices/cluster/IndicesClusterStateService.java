@@ -93,7 +93,6 @@ import org.opensearch.indices.recovery.RecoveryState;
 import org.opensearch.indices.replication.SegmentReplicationSourceService;
 import org.opensearch.indices.replication.SegmentReplicationTargetService;
 import org.opensearch.indices.replication.checkpoint.SegmentReplicationCheckpointPublisher;
-import org.opensearch.indices.replication.common.ReplicationListener;
 import org.opensearch.indices.replication.common.ReplicationState;
 import org.opensearch.repositories.RepositoriesService;
 import org.opensearch.search.SearchService;
@@ -728,9 +727,11 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     request
                 );
             } catch (Exception e) {
-                routings.v2().forEach(routing ->
-                    failAndRemoveShard(routing, false, "failed to create child shards", e, state));
-                replicationListener.onFailure(null, new RecoveryFailedException(request, e.getCause()), true);
+                threadPool.generic().execute(() -> {
+                    routings.v2().forEach(routing ->
+                        failAndRemoveShard(routing, false, "failed to create child shards", e, state));
+                    replicationListener.onFailure(null, new RecoveryFailedException(request, e.getCause()), true);
+                });
             }
         });
     }
@@ -875,8 +876,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         failAndRemoveShard(shardRouting, sendShardFailure, "failed recovery", failure, clusterService.state());
     }
 
-    public synchronized void handleRecoveryFailures(Collection<ShardRouting> shardRouting, Exception failure) {
-//        failAndRemoveShard(shardRouting, "failed recovery", failure, clusterService.state());
+    public synchronized void handleChildRecoveriesFailure(ShardRouting sourceShardRouting, boolean sendShardFailure, Exception failure) {
+        failAndRemoveChildShards(sourceShardRouting, sendShardFailure, "failed child shards recovery", failure, clusterService.state());
     }
 
     public void handleRecoveryDone(ReplicationState state, ShardRouting shardRouting, long primaryTerm) {
@@ -894,6 +895,32 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         String message,
         @Nullable Exception failure,
         ClusterState state
+    ) {
+        onlyRemoveShard(shardRouting, message, failure);
+        if (sendShardFailure) {
+            sendFailShard(shardRouting, message, failure, state);
+        }
+    }
+
+    private void failAndRemoveChildShards(
+        ShardRouting shardRouting,
+        boolean sendShardFailure,
+        String message,
+        @Nullable Exception failure,
+        ClusterState state
+    ) {
+        for (ShardRouting childShard : shardRouting.getRecoveringChildShards()) {
+            onlyRemoveShard(childShard, message, failure);
+        }
+        if (sendShardFailure) {
+            sendFailChildShards(shardRouting, message, failure, state);
+        }
+    }
+
+    private void onlyRemoveShard(
+        ShardRouting shardRouting,
+        String message,
+        @Nullable Exception failure
     ) {
         try {
             AllocatedIndex<? extends Shard> indexService = indicesService.indexService(shardRouting.shardId().getIndex());
@@ -917,9 +944,6 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                 inner
             );
         }
-        if (sendShardFailure) {
-            sendFailShard(shardRouting, message, failure, state);
-        }
     }
 
     private void sendFailShard(ShardRouting shardRouting, String message, @Nullable Exception failure, ClusterState state) {
@@ -930,6 +954,30 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
             );
             failedShardsCache.put(shardRouting.shardId(), shardRouting);
             shardStateAction.localShardFailed(shardRouting, message, failure, SHARD_STATE_ACTION_LISTENER, state);
+        } catch (Exception inner) {
+            if (failure != null) inner.addSuppressed(failure);
+            logger.warn(
+                () -> new ParameterizedMessage(
+                    "[{}][{}] failed to mark shard as failed (because of [{}])",
+                    shardRouting.getIndexName(),
+                    shardRouting.getId(),
+                    message
+                ),
+                inner
+            );
+        }
+    }
+
+    private void sendFailChildShards(ShardRouting shardRouting, String message, @Nullable Exception failure, ClusterState state) {
+        try {
+            logger.warn(
+                () -> new ParameterizedMessage("{} marking and sending shard failed due to [{}]", shardRouting.shardId(), message),
+                failure
+            );
+            for (ShardRouting childShard : shardRouting.getRecoveringChildShards()) {
+                failedShardsCache.put(childShard.shardId(), childShard);
+            }
+            shardStateAction.localShardFailed(shardRouting, message, failure, SHARD_STATE_ACTION_LISTENER, state, true);
         } catch (Exception inner) {
             if (failure != null) inner.addSuppressed(failure);
             logger.warn(

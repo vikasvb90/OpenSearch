@@ -115,6 +115,12 @@ public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     }
 
     @Override
+    public void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata) {
+        assert splitSource.splitting() : "expected splitting shard " + splitSource;
+        setChanged();
+    }
+
+    @Override
     public void replicaPromoted(ShardRouting replicaShard) {
         assert replicaShard.started() && replicaShard.primary() == false : "expected started replica shard " + replicaShard;
         setChanged();

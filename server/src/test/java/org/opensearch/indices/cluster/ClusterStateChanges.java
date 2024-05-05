@@ -460,7 +460,8 @@ public class ClusterStateChanges {
                     0L,
                     failedShard.getMessage(),
                     failedShard.getFailure(),
-                    failedShard.markAsStale()
+                    failedShard.markAsStale(),
+                    null
                 )
             )
             .collect(Collectors.toList());

@@ -91,6 +91,11 @@ public interface RoutingChangesObserver {
     void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata);
 
     /**
+     * Called when in-place split of child shards has failed.
+     */
+    void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata);
+
+    /**
      * Called when started replica is promoted to primary.
      */
     void replicaPromoted(ShardRouting replicaShard);
@@ -149,6 +154,11 @@ public interface RoutingChangesObserver {
 
         @Override
         public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
+
+        }
+
+        @Override
+        public void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata) {
 
         }
 
@@ -236,6 +246,13 @@ public interface RoutingChangesObserver {
         public void splitCompleted(ShardRouting removedSplitSource, IndexMetadata indexMetadata) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.splitCompleted(removedSplitSource, indexMetadata);
+            }
+        }
+
+        @Override
+        public void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.splitFailed(splitSource, indexMetadata);
             }
         }
 
