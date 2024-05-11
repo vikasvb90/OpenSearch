@@ -37,6 +37,7 @@ import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchException;
 import org.opensearch.action.ActionListenerResponseHandler;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.UnavailableShardsException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.ActiveShardCount;
@@ -566,6 +567,11 @@ public abstract class TransportReplicationAction<
                 }
 
                 if (primaryShardReference.isRelocated()) {
+                    if (primaryShardReference.routingEntry().splitting()) {
+                        // This means shard was being split and was in relocation handoff stage when replication op on primary arrived.
+                        // Write ops specifically will now get retried and will be routed to respective child shards.
+                        throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
+                    }
                     primaryShardReference.close(); // release shard operation lock as soon as possible
                     setPhase(replicationTask, "primary_delegation");
                     // delegate primary phase to relocation target
@@ -1021,7 +1027,12 @@ public abstract class TransportReplicationAction<
                 assert request.waitForActiveShards() != ActiveShardCount.DEFAULT
                     : "request waitForActiveShards must be set in resolveRequest";
 
-                final ShardRouting primary = state.getRoutingTable().shardRoutingTable(request.shardId()).primaryShard();
+                final ShardRouting primary;
+                if (indexMetadata.isParentShard(request.shardId().id()) && indexMetadata.isNonServingShard(request.shardId.id())) {
+                    throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
+                } else {
+                    primary = state.getRoutingTable().shardRoutingTable(request.shardId()).primaryShard();
+                }
                 if (primary == null || primary.active() == false) {
                     logger.trace(
                         "primary shard [{}] is not yet active, scheduling a retry: action [{}], request [{}], "
@@ -1211,14 +1222,17 @@ public abstract class TransportReplicationAction<
         }
 
         void finishWithUnexpectedFailure(Exception failure) {
-            logger.warn(
-                () -> new ParameterizedMessage(
-                    "unexpected error during the primary phase for action [{}], request [{}]",
-                    actionName,
-                    request
-                ),
-                failure
-            );
+            if (!(failure instanceof PrimaryShardSplitException)) {
+                // Skip log in case of primary shard split as write requests are going to be retried.
+                logger.warn(
+                    () -> new ParameterizedMessage(
+                        "unexpected error during the primary phase for action [{}], request [{}]",
+                        actionName,
+                        request
+                    ),
+                    failure
+                );
+            }
             if (finished.compareAndSet(false, true)) {
                 setPhase(task, "failed");
                 listener.onFailure(failure);

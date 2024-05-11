@@ -934,13 +934,17 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return parentToChildShardsMetadata.containsKey(shardId);
     }
 
+    public boolean isNonServingShard(Integer shardId) {
+        return primaryTerms[shardId] == SPLIT_PARENT_TERM;
+    }
+
+    public boolean isServingShard(Integer shardId) {
+        return primaryTerms[shardId] != SPLIT_PARENT_TERM;
+    }
+
     public SplitMetadata getSplitMetadata(Integer shardId) {
         assert isParentShard(shardId);
         return parentToChildShardsMetadata.get(shardId);
-    }
-
-    public Map<Integer, SplitMetadata> getParentToChildShardsMetadata() {
-        return parentToChildShardsMetadata;
     }
 
     public List<Integer> getChildShardIds(int shardId) {

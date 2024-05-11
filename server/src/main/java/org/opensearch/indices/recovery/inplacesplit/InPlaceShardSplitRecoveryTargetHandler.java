@@ -134,6 +134,11 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
             recoveryTarget.prepareForTranslogOperations(totalTranslogOps, groupedActionListener);
         });
     }
+
+    public void refresh() {
+        recoveryContexts.forEach(context -> context.getIndexShard().refresh("In-Place split"));
+    }
+
     public void indexTranslogOperationsOnShards(List<Translog.Operation> operations, int totalTranslogOps,
                                         long maxSeenAutoIdTimestampOnPrimary, long maxSeqNoOfUpdatesOrDeletesOnPrimary,
                                         RetentionLeases retentionLeases, long mappingVersionOnPrimary,
@@ -178,7 +183,6 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
             this.allocationId = allocationId;
         }
     }
-
 
     @Override
     public void forceSegmentFileSync() {

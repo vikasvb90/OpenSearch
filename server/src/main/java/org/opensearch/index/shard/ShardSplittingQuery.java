@@ -79,14 +79,14 @@ final class ShardSplittingQuery extends Query {
     private final IndexMetadata indexMetadata;
     private final int shardId;
     private final BitSetProducer nestedParentBitSetProducer;
-    private final Predicate<Integer> canIncludeRecoveringChildShardIds;
+    private final Predicate<Integer> shouldIncludeChildShards;
 
     ShardSplittingQuery(IndexMetadata indexMetadata, int shardId, boolean hasNested,
-                        Predicate<Integer> canIncludeRecoveringChildShardIds) {
+                        Predicate<Integer> shouldIncludeChildShards) {
         this.indexMetadata = indexMetadata;
         this.shardId = shardId;
         this.nestedParentBitSetProducer = hasNested ? newParentDocBitSetProducer(indexMetadata.getCreationVersion()) : null;
-        this.canIncludeRecoveringChildShardIds = canIncludeRecoveringChildShardIds;
+        this.shouldIncludeChildShards = shouldIncludeChildShards;
     }
 
     @Override
@@ -107,7 +107,7 @@ final class ShardSplittingQuery extends Query {
                         indexMetadata,
                         Uid.decodeId(ref.bytes, ref.offset, ref.length),
                         null,
-                        canIncludeRecoveringChildShardIds
+                        shouldIncludeChildShards
                     );
                     return shardId == targetShardId;
                 };
@@ -151,7 +151,7 @@ final class ShardSplittingQuery extends Query {
                         };
                         // in the _routing case we first go and find all docs that have a routing value and mark the ones we have to delete
                         findSplitDocs(RoutingFieldMapper.NAME, ref -> {
-                            int targetShardId = OperationRouting.generateShardId(indexMetadata, null, ref.utf8ToString(), canIncludeRecoveringChildShardIds);
+                            int targetShardId = OperationRouting.generateShardId(indexMetadata, null, ref.utf8ToString(), shouldIncludeChildShards);
                             return shardId == targetShardId;
                         }, leafReader, maybeWrapConsumer.apply(bitSet::set));
 
@@ -292,7 +292,7 @@ final class ShardSplittingQuery extends Query {
             leftToVisit = 2;
             leafReader.storedFields().document(doc, this);
             assert id != null : "docID must not be null - we might have hit a nested document";
-            int targetShardId = OperationRouting.generateShardId(indexMetadata, id, routing, canIncludeRecoveringChildShardIds);
+            int targetShardId = OperationRouting.generateShardId(indexMetadata, id, routing, shouldIncludeChildShards);
             return targetShardId != shardId;
         }
     }

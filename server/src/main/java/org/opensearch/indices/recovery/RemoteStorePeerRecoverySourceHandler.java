@@ -109,7 +109,7 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
                 0, TimeValue.ZERO, request.targetAllocationId())));
         }, onFailure);
 
-        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, onFailure);
+        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, new StepListener<>(), onFailure);
     }
 
 

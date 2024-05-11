@@ -10,6 +10,7 @@ package org.opensearch.indices.recovery.inplacesplit;
 
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.index.IndexCommit;
+import org.apache.lucene.store.Directory;
 import org.opensearch.action.StepListener;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
@@ -153,6 +154,9 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         // synchronous. But we still handle callbacks in listener so that any future changes to make targets async do
         // not require changes here and shard split recoveries continue to work seamlessly.
         prepareEngineStep.whenComplete(prepareEngineTime -> {
+            // Do a refresh here. In case of remote replication, refresh will upload segments to remote child directories.
+            recoveryTarget.refresh();
+
             logger.debug("prepareEngineStep completed");
             assert Transports.assertNotTransportThread(this + "[phase2]");
             initiateTracking();
@@ -184,7 +188,9 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 
         }, onFailure);
 
-        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStepWithEmptyResult(), prepareEngineStep, onFailure);
+        StepListener<Void> finalizeStep = new StepListener<>();
+        finalizeStep.whenComplete(r -> cleanUpMaybeRemoteOnFinalize(), onFailure);
+        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStepWithEmptyResult(), prepareEngineStep, finalizeStep, onFailure);
     }
 
     @Override
@@ -345,6 +351,21 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
                     l.onResponse(null);
                 })
             );
+        }
+    }
+
+    private void cleanUpMaybeRemoteOnFinalize() {
+        Store remoteStore = sourceShard.remoteStore();
+        if (remoteStore != null) {
+            try(Releasable releasable = acquireStore(sourceShard.remoteStore())) {
+                resources.add(releasable);
+                Directory storeDirectory = remoteStore.directory();
+                for (String file : storeDirectory.listAll()) {
+                    storeDirectory.deleteFile(file);
+                }
+            } catch (IOException e) {
+                logger.error("Failed to cleanup source shard remote directory", e);
+            }
         }
     }
 }

@@ -227,8 +227,7 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
                 sendSnapshotStep
             );
         }, onFailure);
-
-        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, onFailure);
+        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, new StepListener<>(), onFailure);
     }
 
     /**

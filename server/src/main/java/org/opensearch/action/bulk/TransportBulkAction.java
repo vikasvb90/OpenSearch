@@ -42,6 +42,7 @@ import org.opensearch.Version;
 import org.opensearch.action.ActionRunnable;
 import org.opensearch.action.DocWriteRequest;
 import org.opensearch.action.DocWriteResponse;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.RoutingMissingException;
 import org.opensearch.action.admin.indices.create.AutoCreateAction;
 import org.opensearch.action.admin.indices.create.CreateIndexRequest;
@@ -49,8 +50,10 @@ import org.opensearch.action.admin.indices.create.CreateIndexResponse;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.ingest.IngestActionForwarder;
 import org.opensearch.action.support.ActionFilters;
+import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.AutoCreateIndex;
 import org.opensearch.action.support.HandledTransportAction;
+import org.opensearch.action.support.WriteRequest;
 import org.opensearch.action.update.TransportUpdateAction;
 import org.opensearch.action.update.UpdateRequest;
 import org.opensearch.action.update.UpdateResponse;
@@ -526,6 +529,9 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
         @Override
         protected void doRun() {
             assert bulkRequest != null;
+            final ActiveShardCount bulkActiveShardCount = bulkRequest.waitForActiveShards();
+            final WriteRequest.RefreshPolicy refreshPolicy = bulkRequest.getRefreshPolicy();
+            final TimeValue timeout = bulkRequest.timeout();
             final ClusterState clusterState = observer.setAndGetObservedState();
             if (handleBlockExceptions(clusterState)) {
                 return;
@@ -677,6 +683,48 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
 
                             @Override
                             public void onFailure(Exception e) {
+                                if (e instanceof PrimaryShardSplitException) {
+                                    try {
+                                        reDriveOnChildShards();
+                                        return;
+                                    } catch (Exception ex) {
+                                        logger.error("Unexpected error occurred on attempting to re-drive " +
+                                            "bulk request after primary split", ex);
+                                    }
+                                }
+                                setBulkItemFailures(e);
+                                if (counter.decrementAndGet() == 0) {
+                                    finishHim();
+                                }
+                            }
+
+                            private void reDriveOnChildShards() {
+                                BulkRequest bulkRequestForRedrive = new BulkRequest();
+                                bulkRequestForRedrive.waitForActiveShards(bulkActiveShardCount);
+                                bulkRequestForRedrive.timeout(timeout);
+                                bulkRequestForRedrive.setRefreshPolicy(refreshPolicy);
+                                requests.forEach(request -> bulkRequestForRedrive.add(request.request()));
+                                ActionListener<BulkResponse> reDriveListener = ActionListener.wrap(reDriveResponses -> {
+                                    reDriveResponses.forEach(reDriveResponse -> {
+                                        if (reDriveResponse != null) {
+                                            responses.set(reDriveResponse.getItemId(), reDriveResponse);
+                                        }
+                                    });
+                                    if (counter.decrementAndGet() == 0) {
+                                        publishResponse();
+                                    }
+                                }, reDriveException -> {
+                                    // We don't expect any item level failure here. So, we fail all items.
+                                    setBulkItemFailures(reDriveException);
+                                    if (counter.decrementAndGet() == 0) {
+                                        finishHim();
+                                    }
+                                });
+                                new BulkOperation(task, bulkRequestForRedrive, reDriveListener, responses, startTimeNanos,
+                                    indicesThatCannotBeCreated).run();
+                            }
+
+                            private void setBulkItemFailures(Exception e) {
                                 // create failures for all relevant requests
                                 for (BulkItemRequest request : requests) {
                                     final String indexName = concreteIndices.getConcreteIndex(request.index()).getName();
@@ -690,14 +738,14 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                                     docStatusStats.inc(bulkItemResponse.status());
                                     responses.set(request.id(), bulkItemResponse);
                                 }
-
-                                if (counter.decrementAndGet() == 0) {
-                                    finishHim();
-                                }
                             }
 
                             private void finishHim() {
                                 indicesService.addDocStatusStats(docStatusStats);
+                                publishResponse();
+                            }
+
+                            private void publishResponse() {
                                 listener.onResponse(
                                     new BulkResponse(
                                         responses.toArray(new BulkItemResponse[responses.length()]),

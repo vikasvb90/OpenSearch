@@ -886,7 +886,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
     }
 
     public void handleChildRecoveriesDone(ShardRouting sourceShardRouting, long primaryTerm, RecoverySource recoverySource) {
-         shardStateAction.childShardsStarted(sourceShardRouting, primaryTerm, "after " + recoverySource, SHARD_STATE_ACTION_LISTENER);
+
+        shardStateAction.childShardsStarted(sourceShardRouting, primaryTerm, "after " + recoverySource, SHARD_STATE_ACTION_LISTENER);
     }
 
     private void failAndRemoveShard(

@@ -370,7 +370,7 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
                 .append(indexMetadata.getAliasesVersion())
                 .append("]\n");
             for (int shard = 0; shard < indexMetadata.getNumberOfShards(); shard++) {
-                if (indexMetadata.primaryTerm(shard) != IndexMetadata.SPLIT_PARENT_TERM) {
+                if (indexMetadata.isServingShard(shard)) {
                     sb.append(TAB).append(TAB).append(shard).append(": ");
                     sb.append("p_term [").append(indexMetadata.primaryTerm(shard)).append("], ");
                     sb.append("isa_ids ").append(indexMetadata.inSyncAllocationIds(shard)).append("\n");

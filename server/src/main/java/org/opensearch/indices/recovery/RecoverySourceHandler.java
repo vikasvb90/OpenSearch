@@ -216,9 +216,9 @@ public abstract class RecoverySourceHandler {
         StepListener<List<SendSnapshotResult>> sendSnapshotStep,
         StepListener<SendFileResult> sendFileStep,
         StepListener<TimeValue> prepareEngineStep,
+        StepListener<Void> finalizeStep,
         Consumer<Exception> onFailure
     ) {
-        final StepListener<Void> finalizeStep = new StepListener<>();
         // Recovery target can trim all operations >= startingSeqNo as we have sent all these operations in the phase 2
         final long trimAboveSeqNo = startingSeqNo - 1;
         sendSnapshotStep.whenComplete(sendSnapshotResult -> {

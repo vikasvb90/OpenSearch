@@ -452,12 +452,11 @@ public class OperationRouting {
     }
 
     public static int generateShardId(IndexMetadata indexMetadata, @Nullable String id, @Nullable String routing) {
-        return generateShardId(indexMetadata, id, routing, (shardId) ->
-            indexMetadata.primaryTerm(shardId) == IndexMetadata.SPLIT_PARENT_TERM);
+        return generateShardId(indexMetadata, id, routing, indexMetadata::isNonServingShard);
     }
 
     public static int generateShardId(IndexMetadata indexMetadata, @Nullable String id, @Nullable String routing,
-                                      Predicate<Integer> canIncludeRecoveringChildShardIds) {
+                                      Predicate<Integer> shouldIncludeChildShards) {
         final String effectiveRouting;
         final int partitionOffset;
 
@@ -475,12 +474,11 @@ public class OperationRouting {
             partitionOffset = 0;
         }
 
-        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, canIncludeRecoveringChildShardIds);
+        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, shouldIncludeChildShards);
     }
 
     private static int calculateScaledShardId(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset) {
-        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, (shardId) ->
-            indexMetadata.primaryTerm(shardId) == IndexMetadata.SPLIT_PARENT_TERM);
+        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, indexMetadata::isNonServingShard);
     }
 
     private static int calculateShardIdOfChild(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset,
