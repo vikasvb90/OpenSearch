@@ -117,7 +117,7 @@ public abstract class RecoverySourceHandler {
     private final ThreadPool threadPool;
     protected final CancellableThreads cancellableThreads;
     protected final List<Closeable> resources = new CopyOnWriteArrayList<>();
-    private final Closeable releaseResources;
+    private final Closeable resourcesReleasable;
     protected final ListenableFuture<RecoveryResponse> future = new ListenableFuture<>();
     public static final String PEER_RECOVERY_NAME = "peer-recovery";
     private final SegmentFileTransferHandler transferHandler;
@@ -157,7 +157,7 @@ public abstract class RecoverySourceHandler {
         this.chunkSizeInBytes = fileChunkSizeInBytes;
         // if the target is on an old version, it won't be able to handle out-of-order file chunks.
         this.maxConcurrentOperations = maxConcurrentOperations;
-        this.releaseResources = () -> {
+        this.resourcesReleasable = () -> {
             resources.addAll(getAdditionalResourcesToClose());
             IOUtils.close(resources);
         };
@@ -187,16 +187,16 @@ public abstract class RecoverySourceHandler {
                 if (beforeCancelEx != null) {
                     e.addSuppressed(beforeCancelEx);
                 }
-                IOUtils.closeWhileHandlingException(releaseResources, () -> future.onFailure(e));
+                IOUtils.closeWhileHandlingException(resourcesReleasable, () -> future.onFailure(e));
                 throw e;
             });
             final Consumer<Exception> onFailure = e -> {
                 assert Transports.assertNotTransportThread(this + "[onFailure]");
-                IOUtils.closeWhileHandlingException(releaseResources, () -> future.onFailure(e));
+                IOUtils.closeWhileHandlingException(resourcesReleasable, () -> future.onFailure(e));
             };
             innerRecoveryToTarget(listener, onFailure);
         } catch (Exception e) {
-            IOUtils.closeWhileHandlingException(releaseResources, () -> future.onFailure(e));
+            IOUtils.closeWhileHandlingException(resourcesReleasable, () -> future.onFailure(e));
         }
     }
 
@@ -252,7 +252,7 @@ public abstract class RecoverySourceHandler {
             try {
                 future.onResponse(response);
             } finally {
-                releaseResources.close();
+                resourcesReleasable.close();
             }
         }, onFailure);
     }
@@ -312,7 +312,17 @@ public abstract class RecoverySourceHandler {
         });
     }
 
-    private void runWithGenericThreadPool(CheckedRunnable<Exception> task) {
+    protected GatedCloseable<IndexCommit> acquireLastCommit(IndexShard shard, boolean flushFirst) {
+        final GatedCloseable<IndexCommit> wrappedSafeCommit = shard.acquireLastIndexCommit(flushFirst);
+        final AtomicBoolean closed = new AtomicBoolean(false);
+        return new GatedCloseable<>(wrappedSafeCommit.get(), () -> {
+            if (closed.compareAndSet(false, true)) {
+                runWithGenericThreadPool(wrappedSafeCommit::close);
+            }
+        });
+    }
+
+    protected void runWithGenericThreadPool(CheckedRunnable<Exception> task) {
         final PlainActionFuture<Void> future = new PlainActionFuture<>();
         assert threadPool.generic().isShutdown() == false;
         // TODO: We shouldn't use the generic thread pool here as we already execute this from the generic pool.
@@ -327,7 +337,7 @@ public abstract class RecoverySourceHandler {
      *
      * @opensearch.internal
      */
-    protected static final class SendFileResult {
+    public static final class SendFileResult {
         final List<String> phase1FileNames;
         final List<Long> phase1FileSizes;
         final long totalSize;
@@ -395,6 +405,7 @@ public abstract class RecoverySourceHandler {
             final Store.MetadataSnapshot recoverySourceMetadata;
             try {
                 recoverySourceMetadata = store.getMetadata(snapshot);
+                System.out.println("Metadata docs " + recoverySourceMetadata.getNumDocs());
             } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
                 shard.failShard("recovery", ex);
                 throw ex;
@@ -864,7 +875,7 @@ public abstract class RecoverySourceHandler {
         }
         cancellableThreads.checkForCancel();
         StopWatch stopWatch = new StopWatch().start();
-        logger.trace("finalizing recovery");
+        logger.info("finalizing recovery");
         markAllocationIdAsInSync(sendSnapshotResults);
 
         final long globalCheckpoint = shard.getLastKnownGlobalCheckpoint(); // this global checkpoint is persisted in finalizeRecovery
@@ -872,11 +883,11 @@ public abstract class RecoverySourceHandler {
         cancellableThreads.checkForCancel();
         recoveryTarget.finalizeRecovery(globalCheckpoint, trimAboveSeqNo, finalizeListener);
         finalizeListener.whenComplete(r -> {
-            logger.debug("finalizeListenerStep completed");
+            logger.info("finalizeListenerStep completed");
             updateGlobalCheckpointForShard(globalCheckpoint);
 
             if (request.isPrimaryRelocation() || shard.routingEntry().splitting()) {
-                logger.trace("performing relocation hand-off");
+                logger.info("performing relocation hand-off");
                 final Runnable forceSegRepRunnable = shard.indexSettings().isSegRepEnabled()
                     ? recoveryTarget::forceSegmentFileSync
                     : () -> {};

@@ -161,10 +161,6 @@ public class DiskThresholdDecider extends AllocationDecider {
                 if (actualPath == null) {
                     // we might know the path of this shard from before when it was relocating
                     actualPath = clusterInfo.getDataPath(routing.cancelRelocation());
-                    // Check if path exists before split
-                    if (actualPath == null) {
-                        actualPath = clusterInfo.getDataPath(routing.cancelSplit());
-                    }
                 }
                 if (dataPath.equals(actualPath)) {
                     totalSize -= getExpectedShardSize(routing, 0L, clusterInfo, null, metadata, routingTable);

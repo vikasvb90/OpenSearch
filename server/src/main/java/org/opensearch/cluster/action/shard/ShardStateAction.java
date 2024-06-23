@@ -484,7 +484,7 @@ public class ShardStateAction {
                     // We check here that the primary to which the write happened was not already failed in an earlier cluster state update.
                     // This prevents situations where a new primary has already been selected and replication failures from an old stale
                     // primary unnecessarily fail currently active shards.
-                    if (task.primaryTerm > 0) {
+                    if (task.primaryTerm > 0 && Boolean.TRUE.equals(task.childShardsFailedEvent) == false) {
                         long currentPrimaryTerm = indexMetadata.primaryTerm(task.shardId.id());
                         if (currentPrimaryTerm != task.primaryTerm) {
                             assert currentPrimaryTerm > task.primaryTerm : "received a primary term with a higher term than in the "
@@ -516,7 +516,7 @@ public class ShardStateAction {
                     }
 
                     ShardRouting matched = currentState.getRoutingTable().getByAllocationId(task.shardId, task.allocationId);
-                    if (matched == null) {
+                    if (matched == null && Boolean.TRUE.equals(task.childShardsFailedEvent) == false) {
                         Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(task.shardId.id());
                         // mark shard copies without routing entries that are in in-sync allocations set only as stale if the reason why
                         // they were failed is because a write made it into the primary but not to this copy (which corresponds to

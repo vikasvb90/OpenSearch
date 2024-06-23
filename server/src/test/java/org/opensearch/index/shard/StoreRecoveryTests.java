@@ -113,7 +113,7 @@ public class StoreRecoveryTests extends OpenSearchTestCase {
         Directory target = newFSDirectory(createTempDir());
         final long maxSeqNo = randomNonNegativeLong();
         final long maxUnsafeAutoIdTimestamp = randomNonNegativeLong();
-        storeRecovery.addIndices(indexStats, target, indexSort, dirs, maxSeqNo, maxUnsafeAutoIdTimestamp, null, 0, false, false);
+        StoreRecovery.addIndices(indexStats, target, indexSort, dirs, maxSeqNo, maxUnsafeAutoIdTimestamp, null, 0, false, false);
         int numFiles = 0;
         Predicate<String> filesFilter = (f) -> f.startsWith("segments") == false
             && f.equals("write.lock") == false
@@ -187,7 +187,7 @@ public class StoreRecoveryTests extends OpenSearchTestCase {
             .setRoutingNumShards(numShards * 1000000)
             .numberOfReplicas(0)
             .build();
-        storeRecovery.addIndices(
+        StoreRecovery.addIndices(
             indexStats,
             target,
             indexSort,

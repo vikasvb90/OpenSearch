@@ -92,6 +92,17 @@ public class ReplicationGroup {
                         assert inSyncAllocationIds.contains(relocationTarget.allocationId().getId()) == false
                             : "in-sync shard copy but not tracked: " + shard;
                     }
+                } else if (shard.splitting()) {
+                    ShardRouting[] childShards = shard.getRecoveringChildShards();
+                    for (ShardRouting childShard : childShards) {
+                        if (trackedAllocationIds.contains(childShard.allocationId().getId())) {
+                            replicationTargets.add(childShard);
+                        } else {
+                            skippedShards.add(childShard);
+                            assert inSyncAllocationIds.contains(childShard.allocationId().getId()) == false
+                                : "in-sync child shard copy but not tracked: " + shard;
+                        }
+                    }
                 }
             }
         }

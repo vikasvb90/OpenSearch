@@ -177,7 +177,7 @@ public class SegmentReplicationSourceService extends AbstractLifecycleComponent 
             for (IndexService indexService : indicesService) {
                 if (indexService.getIndexSettings().isSegRepEnabled()) {
                     for (IndexShard indexShard : indexService) {
-                        if (indexShard.routingEntry().primary()) {
+                        if (indexShard.routingEntry().primary() && !indexShard.routingEntry().isSplitTarget()) {
                             final IndexMetadata indexMetadata = indexService.getIndexSettings().getIndexMetadata();
                             final Set<String> inSyncAllocationIds = new HashSet<>(
                                 indexMetadata.inSyncAllocationIds(indexShard.shardId().id())

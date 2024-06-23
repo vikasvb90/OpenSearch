@@ -32,6 +32,9 @@
 
 package org.opensearch.repositories.s3;
 
+import org.opensearch.cluster.metadata.CryptoMetadata;
+import org.opensearch.repositories.s3.async.CopyObjectHelper;
+import org.opensearch.repositories.s3.async.CopyObjectMetadata;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.async.AsyncResponseTransformer;
 import software.amazon.awssdk.core.exception.SdkException;
@@ -58,6 +61,7 @@ import software.amazon.awssdk.services.s3.model.ObjectAttributes;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Error;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 import software.amazon.awssdk.services.s3.model.UploadPartResponse;
@@ -96,6 +100,8 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -104,6 +110,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static org.opensearch.repositories.s3.S3Repository.MAX_FILE_SIZE;
@@ -113,7 +120,7 @@ import static org.opensearch.repositories.s3.S3Repository.MIN_PART_SIZE_USING_MU
 class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamBlobContainer {
 
     private static final Logger logger = LogManager.getLogger(S3BlobContainer.class);
-
+    private static final long MAX_CONCURRENT_COPY_SIZE = ByteSizeUnit.GB.toBytes(20);
     private final S3BlobStore blobStore;
     private final String keyPath;
 
@@ -351,6 +358,75 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     }
 
     @Override
+    public Set<String> copyFilesFromSrcRemote(Set<String> files, AsyncMultiStreamBlobContainer sourceBlobContainer) {
+        if (!(sourceBlobContainer instanceof S3BlobContainer)) {
+            throw new IllegalArgumentException("Unknown blob container type. Not compatible with S3");
+        }
+        S3BlobContainer sourceS3Container = (S3BlobContainer) sourceBlobContainer;
+
+        Map<String, S3Object> fileObjects;
+        Set<String> filesFound = new HashSet<>(files.size());
+        try (AmazonS3Reference clientReference = sourceS3Container.blobStore.clientReference()) {
+            fileObjects = lisObjectsWithPredicate(clientReference, sourceS3Container, (file) -> {
+                if (files.contains(file)) {
+                    filesFound.add(file);
+                }
+                return files.contains(file);
+            });
+        }
+
+        try (AmazonAsyncS3Reference clientReference = sourceS3Container.blobStore.asyncClientReference()) {
+            CopyObjectHelper copyObjectHelper = new CopyObjectHelper(clientReference.get().client());
+            long curSize = 0;
+            List<CompletableFuture<Void>> copyAllFilesFutures = new ArrayList<>();
+            for (String remoteFileName : fileObjects.keySet()) {
+                S3Object fileObject = fileObjects.get(remoteFileName);
+                if (blobExists(fileObject.key()) == false) {
+                    curSize += fileObject.size();
+                    CopyObjectMetadata metadata = copyObjectHelper.fetchCopyObjectMetadata(
+                        sourceS3Container.blobStore.bucket(),
+                        fileObject.key());
+                    CompletableFuture<Void> copyFuture = copyObjectHelper.copyObject(
+                        sourceS3Container.blobStore.bucket(),
+                        fileObject.key(),
+                        metadata,
+                        blobStore.bucket(),
+                        buildKey(remoteFileName)
+                    );
+                    copyAllFilesFutures.add(copyFuture);
+
+                    if (curSize > MAX_CONCURRENT_COPY_SIZE) {
+                        waitForUploads(copyAllFilesFutures);
+                        copyAllFilesFutures.clear();
+                        curSize = 0;
+                    }
+                }
+            }
+
+            if (!copyAllFilesFutures.isEmpty()) {
+                waitForUploads(copyAllFilesFutures);
+            }
+        }
+        return filesFound;
+    }
+
+    @SuppressWarnings("rawtypes")
+    private static void waitForUploads(List<CompletableFuture<Void>> copyAllFilesFutures) {
+        CompletableFuture<Void> respFuture = CompletableFuture.allOf(copyAllFilesFutures.toArray(
+            new CompletableFuture[0])).thenApply(__ -> {
+            copyAllFilesFutures.forEach(CompletableFuture::join);
+            return null;
+        });
+
+        try {
+            respFuture.join();
+        } catch (Exception ex) {
+            logger.error("Failed to perform a remote copy of files", ex);
+            throw ex;
+        }
+    }
+
+    @Override
     public void deleteBlobsIgnoringIfNotExists(List<String> blobNames) throws IOException {
         doDeleteBlobs(blobNames, true);
     }
@@ -460,7 +536,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     public Map<String, BlobMetadata> listBlobsByPrefix(@Nullable String blobNamePrefix) throws IOException {
         String prefix = blobNamePrefix == null ? keyPath : buildKey(blobNamePrefix);
         try (AmazonS3Reference clientReference = blobStore.clientReference()) {
-            return executeListing(clientReference, listObjectsRequest(prefix)).stream()
+            return executeListing(clientReference, listObjectsRequest(prefix, blobStore)).stream()
                 .flatMap(listing -> listing.contents().stream())
                 .map(s3Object -> new PlainBlobMetadata(s3Object.key().substring(keyPath.length()), s3Object.size()))
                 .collect(Collectors.toMap(PlainBlobMetadata::name, Function.identity()));
@@ -477,7 +553,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     @Override
     public Map<String, BlobContainer> children() throws IOException {
         try (AmazonS3Reference clientReference = blobStore.clientReference()) {
-            return executeListing(clientReference, listObjectsRequest(keyPath)).stream().flatMap(listObjectsResponse -> {
+            return executeListing(clientReference, listObjectsRequest(keyPath, blobStore)).stream().flatMap(listObjectsResponse -> {
                 assert listObjectsResponse.contents().stream().noneMatch(s -> {
                     for (CommonPrefix commonPrefix : listObjectsResponse.commonPrefixes()) {
                         if (s.key().substring(keyPath.length()).startsWith(commonPrefix.prefix())) {
@@ -522,7 +598,29 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
         });
     }
 
-    private ListObjectsV2Request listObjectsRequest(String keyPath) {
+    private Map<String, S3Object> lisObjectsWithPredicate(
+        AmazonS3Reference clientReference,
+        S3BlobContainer blobContainer,
+        Predicate<String> includeFileObject
+    ) {
+        return SocketAccess.doPrivileged(() -> {
+            final Map<String, S3Object> results = new HashMap<>();
+            ListObjectsV2Request listObjectsRequest = listObjectsRequest(blobContainer.keyPath, blobContainer.blobStore);
+            ListObjectsV2Iterable listObjectsIterable = clientReference.get().listObjectsV2Paginator(listObjectsRequest);
+            for (ListObjectsV2Response listObjectsV2Response : listObjectsIterable) {
+                for (S3Object s3Object : listObjectsV2Response.contents()) {
+                    String remoteFileName = s3Object.key().substring(keyPath.length());
+                    if (includeFileObject.test(remoteFileName) == true) {
+                        results.put(remoteFileName, s3Object);
+                    }
+                }
+            }
+
+            return results;
+        });
+    }
+
+    private ListObjectsV2Request listObjectsRequest(String keyPath, S3BlobStore blobStore) {
         return ListObjectsV2Request.builder()
             .bucket(blobStore.bucket())
             .prefix(keyPath)
@@ -532,7 +630,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
     }
 
     private ListObjectsV2Request listObjectsRequest(String keyPath, int limit) {
-        return listObjectsRequest(keyPath).toBuilder().maxKeys(Math.min(limit, 1000)).build();
+        return listObjectsRequest(keyPath, blobStore).toBuilder().maxKeys(Math.min(limit, 1000)).build();
     }
 
     private String buildKey(String blobName) {

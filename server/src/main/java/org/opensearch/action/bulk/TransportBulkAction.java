@@ -68,6 +68,7 @@ import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.routing.ShardIterator;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.inject.Inject;
 import org.opensearch.common.lease.Releasable;
@@ -508,6 +509,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
         private final long startTimeNanos;
         private final ClusterStateObserver observer;
         private final Map<String, IndexNotFoundException> indicesThatCannotBeCreated;
+        private final boolean reDriveOnChildShards;
 
         BulkOperation(
             Task task,
@@ -515,7 +517,8 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             ActionListener<BulkResponse> listener,
             AtomicArray<BulkItemResponse> responses,
             long startTimeNanos,
-            Map<String, IndexNotFoundException> indicesThatCannotBeCreated
+            Map<String, IndexNotFoundException> indicesThatCannotBeCreated,
+            boolean reDriveOnChildShards
         ) {
             super(listener);
             this.task = task;
@@ -524,6 +527,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             this.startTimeNanos = startTimeNanos;
             this.indicesThatCannotBeCreated = indicesThatCannotBeCreated;
             this.observer = new ClusterStateObserver(clusterService, bulkRequest.timeout(), logger, threadPool.getThreadContext());
+            this.reDriveOnChildShards = reDriveOnChildShards;
         }
 
         @Override
@@ -613,8 +617,16 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                 ShardId shardId = clusterService.operationRouting()
                     .indexShards(clusterState, concreteIndex, request.id(), request.routing())
                     .shardId();
+                if (reDriveOnChildShards) {
+                    shardId = clusterService.operationRouting().shardWithRecoveringChild(clusterState,
+                        concreteIndex, request.id(), request.routing(), shardId.getIndex());
+                }
+
                 List<BulkItemRequest> shardRequests = requestsByShard.computeIfAbsent(shardId, shard -> new ArrayList<>());
                 shardRequests.add(new BulkItemRequest(i, request));
+            }
+            if (reDriveOnChildShards) {
+                logger.info("Redriving requests on child shards, count " + bulkRequest.requests.size());
             }
 
             if (requestsByShard.isEmpty()) {
@@ -683,7 +695,8 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
 
                             @Override
                             public void onFailure(Exception e) {
-                                if (e instanceof PrimaryShardSplitException) {
+                                Throwable splitEx = ExceptionsHelper.unwrap(e, PrimaryShardSplitException.class);
+                                if (splitEx != null) {
                                     try {
                                         reDriveOnChildShards();
                                         return;
@@ -706,9 +719,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                                 requests.forEach(request -> bulkRequestForRedrive.add(request.request()));
                                 ActionListener<BulkResponse> reDriveListener = ActionListener.wrap(reDriveResponses -> {
                                     reDriveResponses.forEach(reDriveResponse -> {
-                                        if (reDriveResponse != null) {
-                                            responses.set(reDriveResponse.getItemId(), reDriveResponse);
-                                        }
+                                        responses.set(requests.get(reDriveResponse.getItemId()).id(), reDriveResponse);
                                     });
                                     if (counter.decrementAndGet() == 0) {
                                         publishResponse();
@@ -720,8 +731,9 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                                         finishHim();
                                     }
                                 });
-                                new BulkOperation(task, bulkRequestForRedrive, reDriveListener, responses, startTimeNanos,
-                                    indicesThatCannotBeCreated).run();
+                                BulkOperation bulkOperation = new BulkOperation(task, bulkRequestForRedrive, reDriveListener,
+                                    new AtomicArray<>(requests.size()), startTimeNanos, indicesThatCannotBeCreated, true);
+                                bulkOperation.run();
                             }
 
                             private void setBulkItemFailures(Exception e) {
@@ -865,7 +877,7 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
          * We are not wrapping the listener here to capture the response codes for performance benefits. It will
          * be saving us an iteration over the responses array
          */
-        new BulkOperation(task, bulkRequest, listener, responses, startTimeNanos, indicesThatCannotBeCreated).run();
+        new BulkOperation(task, bulkRequest, listener, responses, startTimeNanos, indicesThatCannotBeCreated, false).run();
     }
 
     /**

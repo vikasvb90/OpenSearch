@@ -22,12 +22,14 @@ import org.opensearch.cluster.service.ClusterManagerTaskKeys;
 import org.opensearch.cluster.service.ClusterManagerTaskThrottler;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.Priority;
+import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.ShardLimitValidator;
+import org.opensearch.plugins.PluginsService;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -42,6 +44,7 @@ public class MetadataInPlaceShardSplitService {
 
     private final Settings settings;
     private final ClusterService clusterService;
+    private final PluginsService pluginsService;
     private final IndicesService indicesService;
     private final AllocationService allocationService;
     private final ShardLimitValidator shardLimitValidator;
@@ -51,6 +54,7 @@ public class MetadataInPlaceShardSplitService {
     public MetadataInPlaceShardSplitService(
         final Settings settings,
         final ClusterService clusterService,
+        final PluginsService pluginsService,
         final IndicesService indicesService,
         final AllocationService allocationService,
         final ShardLimitValidator shardLimitValidator,
@@ -58,6 +62,7 @@ public class MetadataInPlaceShardSplitService {
     ) {
         this.settings = settings;
         this.clusterService = clusterService;
+        this.pluginsService = pluginsService;
         this.indicesService = indicesService;
         this.allocationService = allocationService;
         this.shardLimitValidator = shardLimitValidator;
@@ -134,6 +139,12 @@ public class MetadataInPlaceShardSplitService {
                 // Shard is already split.
                 throw new IllegalArgumentException("Shard is already split.");
             }
+        }
+
+        Tuple<Boolean, String> shardSplitSupportedOnPlugins = pluginsService.isShardSplitAllowed(sourceShardId.getIndex());
+        if (Boolean.TRUE.equals(shardSplitSupportedOnPlugins.v1()) == false) {
+            throw new UnsupportedOperationException("Splitting of shard [" + sourceShardId.id() + "] on index [" +
+                sourceShardId.getIndex().getName() + "] is not supported by plugins " + shardSplitSupportedOnPlugins.v2());
         }
 
         RoutingTable.Builder routingTableBuilder = RoutingTable.builder(currentState.routingTable());

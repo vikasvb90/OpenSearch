@@ -19,6 +19,7 @@ import org.opensearch.core.action.ActionListener;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -62,6 +63,11 @@ public class AsyncMultiStreamEncryptedBlobContainer<T, U> extends EncryptedBlobC
     @Override
     public boolean remoteIntegrityCheckSupported() {
         return false;
+    }
+
+    @Override
+    public Set<String> copyFilesFromSrcRemote(Set<String> filesToCopy, AsyncMultiStreamBlobContainer blobContainer) {
+        return blobContainer.copyFilesFromSrcRemote(filesToCopy, blobContainer);
     }
 
     static class EncryptedWriteContext<T, U> extends WriteContext {

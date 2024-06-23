@@ -45,13 +45,13 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
 
     private static final Logger logger = LogManager.getLogger(RemoteStoreReplicationSource.class);
 
-    private final IndexShard sourceShard;
+    private final IndexShard indexShard;
     private final RemoteSegmentStoreDirectory remoteDirectory;
     private final CancellableThreads cancellableThreads = new CancellableThreads();
 
-    public RemoteStoreReplicationSource(IndexShard sourceShard) {
-        this.sourceShard = sourceShard;
-        FilterDirectory remoteStoreDirectory = (FilterDirectory) sourceShard.remoteStore().directory();
+    public RemoteStoreReplicationSource(IndexShard indexShard) {
+        this.indexShard = indexShard;
+        FilterDirectory remoteStoreDirectory = (FilterDirectory) indexShard.remoteStore().directory();
         FilterDirectory byteSizeCachingStoreDirectory = (FilterDirectory) remoteStoreDirectory.getDelegate();
         this.remoteDirectory = (RemoteSegmentStoreDirectory) byteSizeCachingStoreDirectory.getDelegate();
     }
@@ -64,16 +64,16 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
     ) {
         Map<String, StoreFileMetadata> metadataMap;
         // TODO: Need to figure out a way to pass this information for segment metadata via remote store.
-        try (final GatedCloseable<SegmentInfos> segmentInfosSnapshot = sourceShard.getSegmentInfosSnapshot()) {
+        try (final GatedCloseable<SegmentInfos> segmentInfosSnapshot = indexShard.getSegmentInfosSnapshot()) {
             final Version version = segmentInfosSnapshot.get().getCommitLuceneVersion();
             final RemoteSegmentMetadata mdFile = getRemoteSegmentMetadata();
             // During initial recovery flow, the remote store might not
             // have metadata as primary hasn't uploaded anything yet.
-            if (mdFile == null && sourceShard.state().equals(IndexShardState.STARTED) == false) {
+            if (mdFile == null && indexShard.state().equals(IndexShardState.STARTED) == false) {
                 listener.onResponse(new CheckpointInfoResponse(checkpoint, Collections.emptyMap(), null));
                 return;
             }
-            assert mdFile != null : "Remote metadata file can't be null if shard is active " + sourceShard.state();
+            assert mdFile != null : "Remote metadata file can't be null if shard is active " + indexShard.state();
             metadataMap = mdFile.getMetadata()
                 .entrySet()
                 .stream()
@@ -120,20 +120,31 @@ public class RemoteStoreReplicationSource implements SegmentReplicationSource {
                     assert directoryFiles.contains(file) == false : "Local store already contains the file " + file;
                     toDownloadSegmentNames.add(file);
                 }
-                targetShard.getFileDownloader()
-                    .downloadAsync(
-                        cancellableThreads,
-                        remoteDirectory,
-                        new ReplicationStatsDirectoryWrapper(targetStoreDirectory, fileProgressTracker),
-                        toDownloadSegmentNames,
-                        ActionListener.map(listener, r -> new GetSegmentFilesResponse(filesToFetch))
-                    );
+                syncFromRemote(filesToFetch, targetShard, fileProgressTracker, listener, toDownloadSegmentNames);
             } else {
                 listener.onResponse(new GetSegmentFilesResponse(filesToFetch));
             }
         } catch (IOException | RuntimeException e) {
             listener.onFailure(e);
         }
+    }
+
+    protected void syncFromRemote(
+        List<StoreFileMetadata> filesToFetch,
+        IndexShard targetShard,
+        BiConsumer<String, Long> fileProgressTracker,
+        ActionListener<GetSegmentFilesResponse> listener,
+        List<String> toSyncSegmentFiles
+    ) throws IOException {
+        final Directory targetStoreDirectory = targetShard.store().directory();
+        targetShard.getFileDownloader()
+            .downloadAsync(
+                cancellableThreads,
+                remoteDirectory,
+                new ReplicationStatsDirectoryWrapper(targetStoreDirectory, fileProgressTracker),
+                toSyncSegmentFiles,
+                ActionListener.map(listener, r -> new GetSegmentFilesResponse(filesToFetch))
+            );
     }
 
     @Override

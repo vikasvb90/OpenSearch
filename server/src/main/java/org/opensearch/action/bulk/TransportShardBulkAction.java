@@ -117,6 +117,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
@@ -144,6 +145,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
     private final MappingUpdatedAction mappingUpdatedAction;
     private final SegmentReplicationPressureService segmentReplicationPressureService;
     private final RemoteStorePressureService remoteStorePressureService;
+    public static final AtomicBoolean debugRequest = new AtomicBoolean();
 
     /**
      * This action is used for performing primary term validation. With remote translog enabled, the translogs would
@@ -380,8 +382,10 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             long primaryTerm,
             long globalCheckpoint,
             long maxSeqNoOfUpdatesOrDeletes,
-            ActionListener<ReplicationOperation.ReplicaResponse> listener
+            ActionListener<ReplicationOperation.ReplicaResponse> listener,
+            boolean replicatingToChild
         ) {
+            assert replicatingToChild == false : "Primary term validation is attempted on child replication";
             String nodeId = replica.currentNodeId();
             final DiscoveryNode node = clusterService.state().nodes().get(nodeId);
             if (node == null) {
@@ -472,6 +476,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
             @Override
             protected void doRun() throws Exception {
+                if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                    logger.info("Executing bulk request " + request.items().length);
+                }
                 while (context.hasMoreOperationsToExecute()) {
                     if (executeBulkItemRequest(
                         context,
@@ -487,8 +494,15 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     }
                     assert context.isInitial(); // either completed and moved to next or reset
                 }
+                if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                    logger.info("Executing finish of bulk request" + request.items().length);
+                }
+
                 // We're done, there's no more operations to execute so we resolve the wrapped listener
                 finishRequest();
+                if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                    logger.info("Finished bulk request" + request.items().length);
+                }
             }
 
             @Override
@@ -569,13 +583,21 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         ActionListener<Void> itemDoneListener
     ) throws Exception {
         final DocWriteRequest.OpType opType = context.getCurrent().opType();
-
+//        if (context.getBulkShardRequest().shardId().id() == 0) {
+//            logger.info("Executing bulk item");
+//        }
         final UpdateHelper.Result updateResult;
         if (opType == DocWriteRequest.OpType.UPDATE) {
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Executing item update");
+//            }
             final UpdateRequest updateRequest = (UpdateRequest) context.getCurrent();
             try {
                 updateResult = updateHelper.prepare(updateRequest, context.getPrimary(), nowInMillisSupplier);
             } catch (Exception failure) {
+//                if (context.getBulkShardRequest().shardId().id() == 0) {
+//                    logger.info("Exception in item update");
+//                }
                 // we may fail translating a update to index or delete operation
                 // we use index result to communicate failure while translating update request
                 final Engine.Result result = new Engine.IndexResult(failure, updateRequest.version());
@@ -601,6 +623,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     context.getPrimary().noopUpdate();
                     context.markOperationAsNoOp(updateResult.action());
                     context.markAsCompleted(context.getExecutionResult());
+//                    if (context.getBulkShardRequest().shardId().id() == 0) {
+//                        logger.info("No-Op in item update");
+//                    }
                     return true;
                 default:
                     throw new IllegalStateException("Illegal update operation " + updateResult.getResponseResult());
@@ -617,6 +642,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         final boolean isDelete = context.getRequestToExecute().opType() == DocWriteRequest.OpType.DELETE;
         final Engine.Result result;
         if (isDelete) {
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Executing bulk item delete");
+//            }
             final DeleteRequest request = context.getRequestToExecute();
             result = primary.applyDeleteOperationOnPrimary(
                 version,
@@ -626,6 +654,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 request.ifPrimaryTerm()
             );
         } else {
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Executing item index");
+//            }
             final IndexRequest request = context.getRequestToExecute();
             result = primary.applyIndexOperationOnPrimary(
                 version,
@@ -638,7 +669,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             );
         }
         if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
-
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Executing bulk item mapping update");
+//            }
             try {
                 primary.mapperService()
                     .merge(
@@ -680,8 +713,17 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             });
             return false;
         } else {
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Forming bulk item result");
+//            }
             onComplete(result, context, updateResult);
+//            if (context.getBulkShardRequest().shardId().id() == 0) {
+//                logger.info("Formed bulk item result");
+//            }
         }
+//        if (context.getBulkShardRequest().shardId().id() == 0) {
+//            logger.info("Return true bulk item request");
+//        }
         return true;
     }
 

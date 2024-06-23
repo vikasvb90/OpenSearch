@@ -38,12 +38,14 @@ import org.opensearch.Version;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.io.stream.ReleasableBytesStreamOutput;
 import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.lucene.uid.Versions;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.concurrent.ReleasableLock;
+import org.opensearch.common.util.concurrent.RunOnce;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.bytes.BytesArray;
@@ -726,6 +728,19 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
             ensureOpen();
             final long viewGen = getMinFileGeneration();
             return acquireTranslogGenFromDeletionPolicy(viewGen);
+        }
+    }
+
+    /**
+     * Acquires a lock on the translog files, preventing them from being trimmed
+     * Returns min generation reference.
+     */
+    public GatedCloseable<Long> acquireRetentionLockWithMinGen() {
+        try (ReleasableLock lock = readLock.acquire()) {
+            ensureOpen();
+            final long viewGen = getMinFileGeneration();
+            Closeable closeable = acquireTranslogGenFromDeletionPolicy(viewGen);
+            return new GatedCloseable<>(viewGen, closeable::close);
         }
     }
 
@@ -1816,6 +1831,12 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
     protected void setMinSeqNoToKeep(long seqNo) {}
 
     protected void onDelete() {}
+
+    protected void copyTranslogToTarget(Translog translog) {}
+
+    protected Releasable acquireRemoteDeletionPermits() throws InterruptedException {
+        return Releasables.releaseOnce(() -> {});
+    }
 
     /**
      * Drains ongoing syncs to the underlying store. It returns a releasable which can be closed to resume the syncs back.

@@ -856,6 +856,7 @@ public class Node implements Closeable {
             final MetadataInPlaceShardSplitService metadataInPlaceShardSplitService = new MetadataInPlaceShardSplitService(
                 settings,
                 clusterService,
+                pluginsService,
                 indicesService,
                 clusterModule.getAllocationService(),
                 shardLimitValidator,
@@ -1260,21 +1261,21 @@ public class Node implements Closeable {
                         .toInstance(new PeerRecoverySourceService(transportService, indicesService, recoverySettings));
                     b.bind(PeerRecoveryTargetService.class)
                         .toInstance(new PeerRecoveryTargetService(threadPool, transportService, recoverySettings, clusterService));
-                    SegmentReplicationSourceFactory segRepFactory = new SegmentReplicationSourceFactory(transportService, recoverySettings, clusterService);
                     b.bind(SegmentReplicationTargetService.class)
                         .toInstance(
                             new SegmentReplicationTargetService(
                                 threadPool,
                                 recoverySettings,
                                 transportService,
-                                segRepFactory,
+                                new SegmentReplicationSourceFactory(transportService, recoverySettings, clusterService),
                                 indicesService,
                                 clusterService
                             )
                         );
                     b.bind(SegmentReplicationSourceService.class)
                         .toInstance(new SegmentReplicationSourceService(indicesService, transportService, recoverySettings));
-                    b.bind(InPlaceShardSplitRecoveryService.class).toInstance(new InPlaceShardSplitRecoveryService(indicesService, recoverySettings, segRepFactory));
+                    b.bind(InPlaceShardSplitRecoveryService.class)
+                        .toInstance(newInPlaceShardSplitRecoveryService(indicesService, recoverySettings));
                 }
                 b.bind(HttpServerTransport.class).toInstance(httpServerTransport);
                 pluginComponents.stream().forEach(p -> b.bind((Class) p.getClass()).toInstance(p));
@@ -1359,6 +1360,11 @@ public class Node implements Closeable {
         Tracer tracer
     ) {
         return new TransportService(settings, transport, threadPool, interceptor, localNodeFactory, clusterSettings, taskHeaders, tracer);
+    }
+
+    protected InPlaceShardSplitRecoveryService newInPlaceShardSplitRecoveryService(
+        IndicesService indicesService, RecoverySettings recoverySettings) {
+        return new InPlaceShardSplitRecoveryService(indicesService, recoverySettings);
     }
 
     protected void processRecoverySettings(ClusterSettings clusterSettings, RecoverySettings recoverySettings) {

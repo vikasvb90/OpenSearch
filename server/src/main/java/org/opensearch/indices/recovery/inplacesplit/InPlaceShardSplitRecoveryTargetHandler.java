@@ -8,15 +8,19 @@
 
 package org.opensearch.indices.recovery.inplacesplit;
 
+import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.misc.store.HardlinkCopyDirectoryWrapper;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.IOUtils;
 import org.opensearch.action.LatchedActionListener;
 import org.opensearch.action.support.GroupedActionListener;
 import org.opensearch.cluster.node.DiscoveryNode;
+import org.opensearch.common.CheckedRunnable;
 import org.opensearch.common.SetOnce;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.lease.Releasable;
@@ -30,11 +34,15 @@ import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.StoreRecovery;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.store.StoreFileMetadata;
+import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.recovery.RecoveryTarget;
 import org.opensearch.indices.recovery.RecoveryTargetHandler;
+import org.opensearch.indices.replication.GetSegmentFilesResponse;
+import org.opensearch.indices.replication.RemoteStoreReplicationSource;
 import org.opensearch.indices.replication.SegmentReplicationSourceFactory;
 import org.opensearch.indices.replication.SegmentReplicationTarget;
+import org.opensearch.indices.replication.checkpoint.ReplicationCheckpoint;
 import org.opensearch.indices.replication.common.ReplicationFailedException;
 import org.opensearch.indices.replication.common.ReplicationListener;
 import org.opensearch.indices.replication.common.ReplicationState;
@@ -51,14 +59,16 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
+
+import static org.opensearch.index.translog.Translog.TRANSLOG_UUID_KEY;
 
 public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHandler, Closeable {
     private final Map<ShardId, RecoveryTarget> recoveryTargets;
     private final List<InPlaceShardRecoveryContext> recoveryContexts;
     private final Set<String> childShardsAllocationIds;
     private final IndexShard sourceShard;
-    private final SegmentReplicationSourceFactory segRepFactory;
     private final CancellableThreads cancellableThreads;
     private final SetOnce<Function<Store, Releasable>> storeAcquirer = new SetOnce<>();
 
@@ -81,15 +91,13 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
                                                   final CancellableThreads cancellableThreads,
                                                   final List<InPlaceShardRecoveryContext> recoveryContexts,
                                                   final Set<String> childShardsAllocationIds,
-                                                  final IndexShard sourceShard,
-                                                  final SegmentReplicationSourceFactory segRepFactory) {
+                                                  final IndexShard sourceShard) {
         Map<ShardId, RecoveryTarget> recoveryTargetMap = new HashMap<>();
         indexShards.forEach(shard -> {
             recoveryTargetMap.put(shard.shardId(),
                 new RecoveryTarget(shard, sourceNode, unSupportedTargetListener, cancellableThreads, true));
         });
         this.sourceShard = sourceShard;
-        this.segRepFactory = segRepFactory;
         this.recoveryTargets = Collections.unmodifiableMap(recoveryTargetMap);
         this.recoveryContexts = recoveryContexts;
         this.childShardsAllocationIds = childShardsAllocationIds;
@@ -110,7 +118,7 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
             Store remoteStore = childShard.remoteStore();
             if (remoteStore != null) {
                 try(Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(remoteStore)) {
-                    cleanUpStoreDirectory(remoteStore);
+                    childShard.cleanUpRemoteDirectories();
                 }
             }
         }
@@ -133,10 +141,6 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
             cancellableThreads.checkForCancel();
             recoveryTarget.prepareForTranslogOperations(totalTranslogOps, groupedActionListener);
         });
-    }
-
-    public void refresh() {
-        recoveryContexts.forEach(context -> context.getIndexShard().refresh("In-Place split"));
     }
 
     public void indexTranslogOperationsOnShards(List<Translog.Operation> operations, int totalTranslogOps,
@@ -184,40 +188,73 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
         }
     }
 
+//    public void blockOpsAndForceSegmentFileSync() {
+//        recoveryContexts.forEach(context -> {
+//            cancellableThreads.checkForCancel();
+//            CheckedRunnable<IOException> forceSegmentSync = () -> internalForceSegmentSync(context.getIndexShard());
+//            try {
+//                context.getIndexShard().blockOperationsAndExecute(forceSegmentSync);
+//            } catch (Exception ex) {
+//                throw new RuntimeException(ex);
+//            }
+//        });
+//    }
+
+//    public void internalForceSegmentSync(IndexShard childShard) {
+//        SegmentReplicationTarget segmentReplicationTarget = new SegmentReplicationTarget(
+//            childShard,
+//            sourceShard,
+//            childShard.getLatestReplicationCheckpoint(),
+//            segRepFactory.get(sourceShard),
+//            null
+//        );
+//
+//        CountDownLatch latch = new CountDownLatch(1);
+//        AtomicReference<Exception> replicationFailure = new AtomicReference<>();
+//        LatchedActionListener<Void> latchedActionListener = new LatchedActionListener<>(
+//            ActionListener.wrap(res -> childShard.resetToWriteableEngine(),
+//                replicationFailure::set), latch
+//        );
+//
+//        segmentReplicationTarget.startReplication(latchedActionListener);
+//        try {
+//            latch.await();
+//        } catch (InterruptedException e) {
+//            throw new RuntimeException(e);
+//        }
+//
+//        if (replicationFailure.get() != null) {
+//            throw new RuntimeException(replicationFailure.get());
+//        }
+//    }
+
+//    private static class RemoteReplicationSource extends RemoteStoreReplicationSource {
+//        public RemoteReplicationSource(IndexShard sourceShard) {
+//            super(sourceShard);
+//        }
+//
+//        @Override
+//        protected void syncFromRemote(
+//            List<StoreFileMetadata> filesToFetch,
+//            IndexShard targetShard,
+//            BiConsumer<String, Long> fileProgressTracker,
+//            ActionListener<GetSegmentFilesResponse> listener,
+//            List<String> toSyncSegmentFiles
+//        ) throws IOException {
+//
+//        }
+//    }
+
     @Override
     public void forceSegmentFileSync() {
-        if (sourceShard.indexSettings().isSegRepEnabled() == false) {
-            return;
-        }
-
-        recoveryContexts.forEach(context -> {
-            cancellableThreads.checkForCancel();
-            SegmentReplicationTarget segmentReplicationTarget = new SegmentReplicationTarget(
-                context.getIndexShard(),
-                sourceShard,
-                context.getIndexShard().getLatestReplicationCheckpoint(),
-                segRepFactory.get(sourceShard),
-                null
-            );
-
-            CountDownLatch latch = new CountDownLatch(1);
-            AtomicReference<Exception> replicationFailure = new AtomicReference<>();
-            LatchedActionListener<Void> latchedActionListener = new LatchedActionListener<>(
-                ActionListener.wrap(res -> context.getIndexShard().resetToWriteableEngine(),
-                    replicationFailure::set), latch
-            );
-
-            segmentReplicationTarget.startReplication(latchedActionListener);
-            try {
-                latch.await();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-
-            if (replicationFailure.get() != null) {
-                throw new RuntimeException(replicationFailure.get());
-            }
-        });
+//        if (sourceShard.indexSettings().isSegRepEnabled() == false) {
+//            return;
+//        }
+//
+//        recoveryContexts.forEach(context -> {
+//            cancellableThreads.checkForCancel();
+//            internalForceSegmentSync(context.getIndexShard());
+//        });
     }
 
     @Override
@@ -265,35 +302,93 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
         );
     }
 
-    public void receiveFilesAndSplit(Store store, StoreFileMetadata[] files, long maxSeqNo, long maxUnsafeAutoIdTimestamp) throws IOException {
-        ArrayUtil.timSort(files, Comparator.comparingLong(StoreFileMetadata::length));
-        for (InPlaceShardRecoveryContext context : recoveryContexts) {
-            cancellableThreads.checkForCancel();
-            try (Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(context.getIndexShard().store())) {
-                Store childShardStore = context.getIndexShard().store();
-                HardlinkCopyDirectoryWrapper hardLinkOrCopyTarget = new HardlinkCopyDirectoryWrapper(
-                    childShardStore.directory());
-                for (StoreFileMetadata file : files) {
-                    hardLinkOrCopyTarget.copyFrom(store.directory(), file.name(), file.name(), IOContext.DEFAULT);
-                }
+    public void receiveFilesAndSplit(Store store, StoreFileMetadata[] files, long maxSeqNo,
+                                     SplitCommitMetadata splitCommitMetadata,
+                                     long maxUnsafeAutoIdTimestamp)
+        throws Exception {
 
-                Tuple<Boolean, Directory> addIndexSplitDirectory = new Tuple<>(false, hardLinkOrCopyTarget);
-                StoreRecovery.addIndices(
-                    context.getRecoveryState().getIndex(),
-                    sourceShard.getIndexSort(),
-                    new Directory[]{childShardStore.directory()},
-                    maxSeqNo,
-                    maxUnsafeAutoIdTimestamp,
-                    sourceShard.indexSettings().getIndexMetadata(),
-                    context.getIndexShard().shardId().id(),
-                    true,
-                    context.getIndexShard().mapperService().hasNested(),
-                    addIndexSplitDirectory,
-                    (shardId) -> true,
-                    IndexWriterConfig.OpenMode.APPEND
-                );
+        Releasable releaseSourceRemote = null;
+        Store remoteStore = sourceShard.remoteStore();
+        if (remoteStore != null) {
+            releaseSourceRemote = Objects.requireNonNull(storeAcquirer.get()).apply(sourceShard.remoteStore());
+        }
+
+        try {
+            for (InPlaceShardRecoveryContext context : recoveryContexts) {
+                try (Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(context.getIndexShard().store())) {
+                    Directory directory = syncLocalDirectory(store, files, context.getIndexShard());
+                    cancellableThreads.checkForCancel();
+                    split(maxSeqNo, maxUnsafeAutoIdTimestamp, directory, context);
+
+                    if (remoteStore != null) {
+                        cancellableThreads.checkForCancel();
+                        SegmentInfos segmentInfos = SegmentInfos.readLatestCommit(directory);
+                        ReplicationCheckpoint replicationCheckpoint = context.getIndexShard().computeReplicationCheckpoint(
+                            segmentInfos, sourceShard);
+                        Collection<String> localSegments = segmentInfos.files(true);
+                        long translogFileGen = splitCommitMetadata.getTranslogGen();
+
+                        // Perform a remote store to remote store copy if possible or else fallback to upload from local.
+                        try (Releasable ignoreRemote = Objects.requireNonNull(storeAcquirer.get()).apply(remoteStore)) {
+                            context.getIndexShard().copySegmentsAndMetadataToRemote(
+                                sourceShard.getRemoteDirectory(),
+                                directory,
+                                segmentInfos,
+                                replicationCheckpoint,
+                                localSegments,
+                                translogFileGen,
+                                splitCommitMetadata.getMetadataTuple().v2()
+                            );
+                        }
+                    }
+                }
+            }
+        } finally {
+            if (releaseSourceRemote != null) {
+                releaseSourceRemote.close();
             }
         }
+
+    }
+
+    public Directory syncLocalDirectory(Store store, StoreFileMetadata[] files, IndexShard childShard)
+        throws IOException {
+        ArrayUtil.timSort(files, Comparator.comparingLong(StoreFileMetadata::length));
+
+        Store childShardStore = childShard.store();
+        HardlinkCopyDirectoryWrapper hardLinkOrCopyTarget = new HardlinkCopyDirectoryWrapper(
+            childShardStore.directory());
+        for (StoreFileMetadata file : files) {
+            long sourceFileChecksum;
+            try (IndexInput indexInput = store.directory().openInput(file.name(), IOContext.DEFAULT)) {
+                sourceFileChecksum = CodecUtil.retrieveChecksum(indexInput);
+            }
+            if (childShard.localDirectoryContains(childShardStore.directory(), file.name(),
+                sourceFileChecksum) == false) {
+                hardLinkOrCopyTarget.copyFrom(store.directory(), file.name(), file.name(), IOContext.DEFAULT);
+            }
+        }
+
+        return hardLinkOrCopyTarget;
+    }
+
+    private void split(long maxSeqNo, long maxUnsafeAutoIdTimestamp, Directory childShardDirectory,
+                       InPlaceShardRecoveryContext context) throws IOException {
+        Tuple<Boolean, Directory> addIndexSplitDirectory = new Tuple<>(false, childShardDirectory);
+        StoreRecovery.addIndices(
+            context.getRecoveryState().getIndex(),
+            sourceShard.getIndexSort(),
+            new Directory[]{childShardDirectory},
+            maxSeqNo,
+            maxUnsafeAutoIdTimestamp,
+            sourceShard.indexSettings().getIndexMetadata(),
+            context.getIndexShard().shardId().id(),
+            true,
+            context.getIndexShard().mapperService().hasNested(),
+            addIndexSplitDirectory,
+            (shardId) -> true,
+            IndexWriterConfig.OpenMode.APPEND
+        );
     }
 
     @Override
@@ -309,10 +404,26 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
             recoveryContexts.size()
         );
 
+        String sourceTranslogUUID;
+        try {
+            sourceTranslogUUID = sourceShard.store().getMetadata().getCommitUserData().get(TRANSLOG_UUID_KEY);
+        } catch (Exception ex) {
+            listener.onFailure(ex);
+            return;
+        }
+
         try {
             for (InPlaceShardRecoveryContext context : recoveryContexts) {
                 try (Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(context.getIndexShard().store())) {
                     context.getIndexShard().store().bootstrapNewHistory();
+
+                    try {
+                        // Associate store with source translog UUID. This may not be required for DocRep replication mode.
+                        context.getIndexShard().store().associateIndexWithNewTranslog(sourceTranslogUUID);
+                    } catch (Exception ex) {
+                        listener.onFailure(ex);
+                        return;
+                    }
                     ShardId shardId = context.getIndexShard().shardId();
                     RecoveryTarget recoveryTarget = recoveryTargets.get(shardId);
                     recoveryTarget.cleanFiles(totalTranslogOps, globalCheckpoint, sourceMetadata, groupedActionListener);

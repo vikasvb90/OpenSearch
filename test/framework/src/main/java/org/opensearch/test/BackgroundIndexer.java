@@ -35,11 +35,11 @@ package org.opensearch.test;
 import com.carrotsearch.randomizedtesting.RandomizedTest;
 import com.carrotsearch.randomizedtesting.generators.RandomNumbers;
 import com.carrotsearch.randomizedtesting.generators.RandomStrings;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.logging.log4j.util.Supplier;
+import org.junit.Assert;
 import org.opensearch.action.bulk.BulkItemResponse;
 import org.opensearch.action.bulk.BulkRequestBuilder;
 import org.opensearch.action.bulk.BulkResponse;
@@ -50,11 +50,12 @@ import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.ConcurrentCollections;
 import org.opensearch.common.xcontent.XContentFactory;
 import org.opensearch.core.xcontent.XContentBuilder;
-import org.junit.Assert;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -84,6 +85,8 @@ public class BackgroundIndexer implements AutoCloseable {
 
     private boolean autoStart = false;
     private final Set<String> ids = ConcurrentCollections.newConcurrentSet();
+    private final List<String> orderedIds = Collections.synchronizedList(new ArrayList<>());
+//    private final Queue<String> orderedIds = ConcurrentCollections.newDeque();
     private volatile Consumer<Exception> failureAssertion = null;
 
     volatile int minFieldSize = 10;
@@ -186,6 +189,7 @@ public class BackgroundIndexer implements AutoCloseable {
                                         if (bulkItemResponse.isFailed() == false) {
                                             boolean add = ids.add(bulkItemResponse.getId());
                                             assert add : "ID: " + bulkItemResponse.getId() + " already used";
+                                            orderedIds.add(bulkItemResponse.getId());
                                         } else {
                                             trackFailure(bulkItemResponse.getFailure().getCause());
                                         }
@@ -210,6 +214,7 @@ public class BackgroundIndexer implements AutoCloseable {
                                             .get();
                                         boolean add = ids.add(indexResponse.getId());
                                         assert add : "ID: " + indexResponse.getId() + " already used";
+                                        orderedIds.add(indexResponse.getId());
                                     } catch (Exception e) {
                                         if (ignoreIndexingFailures == false) {
                                             throw e;
@@ -224,6 +229,7 @@ public class BackgroundIndexer implements AutoCloseable {
                                             .get();
                                         boolean add = ids.add(indexResponse.getId());
                                         assert add : "ID: " + indexResponse.getId() + " already used";
+                                        orderedIds.add(indexResponse.getId());
                                     } catch (Exception e) {
                                         if (ignoreIndexingFailures == false) {
                                             throw e;
@@ -359,8 +365,16 @@ public class BackgroundIndexer implements AutoCloseable {
         return ids.size();
     }
 
+    public List<String> getOrderedIds() {
+
+        return orderedIds;
+    }
+
     public void assertNoFailures() {
         synchronized (failures) {
+            for (Exception e : failures) {
+                logger.error("Printing exception", e);
+            }
             Assert.assertThat(failures, emptyIterable());
         }
     }

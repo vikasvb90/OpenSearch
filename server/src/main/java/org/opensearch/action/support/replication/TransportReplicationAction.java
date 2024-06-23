@@ -36,9 +36,11 @@ import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchException;
+import org.opensearch.Version;
 import org.opensearch.action.ActionListenerResponseHandler;
 import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.UnavailableShardsException;
+import org.opensearch.action.bulk.TransportShardBulkAction;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.ChannelActionListener;
@@ -54,6 +56,8 @@ import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.AllocationId;
+import org.opensearch.cluster.routing.IndexRoutingTable;
+import org.opensearch.cluster.routing.IndexShardRoutingTable;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.Nullable;
@@ -141,6 +145,7 @@ public abstract class TransportReplicationAction<
      */
     public static final String PRIMARY_ACTION_SUFFIX = "[p]";
     public static final String REPLICA_ACTION_SUFFIX = "[r]";
+    public static final String CHILD_REPLICA_ACTION_SUFFIX = "[c]";
 
     protected final ThreadPool threadPool;
     protected final TransportService transportService;
@@ -153,6 +158,7 @@ public abstract class TransportReplicationAction<
 
     // package private for testing
     protected final String transportReplicaAction;
+    protected final String transportChildReplicaAction;
     protected final String transportPrimaryAction;
 
     private final boolean syncGlobalCheckpointAfterOperation;
@@ -248,6 +254,7 @@ public abstract class TransportReplicationAction<
 
         this.transportPrimaryAction = actionName + PRIMARY_ACTION_SUFFIX;
         this.transportReplicaAction = actionName + REPLICA_ACTION_SUFFIX;
+        this.transportChildReplicaAction = actionName + CHILD_REPLICA_ACTION_SUFFIX;
 
         this.initialRetryBackoffBound = REPLICATION_INITIAL_RETRY_BACKOFF_BOUND.get(settings);
         this.retryTimeout = REPLICATION_RETRY_TIMEOUT.get(settings);
@@ -266,6 +273,15 @@ public abstract class TransportReplicationAction<
             true,
             in -> new ConcreteReplicaRequest<>(replicaRequestReader, in),
             this::handleReplicaRequest
+        );
+
+        transportService.registerRequestHandler(
+            transportChildReplicaAction,
+            executor,
+            true,
+            true,
+            in -> new ConcreteChildReplicaRequest<>(replicaRequestReader, in),
+            this::handleChildReplicaRequest
         );
 
         this.transportOptions = transportOptions(settings);
@@ -343,7 +359,8 @@ public abstract class TransportReplicationAction<
                 long primaryTerm,
                 long globalCheckpoint,
                 long maxSeqNoOfUpdatesOrDeletes,
-                ActionListener<ReplicationOperation.ReplicaResponse> listener
+                ActionListener<ReplicationOperation.ReplicaResponse> listener,
+                boolean replicatingToChild
             ) {
                 throw new UnsupportedOperationException("Primary term validation is not available for " + actionName);
             }
@@ -545,7 +562,10 @@ public abstract class TransportReplicationAction<
             acquirePrimaryOperationPermit(
                 indexShard,
                 primaryRequest.getRequest(),
-                ActionListener.wrap(releasable -> runWithPrimaryShardReference(new PrimaryShardReference(indexShard, releasable)), e -> {
+                ActionListener.wrap(releasable -> {
+                    PrimaryShardReference p = new PrimaryShardReference(indexShard, releasable);
+                    runWithPrimaryShardReference(p);
+                }, e -> {
                     if (e instanceof ShardNotInPrimaryModeException) {
                         onFailure(new ReplicationOperation.RetryOnPrimaryException(shardId, "shard is not in primary mode", e));
                     } else {
@@ -567,12 +587,13 @@ public abstract class TransportReplicationAction<
                 }
 
                 if (primaryShardReference.isRelocated()) {
+                    primaryShardReference.close(); // release shard operation lock as soon as possible
                     if (primaryShardReference.routingEntry().splitting()) {
                         // This means shard was being split and was in relocation handoff stage when replication op on primary arrived.
                         // Write ops specifically will now get retried and will be routed to respective child shards.
                         throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
                     }
-                    primaryShardReference.close(); // release shard operation lock as soon as possible
+
                     setPhase(replicationTask, "primary_delegation");
                     // delegate primary phase to relocation target
                     // it is safe to execute primary phase on relocation target as there are no more in-flight operations where primary
@@ -767,7 +788,25 @@ public abstract class TransportReplicationAction<
         );
 
         try {
-            new AsyncReplicaAction(replicaRequest, listener, (ReplicationTask) task).run();
+            new AsyncReplicaAction(replicaRequest, listener, (ReplicationTask) task, transportReplicaAction, null).run();
+        } catch (RuntimeException e) {
+            listener.onFailure(e);
+        }
+    }
+
+    protected void handleChildReplicaRequest(
+        final ConcreteChildReplicaRequest<ReplicaRequest> replicaRequest,
+        final TransportChannel channel,
+        final Task task
+    ) {
+        Releasable releasable = checkReplicaLimits(replicaRequest.getRequest());
+        ActionListener<ReplicaResponse> listener = ActionListener.runBefore(
+            new ChannelActionListener<>(channel, transportChildReplicaAction, replicaRequest),
+            releasable::close
+        );
+
+        try {
+            new AsyncReplicaAction(replicaRequest, listener, (ReplicationTask) task, transportChildReplicaAction, replicaRequest.childShardId).run();
         } catch (RuntimeException e) {
             listener.onFailure(e);
         }
@@ -802,6 +841,7 @@ public abstract class TransportReplicationAction<
     private final class AsyncReplicaAction extends AbstractRunnable implements ActionListener<Releasable> {
         private final ActionListener<ReplicaResponse> onCompletionListener;
         private final IndexShard replica;
+        private final String transportReplicaAction;
         /**
          * The task on the node with the replica shard.
          */
@@ -814,14 +854,17 @@ public abstract class TransportReplicationAction<
         AsyncReplicaAction(
             ConcreteReplicaRequest<ReplicaRequest> replicaRequest,
             ActionListener<ReplicaResponse> onCompletionListener,
-            ReplicationTask task
+            ReplicationTask task,
+            String transportReplicaAction,
+            ShardId childShardId
         ) {
             this.replicaRequest = replicaRequest;
             this.onCompletionListener = onCompletionListener;
             this.task = task;
             final ShardId shardId = replicaRequest.getRequest().shardId();
             assert shardId != null : "request shardId must be set";
-            this.replica = getIndexShard(shardId);
+            this.replica = getIndexShard(Objects.requireNonNullElse(childShardId, shardId));
+            this.transportReplicaAction = transportReplicaAction;
         }
 
         @Override
@@ -1027,11 +1070,17 @@ public abstract class TransportReplicationAction<
                 assert request.waitForActiveShards() != ActiveShardCount.DEFAULT
                     : "request waitForActiveShards must be set in resolveRequest";
 
-                final ShardRouting primary;
+                ShardRouting primary = null;
                 if (indexMetadata.isParentShard(request.shardId().id()) && indexMetadata.isNonServingShard(request.shardId.id())) {
                     throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
                 } else {
-                    primary = state.getRoutingTable().shardRoutingTable(request.shardId()).primaryShard();
+                    IndexRoutingTable indexRoutingTable = state.getRoutingTable().index(request.shardId().getIndex());
+                    IndexShardRoutingTable shardRoutingTable = indexRoutingTable.shard(request.shardId().id());
+                    // Can happen in case where new shards (child shards) are recovered and cluster manager has updated
+                    // index metadata but coordinator node hasn't yet received the updated state.
+                    if (shardRoutingTable != null) {
+                        primary = state.getRoutingTable().shardRoutingTable(request.shardId()).primaryShard();
+                    }
                 }
                 if (primary == null || primary.active() == false) {
                     logger.trace(
@@ -1455,7 +1504,8 @@ public abstract class TransportReplicationAction<
             final long primaryTerm,
             final long globalCheckpoint,
             final long maxSeqNoOfUpdatesOrDeletes,
-            final ActionListener<ReplicationOperation.ReplicaResponse> listener
+            final ActionListener<ReplicationOperation.ReplicaResponse> listener,
+            final boolean replicatingToChild
         ) {
             String nodeId = replica.currentNodeId();
             final DiscoveryNode node = clusterService.state().nodes().get(nodeId);
@@ -1463,18 +1513,30 @@ public abstract class TransportReplicationAction<
                 listener.onFailure(new NoNodeAvailableException("unknown node [" + nodeId + "]"));
                 return;
             }
-            final ConcreteReplicaRequest<ReplicaRequest> replicaRequest = new ConcreteReplicaRequest<>(
-                request,
-                replica.allocationId().getId(),
-                primaryTerm,
-                globalCheckpoint,
-                maxSeqNoOfUpdatesOrDeletes
-            );
             final ActionListenerResponseHandler<ReplicaResponse> handler = new ActionListenerResponseHandler<>(
                 listener,
                 ReplicaResponse::new
             );
-            transportService.sendRequest(node, transportReplicaAction, replicaRequest, transportOptions, handler);
+            if (replicatingToChild == false) {
+                final ConcreteReplicaRequest<ReplicaRequest> replicaRequest = new ConcreteReplicaRequest<>(
+                    request,
+                    replica.allocationId().getId(),
+                    primaryTerm,
+                    globalCheckpoint,
+                    maxSeqNoOfUpdatesOrDeletes
+                );
+                transportService.sendRequest(node, transportReplicaAction, replicaRequest, transportOptions, handler);
+            } else {
+                final ConcreteReplicaRequest<ReplicaRequest> replicaRequest = new ConcreteChildReplicaRequest<>(
+                    request,
+                    replica.allocationId().getId(),
+                    primaryTerm,
+                    globalCheckpoint,
+                    maxSeqNoOfUpdatesOrDeletes,
+                    replica.shardId()
+                );
+                transportService.sendRequest(node, transportChildReplicaAction, replicaRequest, transportOptions, handler);
+            }
         }
 
         @Override
@@ -1613,11 +1675,63 @@ public abstract class TransportReplicationAction<
     }
 
     /**
+     * Internal request for concrete child replica
+     *
+     * @opensearch.internal
+     */
+    protected static class ConcreteChildReplicaRequest<R extends TransportRequest> extends ConcreteReplicaRequest<R> {
+        private final ShardId childShardId;
+
+        public ConcreteChildReplicaRequest(Writeable.Reader<R> requestReader, StreamInput in) throws IOException {
+            super(requestReader, in);
+            childShardId = new ShardId(in);
+        }
+
+        public ConcreteChildReplicaRequest(
+            final R request,
+            final String targetAllocationID,
+            final long primaryTerm,
+            final long globalCheckpoint,
+            final long maxSeqNoOfUpdatesOrDeletes,
+            final ShardId childShardId
+        ) {
+            super(request, targetAllocationID, primaryTerm, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes);
+            this.childShardId = childShardId;
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            childShardId.writeTo(out);
+        }
+
+        @Override
+        public String toString() {
+            return "ConcreteReplicaRequest{"
+                + "targetAllocationID='"
+                + getTargetAllocationID()
+                + '\''
+                + ", primaryTerm='"
+                + getPrimaryTerm()
+                + '\''
+                + ", request="
+                + getRequest()
+                + ", globalCheckpoint="
+                + getGlobalCheckpoint()
+                + ", maxSeqNoOfUpdatesOrDeletes="
+                + getMaxSeqNoOfUpdatesOrDeletes()
+                + ", childShardId="
+                + childShardId
+                + '}';
+        }
+    }
+
+    /**
      * Internal request for concrete replica
      *
      * @opensearch.internal
      */
-    protected static final class ConcreteReplicaRequest<R extends TransportRequest> extends ConcreteShardRequest<R> {
+    protected static class ConcreteReplicaRequest<R extends TransportRequest> extends ConcreteShardRequest<R> {
 
         private final long globalCheckpoint;
         private final long maxSeqNoOfUpdatesOrDeletes;

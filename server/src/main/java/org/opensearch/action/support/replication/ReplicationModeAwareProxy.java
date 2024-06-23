@@ -66,7 +66,8 @@ public class ReplicationModeAwareProxy<ReplicaRequest extends ReplicationRequest
             return ReplicationMode.NO_REPLICATION;
         }
 
-        if (primaryRouting.relocating() && shardRouting.isSameAllocation(primaryRouting.getTargetRelocatingShard())) {
+        if ((primaryRouting.relocating() && shardRouting.isSameAllocation(primaryRouting.getTargetRelocatingShard())) ||
+            (primaryRouting.splitting()) && shardRouting.isSplitTargetOf(primaryRouting)) {
             return ReplicationMode.FULL_REPLICATION;
         }
 

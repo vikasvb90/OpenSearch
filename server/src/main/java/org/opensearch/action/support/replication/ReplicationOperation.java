@@ -37,6 +37,7 @@ import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchException;
 import org.opensearch.action.UnavailableShardsException;
+import org.opensearch.action.bulk.TransportShardBulkAction;
 import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.RetryableAction;
 import org.opensearch.action.support.TransportActions;
@@ -64,6 +65,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -102,6 +104,8 @@ public class ReplicationOperation<
     private final TimeValue retryTimeout;
     private final long primaryTerm;
     private final ReplicationProxy<ReplicaRequest> replicationProxy;
+    private final String id = UUID.randomUUID().toString();
+    private final List<String> pendingActionsList = new ArrayList<>();
 
     // exposed for tests
     private final ActionListener<PrimaryResultT> resultListener;
@@ -155,12 +159,19 @@ public class ReplicationOperation<
 
         totalShards.incrementAndGet();
         pendingActions.incrementAndGet(); // increase by 1 until we finish all primary coordination
+        pendingActionsList.add("Primary-action");
         primary.perform(request, ActionListener.wrap(this::handlePrimaryResult, this::finishAsFailed));
     }
 
     private void handlePrimaryResult(final PrimaryResultT primaryResult) {
         this.primaryResult = primaryResult;
         final ReplicaRequest replicaRequest = primaryResult.replicaRequest();
+        if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+            logger.info("Handling primary result for id: " + id);
+        }
+        if (request.shardId.id() == 3) {
+            System.out.println();
+        }
         if (replicaRequest != null) {
             if (logger.isTraceEnabled()) {
                 logger.trace("[{}] op [{}] completed on primary for request [{}]", primary.routingEntry().shardId(), opType, request);
@@ -181,6 +192,9 @@ public class ReplicationOperation<
             final ReplicationGroup replicationGroup = primary.getReplicationGroup();
             final PendingReplicationActions pendingReplicationActions = primary.getPendingReplicationActions();
             markUnavailableShardsAsStale(replicaRequest, replicationGroup);
+            if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                logger.info("Performing on replicas for id " + id);
+            }
             performOnReplicas(replicaRequest, globalCheckpoint, maxSeqNoOfUpdatesOrDeletes, replicationGroup, pendingReplicationActions);
         }
         primaryResult.runPostReplicationActions(new ActionListener<Void>() {
@@ -189,7 +203,13 @@ public class ReplicationOperation<
             public void onResponse(Void aVoid) {
                 successfulShards.incrementAndGet();
                 try {
+                    if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                        logger.info("Updating checkpoints for id: " + id);
+                    }
                     updateCheckPoints(primary.routingEntry(), primary::localCheckpoint, primary::globalCheckpoint);
+                    if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                        logger.info("Updated checkpoints for id: " + id);
+                    }
                 } finally {
                     decPendingAndFinishIfNeeded();
                 }
@@ -209,11 +229,18 @@ public class ReplicationOperation<
         // if inSyncAllocationIds contains allocation ids of shards that don't exist in RoutingTable, mark copies as stale
         for (String allocationId : replicationGroup.getUnavailableInSyncShards()) {
             pendingActions.incrementAndGet();
+            pendingActionsList.add("Mark-unavailable-shard-as-stale");
+            if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                logger.info("Marking unavailable shards for id: " + id);
+            }
             replicasProxy.markShardCopyAsStaleIfNeeded(
                 replicaRequest.shardId(),
                 allocationId,
                 primaryTerm,
-                ActionListener.wrap(r -> decPendingAndFinishIfNeeded(), ReplicationOperation.this::onNoLongerPrimary)
+                ActionListener.wrap(r -> {
+                    logger.info("Marked unavailable shards for id: " + id);
+                    decPendingAndFinishIfNeeded();
+                }, ReplicationOperation.this::onNoLongerPrimary)
             );
         }
     }
@@ -232,6 +259,9 @@ public class ReplicationOperation<
         final ShardRouting primaryRouting = primary.routingEntry();
 
         for (final ShardRouting shardRouting : replicationGroup.getReplicationTargets()) {
+            if ((primaryRouting.isSplitTarget() || primaryRouting.isRelocationTarget()) && !shardRouting.isSameAllocation(primaryRouting)) {
+                logger.info("Performing unexpectedly on routing " + shardRouting.shardId().id());
+            }
             ReplicationProxyRequest<ReplicaRequest> proxyRequest = new Builder<ReplicaRequest>(
                 shardRouting,
                 primaryRouting,
@@ -258,6 +288,10 @@ public class ReplicationOperation<
         }
         totalShards.incrementAndGet();
         pendingActions.incrementAndGet();
+        pendingActionsList.add("Replica-action for replica " + replicationProxyRequest.getShardRouting().shardId().id());
+        if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+            logger.info("Performing on replica for id: " + id + " on replica " + replicationProxyRequest.getShardRouting().shardId().id());
+        }
         final ActionListener<ReplicaResponse> replicationListener = new ActionListener<ReplicaResponse>() {
             @Override
             public void onResponse(ReplicaResponse response) {
@@ -266,6 +300,9 @@ public class ReplicationOperation<
                     updateCheckPoints(shard, response::localCheckpoint, response::globalCheckpoint);
                 } finally {
                     decPendingAndFinishIfNeeded();
+                    if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                        logger.info("Performed on replica for id: " + id + " on replica " + + replicationProxyRequest.getShardRouting().shardId().id());
+                    }
                 }
             }
 
@@ -296,12 +333,20 @@ public class ReplicationOperation<
                     );
                 }
                 String message = String.format(Locale.ROOT, "failed to perform %s on replica %s", opType, shard);
+                if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                    logger.info("Failed on replica operation "+ opType+" for id: " + id + " on replica " + replicationProxyRequest.getShardRouting().shardId().id());
+                }
                 replicasProxy.failShardIfNeeded(
                     shard,
                     primaryTerm,
                     message,
                     replicaException,
-                    ActionListener.wrap(r -> decPendingAndFinishIfNeeded(), ReplicationOperation.this::onNoLongerPrimary)
+                    ActionListener.wrap(r -> {
+                        decPendingAndFinishIfNeeded();
+                        if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                            logger.info("Performed Failed on replica operation "+ opType+" for id: " + id + " on replica " + replicationProxyRequest.getShardRouting().shardId().id());
+                        }
+                    }, ReplicationOperation.this::onNoLongerPrimary)
                 );
             }
 
@@ -346,6 +391,12 @@ public class ReplicationOperation<
 
     private void updateCheckPoints(ShardRouting shard, LongSupplier localCheckpointSupplier, LongSupplier globalCheckpointSupplier) {
         try {
+            if (TransportShardBulkAction.debugRequest.get() == true) {
+                logger.info("Updating checkpoint for shard " + shard.shardId().id()
+                    + " on primary shard allocation " + primary.routingEntry().allocationId().getId()
+                    + " for replica shard allocation " + shard.allocationId().getId()
+                    + " with checkpoint " + localCheckpointSupplier.getAsLong());
+            }
             primary.updateLocalCheckpointForShard(shard.allocationId().getId(), localCheckpointSupplier.getAsLong());
             primary.updateGlobalCheckpointForShard(shard.allocationId().getId(), globalCheckpointSupplier.getAsLong());
         } catch (final AlreadyClosedException e) {
@@ -424,6 +475,9 @@ public class ReplicationOperation<
         if (pendingActions.decrementAndGet() == 0) {
             finish();
         }
+        if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+            logger.info("Pending action count for id " + id + " is:" + pendingActions.get() + " and list is: " + pendingActionsList);
+        }
     }
 
     private void finish() {
@@ -436,7 +490,13 @@ public class ReplicationOperation<
                 shardReplicaFailures.toArray(failuresArray);
             }
             primaryResult.setShardInfo(new ReplicationResponse.ShardInfo(totalShards.get(), successfulShards.get(), failuresArray));
+            if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                logger.info("Sending operation result for id: " + id);
+            }
             resultListener.onResponse(primaryResult);
+            if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+                logger.info("Sent operation result for id: " + id);
+            }
         }
     }
 
@@ -559,7 +619,8 @@ public class ReplicationOperation<
             long primaryTerm,
             long globalCheckpoint,
             long maxSeqNoOfUpdatesOrDeletes,
-            ActionListener<ReplicaResponse> listener
+            ActionListener<ReplicaResponse> listener,
+            boolean replicatingToChild
         );
 
         /**

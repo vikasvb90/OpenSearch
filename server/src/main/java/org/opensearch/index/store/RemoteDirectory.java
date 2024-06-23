@@ -38,6 +38,7 @@ import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -87,6 +88,8 @@ public class RemoteDirectory extends Directory {
         this.uploadRateLimiter = uploadRateLimiter;
         this.downloadRateLimiter = downloadRateLimiter;
     }
+
+
 
     /**
      * Returns names of all files stored in this directory. The output must be in sorted (UTF-16,
@@ -315,6 +318,19 @@ public class RemoteDirectory extends Directory {
 
     public void delete() throws IOException {
         blobContainer.delete();
+    }
+
+    public Set<String> copyFilesFromSrcRemoteToCurRemote(
+        RemoteDirectory sourceDirectory,
+        Set<String> remoteFiles
+    ) {
+        if (blobContainer instanceof AsyncMultiStreamBlobContainer &&
+            sourceDirectory.blobContainer instanceof AsyncMultiStreamBlobContainer) {
+            AsyncMultiStreamBlobContainer sourceBlobContainer = (AsyncMultiStreamBlobContainer) sourceDirectory.blobContainer;
+            AsyncMultiStreamBlobContainer currentBlobContainer = (AsyncMultiStreamBlobContainer) blobContainer;
+            return currentBlobContainer.copyFilesFromSrcRemote(remoteFiles, sourceBlobContainer);
+        }
+        return Collections.emptySet();
     }
 
     public boolean copyFrom(

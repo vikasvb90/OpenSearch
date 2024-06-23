@@ -32,6 +32,8 @@
 
 package org.opensearch.index.shard;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.action.ActionRunnable;
 import org.opensearch.action.support.ContextPreservingActionListener;
@@ -49,9 +51,12 @@ import org.opensearch.threadpool.ThreadPool;
 
 import java.io.Closeable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -72,6 +77,7 @@ final class IndexShardOperationPermits implements Closeable {
 
     private final ShardId shardId;
     private final ThreadPool threadPool;
+    private final Logger logger = LogManager.getLogger(IndexShardOperationPermits.class);
 
     static final int TOTAL_PERMITS = Integer.MAX_VALUE;
     final Semaphore semaphore = new Semaphore(TOTAL_PERMITS, true); // fair to ensure a blocking thread is not starved
@@ -119,9 +125,14 @@ final class IndexShardOperationPermits implements Closeable {
     <E extends Exception> void blockOperations(final long timeout, final TimeUnit timeUnit, final CheckedRunnable<E> onBlocked)
         throws InterruptedException, TimeoutException, E {
         delayOperations();
+        logger.info("Delayed operations and going to acquire all permits");
         try (Releasable ignored = acquireAll(timeout, timeUnit)) {
             onBlocked.run();
         } finally {
+            Set<Thread> threads = Thread.getAllStackTraces().keySet();
+            for (Thread t : threads) {
+
+            }
             releaseDelayedOperations();
         }
     }
@@ -182,11 +193,13 @@ final class IndexShardOperationPermits implements Closeable {
                 assert queuedBlockOperations > 0;
             }
         }
+        logger.info("Going to acquire all permits. Currently issued permits " + issuedPermits.size() );
         if (semaphore.tryAcquire(TOTAL_PERMITS, timeout, timeUnit)) {
             final RunOnce release = new RunOnce(() -> {
                 assert semaphore.availablePermits() == 0;
                 semaphore.release(TOTAL_PERMITS);
             });
+            logger.info("Acquired all permits");
             return release::run;
         } else {
             throw new TimeoutException("timeout while blocking operations");

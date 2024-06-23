@@ -25,17 +25,14 @@ import org.opensearch.common.util.CancellableThreads;
 import org.opensearch.common.util.concurrent.FutureUtils;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexEventListener;
 import org.opensearch.index.shard.IndexShard;
-import org.opensearch.index.store.Store;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.recovery.RecoveryResponse;
 import org.opensearch.indices.recovery.RecoverySettings;
 import org.opensearch.indices.recovery.RecoverySourceHandler;
 import org.opensearch.indices.recovery.RecoverySourceHandlerFactory;
 import org.opensearch.indices.recovery.StartRecoveryRequest;
-import org.opensearch.indices.replication.SegmentReplicationSourceFactory;
 import org.opensearch.indices.replication.common.ReplicationFailedException;
 import org.opensearch.indices.replication.common.ReplicationTimer;
 
@@ -53,15 +50,12 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     private final OngoingRecoveries ongoingRecoveries;
     private final IndicesService indicesService;
     private final RecoverySettings recoverySettings;
-    private final SegmentReplicationSourceFactory segRepFactory;
 
     @Inject
-    public InPlaceShardSplitRecoveryService(IndicesService indicesService, RecoverySettings recoverySettings,
-                                            SegmentReplicationSourceFactory segRepFactory) {
+    public InPlaceShardSplitRecoveryService(IndicesService indicesService, RecoverySettings recoverySettings) {
         this.ongoingRecoveries = new OngoingRecoveries();
         this.indicesService = indicesService;
         this.recoverySettings = recoverySettings;
-        this.segRepFactory = segRepFactory;
     }
 
     @Override
@@ -162,21 +156,48 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             List<IndexShard> targetShards = new ArrayList<>();
             recoveryContexts.forEach(context -> targetShards.add(context.getIndexShard()));
 
-            InPlaceShardSplitRecoveryTargetHandler targetHandler = new InPlaceShardSplitRecoveryTargetHandler(targetShards,
-                node, cancellableThreads, recoveryContexts, childShardsAllocationIds ,sourceShard, segRepFactory);
+            InPlaceShardSplitRecoveryTargetHandler targetHandler = createSplitTargetHandler(targetShards,
+                node, cancellableThreads, recoveryContexts, childShardsAllocationIds ,sourceShard);
             RecoverySourceHandler delegatingRecoveryHandler = RecoverySourceHandlerFactory.create(
                 sourceShard, targetHandler, request,
                 recoverySettings, true, cancellableThreads);
 
-            InPlaceShardSplitRecoverySourceHandler sourceHandler = new InPlaceShardSplitRecoverySourceHandler(sourceShard,
-                sourceShard.getThreadPool(), targetHandler, delegatingRecoveryHandler, request,
-                Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
-                recoverySettings.getMaxConcurrentFileChunks(), recoverySettings.getMaxConcurrentOperations(),
-                cancellableThreads, recoveryContexts, shardIds, childShardsAllocationIds);
+            InPlaceShardSplitRecoverySourceHandler sourceHandler = createSourceHandler(sourceShard,
+                targetHandler, delegatingRecoveryHandler, request, cancellableThreads, recoveryContexts,
+                shardIds, childShardsAllocationIds);
 
             recoveries.put(sourceShard.shardId(), new Recovery(targetHandler, sourceHandler, replicationListener));
             sourceShard.recoveryStats().incCurrentAsSource();
             return sourceHandler;
+        }
+
+        protected InPlaceShardSplitRecoveryTargetHandler createSplitTargetHandler(
+            List<IndexShard> targetShards,
+            DiscoveryNode node,
+            CancellableThreads cancellableThreads,
+            List<InPlaceShardRecoveryContext> recoveryContexts,
+            Set<String> childShardsAllocationIds,
+            IndexShard sourceShard
+        ) {
+            return new InPlaceShardSplitRecoveryTargetHandler(targetShards,
+                node, cancellableThreads, recoveryContexts, childShardsAllocationIds ,sourceShard);
+        }
+
+        protected InPlaceShardSplitRecoverySourceHandler createSourceHandler(
+            IndexShard sourceShard,
+            InPlaceShardSplitRecoveryTargetHandler targetHandler,
+            RecoverySourceHandler delegatingRecoveryHandler,
+            StartRecoveryRequest request,
+            CancellableThreads cancellableThreads,
+            List<InPlaceShardRecoveryContext> recoveryContexts,
+            List<ShardId> shardIds,
+            Set<String> childShardsAllocationIds
+        ) {
+            return new InPlaceShardSplitRecoverySourceHandler(sourceShard,
+                targetHandler, delegatingRecoveryHandler, request,
+                Math.toIntExact(recoverySettings.getChunkSize().getBytes()),
+                recoverySettings.getMaxConcurrentFileChunks(), recoverySettings.getMaxConcurrentOperations(),
+                cancellableThreads, recoveryContexts, shardIds, childShardsAllocationIds);
         }
 
         synchronized void remove(InPlaceShardSplitRecoverySourceHandler sourceHandler) {

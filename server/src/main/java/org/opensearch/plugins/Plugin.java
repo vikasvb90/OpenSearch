@@ -48,6 +48,7 @@ import org.opensearch.common.settings.SettingUpgrader;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.common.io.stream.NamedWriteable;
 import org.opensearch.core.common.io.stream.NamedWriteableRegistry;
+import org.opensearch.core.index.Index;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.core.xcontent.XContentParser;
 import org.opensearch.env.Environment;
@@ -68,6 +69,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
@@ -268,5 +270,9 @@ public abstract class Plugin implements Closeable {
      */
     public Collection<IndexSettingProvider> getAdditionalIndexSettingProviders() {
         return Collections.emptyList();
+    }
+
+    public Predicate<Index> shardSplitAllowedPredicate() {
+        return (index) -> true;
     }
 }

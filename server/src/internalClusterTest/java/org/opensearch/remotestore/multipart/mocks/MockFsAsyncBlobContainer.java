@@ -26,7 +26,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -141,6 +143,11 @@ public class MockFsAsyncBlobContainer extends FsBlobContainer implements AsyncMu
 
     public boolean remoteIntegrityCheckSupported() {
         return true;
+    }
+
+    @Override
+    public Set<String> copyFilesFromSrcRemote(Set<String> files, AsyncMultiStreamBlobContainer blobContainer) {
+        return new HashSet<>();
     }
 
     private boolean isSegmentFile(String filename) {

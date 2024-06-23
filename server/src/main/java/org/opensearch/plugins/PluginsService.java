@@ -50,6 +50,7 @@ import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.common.Strings;
+import org.opensearch.core.index.Index;
 import org.opensearch.core.service.ReportingService;
 import org.opensearch.index.IndexModule;
 import org.opensearch.threadpool.ExecutorBuilder;
@@ -79,6 +80,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import static org.opensearch.core.util.FileSystemUtils.isAccessibleDirectory;
@@ -100,6 +102,7 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
      */
     private final List<Tuple<PluginInfo, Plugin>> plugins;
     private final PluginsAndModules info;
+    private final Map<String, Predicate<Index>> shardSplitAllowedPredicates;
 
     public static final Setting<List<String>> MANDATORY_SETTING = Setting.listSetting(
         "plugin.mandatory",
@@ -194,6 +197,12 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
 
         List<Tuple<PluginInfo, Plugin>> loaded = loadBundles(seenBundles);
         pluginsLoaded.addAll(loaded);
+        this.shardSplitAllowedPredicates = new HashMap<>();
+        pluginsLoaded.forEach(tuple -> shardSplitAllowedPredicates.put(
+            tuple.v1().getName(),
+            tuple.v2().shardSplitAllowedPredicate())
+        );
+
 
         this.info = new PluginsAndModules(pluginsList, modulesList);
         this.plugins = Collections.unmodifiableList(pluginsLoaded);
@@ -233,6 +242,20 @@ public class PluginsService implements ReportingService<PluginsAndModules> {
                 logger.info("loaded " + type + " [" + name + "]");
             }
         }
+    }
+
+    public Tuple<Boolean, String> isShardSplitAllowed(Index index) {
+        List<String> unSupportedPlugins = new ArrayList<>();
+        shardSplitAllowedPredicates.keySet().forEach(plugin -> {
+            if (shardSplitAllowedPredicates.get(plugin).test(index) == false) {
+                unSupportedPlugins.add(plugin);
+            }
+        });
+
+        if (unSupportedPlugins.isEmpty()) {
+            return new Tuple<>(true, null);
+        }
+        return new Tuple<>(false, unSupportedPlugins.toString());
     }
 
     public Settings updatedSettings() {

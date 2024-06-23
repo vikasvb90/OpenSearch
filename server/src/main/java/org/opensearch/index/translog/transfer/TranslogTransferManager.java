@@ -247,6 +247,10 @@ public class TranslogTransferManager {
         return true;
     }
 
+    public void copyTranslogToTarget(TranslogTransferManager targetTransferManger) {
+
+    }
+
     private void downloadToFS(String fileName, Path location, String primaryTerm) throws IOException {
         Path filePath = location.resolve(fileName);
         // Here, we always override the existing file if present.

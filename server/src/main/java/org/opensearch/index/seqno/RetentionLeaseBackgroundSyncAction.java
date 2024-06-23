@@ -37,6 +37,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.replication.ReplicationRequest;
@@ -160,7 +161,8 @@ public class RetentionLeaseBackgroundSyncAction extends TransportReplicationActi
                             e,
                             IndexNotFoundException.class,
                             AlreadyClosedException.class,
-                            IndexShardClosedException.class
+                            IndexShardClosedException.class,
+                            PrimaryShardSplitException.class
                         ) != null) {
                             // the index was deleted or the shard is closed
                             return;

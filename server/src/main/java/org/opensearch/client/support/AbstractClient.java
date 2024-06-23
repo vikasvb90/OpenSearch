@@ -2010,6 +2010,11 @@ public abstract class AbstractClient implements Client {
         }
 
         @Override
+        public ActionFuture<InPlaceShardSplitResponse> inPlaceShardSplit(InPlaceShardSplitRequest request) {
+            return execute(InPlaceShardSplitAction.INSTANCE, request);
+        }
+
+        @Override
         public void inPlaceShardSplit(InPlaceShardSplitRequest request, ActionListener<InPlaceShardSplitResponse> listener) {
             execute(InPlaceShardSplitAction.INSTANCE, request, listener);
         }

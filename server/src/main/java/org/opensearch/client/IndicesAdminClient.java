@@ -788,6 +788,13 @@ public interface IndicesAdminClient extends OpenSearchClient {
 
     /**
      * Split a given shard id into given number of shards.
+     *
+     * @return
+     */
+    ActionFuture<InPlaceShardSplitResponse> inPlaceShardSplit(InPlaceShardSplitRequest request);
+
+    /**
+     * Split a given shard id into given number of shards.
      */
     void inPlaceShardSplit(InPlaceShardSplitRequest request, ActionListener<InPlaceShardSplitResponse> listener);
 

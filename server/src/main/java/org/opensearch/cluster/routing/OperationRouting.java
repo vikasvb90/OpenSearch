@@ -44,6 +44,7 @@ import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.common.Strings;
+import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexModule;
 import org.opensearch.index.IndexNotFoundException;
@@ -444,6 +445,12 @@ public class OperationRouting {
     protected IndexShardRoutingTable shards(ClusterState clusterState, String index, String id, String routing) {
         int shardId = generateShardId(indexMetadata(clusterState, index), id, routing);
         return clusterState.getRoutingTable().shardRoutingTable(index, shardId);
+    }
+
+    public ShardId shardWithRecoveringChild(ClusterState clusterState, String index, String id, String routing,
+                                               Index shardIndex) {
+        int shardId = generateShardId(indexMetadata(clusterState, index), id, routing, (shard) -> true);
+        return new ShardId(shardIndex, shardId);
     }
 
     public ShardId shardId(ClusterState clusterState, String index, String id, @Nullable String routing) {

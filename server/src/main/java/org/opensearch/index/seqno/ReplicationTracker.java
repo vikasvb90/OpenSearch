@@ -65,7 +65,6 @@ import org.opensearch.indices.replication.common.SegmentReplicationLagTimer;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -1577,7 +1576,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
      *
      * @param allocationIds  the allocation IDs of child shards for which recovery was initiated
      */
-    public synchronized void initiateTrackingOfBulkShards(final List<String> allocationIds) {
+    public synchronized void initiateTrackingOfChildShards(final List<String> allocationIds) {
         assert invariant();
         assert primaryMode;
         assert handoffInProgress == false;
@@ -1656,7 +1655,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             + allocationId
             + "]";
         if (localCheckpoint > cps.localCheckpoint) {
-            logger.trace("updated local checkpoint of [{}] from [{}] to [{}]", allocationId, cps.localCheckpoint, localCheckpoint);
+            logger.info("updated local checkpoint of [{}] from [{}] to [{}]", allocationId, cps.localCheckpoint, localCheckpoint);
             cps.localCheckpoint = localCheckpoint;
             return true;
         } else {
@@ -1681,6 +1680,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert invariant();
         assert primaryMode;
         assert handoffInProgress == false;
+        if (shardId.id() > 2) {
+            System.out.println();
+        }
         CheckpointState cps = checkpoints.get(allocationId);
         if (cps == null) {
             // can happen if replica was removed from cluster but replication process is unaware of it yet
@@ -1823,14 +1825,50 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             throw new IllegalStateException("primary context [" + primaryContext + "] does not contain " + shardAllocationId);
         }
         final Runnable runAfter = getClusterManagerUpdateOperationFromCurrentState();
+        logger.info("Activating with primary context");
         primaryMode = true;
         // capture current state to possibly replay missed cluster state update
         appliedClusterStateVersion = primaryContext.clusterStateVersion();
         checkpoints.clear();
-        for (Map.Entry<String, CheckpointState> entry : primaryContext.checkpoints.entrySet()) {
-            checkpoints.put(entry.getKey(), entry.getValue().copy());
+        // During relocation handoff, we get parent routing table here and therefore, we need to exclude
+        // other child shards from being added to replication group.
+        IndexShardRoutingTable contextRoutingTable = primaryContext.getRoutingTable();
+        Set<String> childShardAllocations = new HashSet<>();
+        IndexShardRoutingTable.Builder childRoutingTable = null;
+        boolean childShardActivation = false;
+        if (contextRoutingTable.primaryShard().splitting()) {
+            ShardRouting[] allChildShardRoutings = contextRoutingTable.primaryShard().getRecoveringChildShards();
+            for (ShardRouting childRouting : allChildShardRoutings) {
+                // moveToStarted doesn't mutate original routing. So, it's safe to do this.
+                childRouting = childRouting.moveToStarted();
+                if (childRouting.shardId().equals(shardId)) {
+                    if (childRoutingTable == null) {
+                         childRoutingTable = new IndexShardRoutingTable.Builder(shardId);
+                    }
+                    childShardAllocations.add(childRouting.allocationId().getId());
+                    childRoutingTable.addShard(childRouting);
+                }
+                if (shardAllocationId.equals(childRouting.allocationId().getId())) {
+                    childShardActivation = true;
+                }
+            }
         }
-        routingTable = primaryContext.getRoutingTable();
+
+        if (childShardActivation == false) {
+            routingTable = primaryContext.getRoutingTable();
+        } else {
+            assert childRoutingTable != null;
+            routingTable = childRoutingTable.build();
+        }
+
+        for (Map.Entry<String, CheckpointState> entry : primaryContext.checkpoints.entrySet()) {
+            if (childShardActivation == false) {
+                checkpoints.put(entry.getKey(), entry.getValue().copy());
+            } else if (childShardAllocations.contains(entry.getKey())) {
+                checkpoints.put(entry.getKey(), entry.getValue().copy());
+            }
+        }
+
         updateReplicationGroupAndNotify();
         updateGlobalCheckpointOnPrimary();
         // reapply missed cluster state update

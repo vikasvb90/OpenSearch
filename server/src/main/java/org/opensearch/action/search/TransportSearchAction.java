@@ -1439,18 +1439,31 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             final SearchContextIdForNode perNode = entry.getValue();
             if (Strings.isEmpty(perNode.getClusterAlias())) {
                 final ShardId shardId = entry.getKey();
-                OperationRouting.getShards(clusterState, shardId);
-                final List<String> targetNodes = Collections.singletonList(perNode.getNode());
-                iterators.add(
-                    new SearchShardIterator(
-                        localClusterAlias,
-                        shardId,
-                        targetNodes,
-                        originalIndices,
-                        perNode.getSearchContextId(),
-                        keepAlive
-                    )
-                );
+                IndexMetadata indexMetadata = clusterState.metadata().getIndexSafe(shardId.getIndex());
+                final List<ShardId> allShardIds;
+                if (indexMetadata.isNonServingShard(shardId.id()) && indexMetadata.isParentShard(shardId.id())) {
+                    List<Integer> childShardIDs = indexMetadata.getSplitMetadata(shardId.id()).getChildShards();
+                    allShardIds = new ArrayList<>();
+                    childShardIDs.forEach(childShardId -> allShardIds.add(new ShardId(shardId.getIndex(), childShardId)));
+                } else {
+                    allShardIds = List.of(shardId);
+                }
+
+                allShardIds.forEach(searchableShardId -> {
+                    OperationRouting.getShards(clusterState, searchableShardId);
+                    final List<String> targetNodes = Collections.singletonList(perNode.getNode());
+                    iterators.add(
+                        new SearchShardIterator(
+                            localClusterAlias,
+                            searchableShardId,
+                            targetNodes,
+                            originalIndices,
+                            perNode.getSearchContextId(),
+                            keepAlive
+                        )
+                    );
+                });
+
             }
         }
         return iterators;

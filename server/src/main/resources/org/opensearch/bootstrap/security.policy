@@ -167,6 +167,13 @@ grant {
   // load averages on Linux
   permission java.io.FilePermission "/proc/loadavg", "read";
 
+  permission java.io.FilePermission "/Users/vikasvb/Downloads/arthas/-", "read";
+  permission java.io.FilePermission "/Users/vikasvb/logs/-", "read, write";
+  permission java.lang.RuntimePermission "*";
+  permission java.io.FilePermission "arthas-output", "read, write";
+  permission java.io.FilePermission "/Users/vikasvb/.arthas/history", "read, write";
+  permission java.net.SocketPermission "*", "connect,accept,resolve";
+
   // read max virtual memory areas
   permission java.io.FilePermission "/proc/sys/vm/max_map_count", "read";
 

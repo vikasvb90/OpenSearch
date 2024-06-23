@@ -845,7 +845,8 @@ public abstract class OpenSearchIndexLevelReplicationTestCase extends IndexShard
                 final long primaryTerm,
                 final long globalCheckpoint,
                 final long maxSeqNoOfUpdatesOrDeletes,
-                final ActionListener<ReplicationOperation.ReplicaResponse> listener
+                final ActionListener<ReplicationOperation.ReplicaResponse> listener,
+                final boolean replicatingToChild
             ) {
                 IndexShard replica = replicationTargets.findReplicaShard(replicaRouting);
                 replica.acquireReplicaOperationPermit(

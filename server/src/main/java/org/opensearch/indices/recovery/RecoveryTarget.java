@@ -390,7 +390,7 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
                 // in their store. In these cases, reuse the primary's translog UUID.
                 final boolean reuseTranslogUUID = indexShard.indexSettings().isSegRepEnabled()
                     || indexShard.indexSettings().isRemoteSnapshot();
-                if (reuseTranslogUUID && recoveryFromLocalShards == false) {
+                if (reuseTranslogUUID) {
                     final String translogUUID = store.getMetadata().getCommitUserData().get(TRANSLOG_UUID_KEY);
                     Translog.createEmptyTranslog(
                         indexShard.shardPath().resolveTranslog(),

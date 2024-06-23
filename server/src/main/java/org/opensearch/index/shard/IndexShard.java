@@ -34,6 +34,7 @@ package org.opensearch.index.shard;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
+import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.CheckIndex;
 import org.apache.lucene.index.DirectoryReader;
@@ -59,10 +60,13 @@ import org.apache.lucene.util.ThreadInterruptedException;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchException;
 import org.opensearch.action.ActionRunnable;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.upgrade.post.UpgradeRequest;
+import org.opensearch.action.bulk.TransportShardBulkAction;
 import org.opensearch.action.support.replication.PendingReplicationActions;
+import org.opensearch.action.support.replication.ReplicationOperation;
 import org.opensearch.action.support.replication.ReplicationResponse;
 import org.opensearch.cluster.metadata.DataStream;
 import org.opensearch.cluster.metadata.IndexMetadata;
@@ -835,6 +839,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    public List<Releasable> delayStaleCommitDeletions() {
+        List<Releasable> releasables = new ArrayList<>();
+        for (ReferenceManager.RefreshListener refreshListener : internalRefreshListener) {
+            if (refreshListener instanceof RemoteStoreRefreshListener) {
+                releasables.add(((RemoteStoreRefreshListener) refreshListener).delayStaleCommitDeletion());
+            }
+        }
+        return releasables;
+    }
+
     /**
      * Marks the shard as recovering based on a recovery state, fails with exception is recovering is not allowed to be set.
      */
@@ -881,6 +895,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // acquire all permits. This will ensure that the remote store uploads can still be done by the existing primary shard.
         List<Releasable> releasablesOnHandoffFailures = new ArrayList<>(2);
         try (Releasable forceRefreshes = refreshListeners.forceRefreshes()) {
+            logger.info("Blocking operations. Active operations: " + indexShardOperationPermits.getActiveOperations());
+            TransportShardBulkAction.debugRequest.set(true);
+            Thread.sleep(1000);
             indexShardOperationPermits.blockOperations(30, TimeUnit.MINUTES, () -> {
                 forceRefreshes.close();
 
@@ -892,21 +909,23 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     maybeSync();
                 }
 
-                // Ensures all in-flight remote store refreshes drain, before we perform the performSegRep.
-                for (ReferenceManager.RefreshListener refreshListener : internalRefreshListener) {
-                    if (refreshListener instanceof ReleasableRetryableRefreshListener) {
-                        releasablesOnHandoffFailures.add(((ReleasableRetryableRefreshListener) refreshListener).drainRefreshes());
+                if (shardRouting.splitting() == false) {
+                    // Ensures all in-flight remote store refreshes drain, before we perform the performSegRep.
+                    for (ReferenceManager.RefreshListener refreshListener : internalRefreshListener) {
+                        if (refreshListener instanceof ReleasableRetryableRefreshListener) {
+                            releasablesOnHandoffFailures.add(((ReleasableRetryableRefreshListener) refreshListener).drainRefreshes());
+                        }
                     }
+
+                    // Ensure all in-flight remote store translog upload drains, before we perform the performSegRep.
+                    releasablesOnHandoffFailures.add(getEngine().translogManager().drainSync());
+
+                    // no shard operation permits are being held here, move state from started to relocated
+                    assert indexShardOperationPermits.getActiveOperationsCount() == OPERATIONS_BLOCKED
+                        : "in-flight operations in progress while moving shard state to relocated";
+
+                    performSegRep.run();
                 }
-
-                // Ensure all in-flight remote store translog upload drains, before we perform the performSegRep.
-                releasablesOnHandoffFailures.add(getEngine().translogManager().drainSync());
-
-                // no shard operation permits are being held here, move state from started to relocated
-                assert indexShardOperationPermits.getActiveOperationsCount() == OPERATIONS_BLOCKED
-                    : "in-flight operations in progress while moving shard state to relocated";
-
-                performSegRep.run();
                 /*
                  * We should not invoke the runnable under the mutex as the expected implementation is to handoff the primary context via a
                  * network operation. Doing this under the mutex can implicitly block the cluster state update thread on network operations.
@@ -1092,6 +1111,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         ensureWriteAllowed(origin);
         Engine.Index operation;
         try {
+
             operation = prepareIndex(
                 docMapper(),
                 sourceToParse,
@@ -1615,26 +1635,26 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     /**
      *
-     * @param snapshotId Snapshot UUID.
+     * @param acquirerId  Lock Acquirer ID which wants to acquire lock on the commit.
      * @param primaryTerm current primary term.
      * @param generation Snapshot Commit Generation.
      * @throws IOException if there is some failure in acquiring lock in remote store.
      */
-    public void acquireLockOnCommitData(String snapshotId, long primaryTerm, long generation) throws IOException {
+    public void acquireLockOnCommitData(String acquirerId, long primaryTerm, long generation) throws IOException {
         RemoteSegmentStoreDirectory remoteSegmentStoreDirectory = getRemoteDirectory();
-        remoteSegmentStoreDirectory.acquireLock(primaryTerm, generation, snapshotId);
+        remoteSegmentStoreDirectory.acquireLock(primaryTerm, generation, acquirerId);
     }
 
     /**
      *
-     * @param snapshotId Snapshot UUID.
+     * @param acquirerId  Lock Acquirer ID which wants to acquire lock on the commit.
      * @param primaryTerm current primary term.
      * @param generation Snapshot Commit Generation.
      * @throws IOException if there is some failure in releasing lock in remote store.
      */
-    public void releaseLockOnCommitData(String snapshotId, long primaryTerm, long generation) throws IOException {
+    public void releaseLockOnCommitData(String acquirerId, long primaryTerm, long generation) throws IOException {
         RemoteSegmentStoreDirectory remoteSegmentStoreDirectory = getRemoteDirectory();
-        remoteSegmentStoreDirectory.releaseLock(primaryTerm, generation, snapshotId);
+        remoteSegmentStoreDirectory.releaseLock(primaryTerm, generation, acquirerId);
     }
 
     public Optional<NRTReplicationEngine> getReplicationEngine() {
@@ -1717,7 +1737,21 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @return {@link ReplicationCheckpoint} Checkpoint computed from the infos.
      * @throws IOException When there is an error computing segment metadata from the store.
      */
-    ReplicationCheckpoint computeReplicationCheckpoint(SegmentInfos segmentInfos) throws IOException {
+    public ReplicationCheckpoint computeReplicationCheckpoint(SegmentInfos segmentInfos) throws IOException {
+        return computeReplicationCheckpoint(segmentInfos, this);
+    }
+
+    /**
+     * Compute the latest {@link ReplicationCheckpoint} from a SegmentInfos.
+     * This function fetches a metadata snapshot from the store that comes with an IO cost.
+     * We will reuse the existing stored checkpoint if it is at the same SI version.
+     *
+     * @param segmentInfos {@link SegmentInfos} infos to use to compute.
+     * @param codecSource Source shard's engine from which codec should be used.
+     * @return {@link ReplicationCheckpoint} Checkpoint computed from the infos.
+     * @throws IOException When there is an error computing segment metadata from the store.
+     */
+    public ReplicationCheckpoint computeReplicationCheckpoint(SegmentInfos segmentInfos, IndexShard codecSource) throws IOException {
         if (segmentInfos == null) {
             return ReplicationCheckpoint.empty(shardId);
         }
@@ -1734,7 +1768,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             segmentInfos.getGeneration(),
             segmentInfos.getVersion(),
             metadataMap.values().stream().mapToLong(StoreFileMetadata::length).sum(),
-            getEngine().config().getCodec().getName(),
+            codecSource.getEngine().config().getCodec().getName(),
             metadataMap
         );
         logger.trace("Recomputed ReplicationCheckpoint for shard {}", checkpoint);
@@ -2038,6 +2072,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+    public void cleanUpRemoteDirectories() throws IOException {
+        RemoteSegmentStoreDirectory remoteDirectory = getRemoteDirectory();
+        remoteDirectory.cleanUpRemoteDirectories();
+    }
+
     /*
     ToDo : Fix this https://github.com/opensearch-project/OpenSearch/issues/8003
      */
@@ -2071,6 +2110,18 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             logger.error("Exception while reading latest metadata", e);
         }
         return false;
+    }
+
+    public RemoteSegmentMetadata getLatestMetadataFile() throws IOException {
+        RemoteSegmentStoreDirectory directory = getRemoteDirectory();
+        return directory.readLatestMetadataFile();
+    }
+
+    public Tuple<String, RemoteSegmentMetadata> getMetadataContentForCommit(long primaryTerm, long generation) throws IOException{
+        RemoteSegmentStoreDirectory directory = getRemoteDirectory();
+        String metadataFileName = directory.getMetadataFileForCommit(primaryTerm, generation);
+        RemoteSegmentMetadata metadata = directory.readMetadataFile(metadataFileName);
+        return new Tuple<>(metadataFileName, metadata);
     }
 
     public void preRecovery() {
@@ -2356,7 +2407,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         int computedShardId = OperationRouting.generateShardId(indexSettings().getIndexMetadata(),
             index.id(), index.routing(), (shardId) -> true);
         if (computedShardId != shardId().id()) {
-            return new Translog.NoOp(index.seqNo(), index.primaryTerm(), "overridden index op");
+            return new Translog.NoOp(index.seqNo(), index.primaryTerm(), "op belongs to another child shard");
         }
 
         return operation;
@@ -2449,7 +2500,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             : "not a peer recovery [" + routingEntry() + "]";
         recoveryState.validateCurrentStage(RecoveryState.Stage.TRANSLOG);
         loadGlobalCheckpointToReplicationTracker();
-        innerOpenEngineAndTranslog(replicationTracker);
+        boolean syncFromRemote = routingEntry().isSplitTarget() == false;
+        innerOpenEngineAndTranslog(replicationTracker, syncFromRemote);
         getEngine().translogManager().skipTranslogRecovery();
     }
 
@@ -2938,14 +2990,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     /**
-     * Creates a new history snapshot from the translog instead of the lucene index. Required for cross cluster replication.
-     * Use the recommended {@link #getHistoryOperations(String, long, long, boolean)} method for other cases.
-     * This method should only be invoked if Segment Replication or Remote Store is not enabled.
+     * Creates a new history snapshot from the translog instead of the lucene index.
      */
     public Translog.Snapshot getHistoryOperationsFromTranslog(long startingSeqNo, long endSeqNo) throws IOException {
-        assert (indexSettings.isSegRepEnabled() || indexSettings.isRemoteStoreEnabled()) == false
-            : "unsupported operation for segment replication enabled indices or remote store backed indices";
         return getEngine().translogManager().newChangesSnapshot(startingSeqNo, endSeqNo, true);
+    }
+
+    public GatedCloseable<Long> acquireRetentionLockWithMinGen() {
+        return getEngine().translogManager().acquireRetentionLockWithMinGen();
     }
 
     /**
@@ -3280,6 +3332,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return replicationTracker.assertRetentionLeasesPersisted(path.getShardStatePath());
     }
 
+    public boolean isPrimaryReferenceBlocked() {
+        return indexShardOperationPermits.isBlocked();
+    }
+
     /**
      * Syncs the current retention leases to all replicas.
      */
@@ -3331,9 +3387,9 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      *
      * @param allocationIds  the allocation IDs of child shards for which recovery was initiated
      */
-    public synchronized void initiateTrackingOfBulkShards(final List<String> allocationIds) {
+    public synchronized void initiateTrackingOfChildShards(final List<String> allocationIds) {
         assert assertPrimaryMode();
-        replicationTracker.initiateTrackingOfBulkShards(allocationIds);
+        replicationTracker.initiateTrackingOfChildShards(allocationIds);
     }
 
     /**
@@ -3508,13 +3564,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     public void activateWithPrimaryContext(final ReplicationTracker.PrimaryContext primaryContext) {
         assert shardRouting.primary() && (shardRouting.isRelocationTarget() || shardRouting.isSplitTarget())
-            : "only primary relocation target can update allocation IDs from primary context: " + shardRouting;
+            : "only primary relocation or split target can update allocation IDs from primary context: " + shardRouting;
         assert primaryContext.getCheckpointStates().containsKey(routingEntry().allocationId().getId()) : "primary context ["
             + primaryContext
             + "] does not contain relocation target ["
             + routingEntry()
             + "]";
-        assert getLocalCheckpoint() == primaryContext.getCheckpointStates().get(routingEntry().allocationId().getId()).getLocalCheckpoint()
+        assert getLocalCheckpoint() >= primaryContext.getCheckpointStates().get(routingEntry().allocationId().getId()).getLocalCheckpoint()
             || indexSettings().getTranslogDurability() == Durability.ASYNC : "local checkpoint ["
                 + getLocalCheckpoint()
                 + "] does not match checkpoint from primary context ["
@@ -4054,6 +4110,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return ActionListener.delegateFailure(listener, (l, r) -> {
             if (replicationTracker.isPrimaryMode()) {
                 l.onResponse(r);
+            } else if (routingEntry().splitting()) {
+                // Scenario when replication tracker is no longer in primary mode after split and child shards are still
+                // pending to be started.
+                r.close();
+                l.onFailure(new PrimaryShardSplitException("Primary shard is already split."));
             } else {
                 r.close();
                 l.onFailure(new ShardNotInPrimaryModeException(shardId, state));
@@ -4993,6 +5054,57 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
     }
 
+
+    /**
+     * Copies segments and metadata from source directory to remote. This method is used in
+     * shard split flow where engine is not yet open and files need to be explicitly copied from local to remote.
+     */
+    public void copySegmentsAndMetadataToRemote(
+        RemoteSegmentStoreDirectory sourceRemoteDirectory,
+        Directory storeDirectory,
+        SegmentInfos segmentInfos,
+        ReplicationCheckpoint replicationCheckpoint,
+        Collection<String> localSegments,
+        long traslogFileGen,
+        RemoteSegmentMetadata sourceRemoteMetadata
+    ) throws Exception {
+
+        assert remoteStore != null;
+        RemoteSegmentStoreDirectory remoteDirectory = getRemoteDirectory();
+        remoteStore.incRef();
+        store.incRef();
+        try {
+            Set<String> files = new HashSet<>(localSegments);
+            CheckedRunnable<Exception> segmentCopyingRunnable = () -> remoteDirectory.copySegmentFilesFromSource
+                (files, storeDirectory, sourceRemoteDirectory, sourceRemoteMetadata);
+            copyWithRetries(segmentCopyingRunnable, 0, 5, null);
+            CheckedRunnable<Exception> metadataCopyingRunnable = () -> remoteDirectory.uploadMetadata(
+                localSegments, segmentInfos, storeDirectory, traslogFileGen, replicationCheckpoint, getNodeId());
+            copyWithRetries(metadataCopyingRunnable, 0, 3, null);
+        } finally {
+            store.decRef();
+            remoteStore.decRef();
+        }
+    }
+
+    private void copyWithRetries(
+        CheckedRunnable<Exception> copyingRunnable,
+        int retryCount,
+        int maxRetries,
+        Exception rootEx
+    ) throws Exception {
+        if (retryCount >= maxRetries) {
+            throw rootEx;
+        }
+        try {
+            copyingRunnable.run();
+        } catch (Exception ex) {
+            if (rootEx == null) rootEx = ex;
+            else rootEx.addSuppressed(ex);
+            copyWithRetries(copyingRunnable, retryCount + 1, maxRetries, rootEx);
+        }
+    }
+
     /**
      * Downloads segments from given remote segment store for a specific commit.
      * @param overrideLocal flag to override local segment files with those in remote store
@@ -5103,7 +5215,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     // Visible for testing
-    boolean localDirectoryContains(Directory localDirectory, String file, long checksum) throws IOException {
+    public boolean localDirectoryContains(Directory localDirectory, String file, long checksum) throws IOException {
         try (IndexInput indexInput = localDirectory.openInput(file, IOContext.DEFAULT)) {
             if (checksum == CodecUtil.retrieveChecksum(indexInput)) {
                 return true;
@@ -5119,7 +5231,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 }
             }
         } catch (NoSuchFileException | FileNotFoundException e) {
-            logger.debug("File {} does not exist in local FS, downloading from remote store", file);
+            logger.debug("File {} does not exist in local FS", file);
         } catch (IOException e) {
             logger.warn("Exception while reading checksum of file: {}, this can happen if file is corrupted", file);
             // For any other exception on reading checksum, we delete the file to re-download again

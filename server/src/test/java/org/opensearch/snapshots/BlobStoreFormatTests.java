@@ -63,7 +63,9 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 import org.mockito.ArgumentCaptor;
@@ -330,6 +332,11 @@ public class BlobStoreFormatTests extends OpenSearchTestCase {
         @Override
         public boolean remoteIntegrityCheckSupported() {
             return false;
+        }
+
+        @Override
+        public Set<String> copyFilesFromSrcRemote(Set<String> files, AsyncMultiStreamBlobContainer blobContainer) {
+            return new HashSet<>();
         }
 
         public BlobContainer getDelegate() {

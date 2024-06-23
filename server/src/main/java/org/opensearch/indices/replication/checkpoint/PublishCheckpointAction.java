@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.replication.ReplicationMode;
 import org.opensearch.action.support.replication.ReplicationResponse;
@@ -162,7 +163,8 @@ public class PublishCheckpointAction extends TransportReplicationAction<
                             IndexNotFoundException.class,
                             AlreadyClosedException.class,
                             IndexShardClosedException.class,
-                            ShardNotInPrimaryModeException.class
+                            ShardNotInPrimaryModeException.class,
+                            PrimaryShardSplitException.class
                         ) != null) {
                             // Node is shutting down or the index was deleted or the shard is closed
                             return;

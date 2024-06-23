@@ -197,6 +197,7 @@ public class InternalEngine extends Engine {
     private final AtomicBoolean trackTranslogLocation = new AtomicBoolean(false);
     private final KeyedLock<Long> noOpKeyedLock = new KeyedLock<>();
     private final AtomicBoolean shouldPeriodicallyFlushAfterBigMerge = new AtomicBoolean(false);
+    private final AtomicBoolean refreshesDelayed = new AtomicBoolean();
 
     /**
      * If multiple writes passed {@link InternalEngine#tryAcquireInFlightDocs(Operation, int)} but they haven't adjusted
@@ -1754,6 +1755,9 @@ public class InternalEngine extends Engine {
     }
 
     final boolean refresh(String source, SearcherScope scope, boolean block) throws EngineException {
+        if (refreshesDelayed.get() == true) {
+            return false;
+        }
         // both refresh types will result in an internal refresh but only the external will also
         // pass the new reader reference to the external reader manager.
         final long localCheckpointBeforeRefresh = localCheckpointTracker.getProcessedCheckpoint();
@@ -1779,6 +1783,7 @@ public class InternalEngine extends Engine {
                 if (refreshed) {
                     lastRefreshedCheckpointListener.updateRefreshedCheckpoint(localCheckpointBeforeRefresh);
                 }
+                logger.info("Refreshed checkpoint " + localCheckpointBeforeRefresh);
             } else {
                 refreshed = false;
             }
@@ -1882,6 +1887,7 @@ public class InternalEngine extends Engine {
                             shouldPeriodicallyFlush
                         );
 
+                        logger.info("Refresing in flush");
                         // we need to refresh in order to clear older version values
                         refresh("version_table_flush", SearcherScope.INTERNAL, true);
 

@@ -22,6 +22,8 @@ import org.opensearch.action.bulk.BackoffPolicy;
 import org.opensearch.action.support.GroupedActionListener;
 import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.common.concurrent.GatedCloseable;
+import org.opensearch.common.lease.Releasable;
+import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.UploadListener;
@@ -89,6 +91,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
     private volatile long primaryTerm;
     private volatile Iterator<TimeValue> backoffDelayIterator;
     private final SegmentReplicationCheckpointPublisher checkpointPublisher;
+    private final AtomicBoolean staleCommitDeletionDelayed = new AtomicBoolean();
 
     public RemoteStoreRefreshListener(
         IndexShard indexShard,
@@ -157,6 +160,19 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
         return successful;
     }
 
+    public Releasable delayStaleCommitDeletion() {
+        try (Releasable ignore = drainRefreshes()) {
+            boolean commitsDelayed = staleCommitDeletionDelayed.compareAndSet(false, true);
+            if (commitsDelayed == false) {
+                throw new IllegalStateException("Cannot delay an already delayed stale commit");
+            }
+            return Releasables.releaseOnce(() -> {
+                staleCommitDeletionDelayed.set(false);
+                remoteDirectory.deleteStaleSegmentsAsync(indexShard.getRecoverySettings().getMinRemoteSegmentMetadataFiles());
+            });
+        }
+    }
+
     /**
      * This checks if there is a sync required to remote.
      *
@@ -203,7 +219,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                 // if a new segments_N file is present in local that is not uploaded to remote store yet, it
                 // is considered as a first refresh post commit. A cleanup of stale commit files is triggered.
                 // This is done to avoid delete post each refresh.
-                if (isRefreshAfterCommit()) {
+                if (staleCommitDeletionDelayed.get() == false && isRefreshAfterCommit()) {
                     remoteDirectory.deleteStaleSegmentsAsync(indexShard.getRecoverySettings().getMinRemoteSegmentMetadataFiles());
                 }
 

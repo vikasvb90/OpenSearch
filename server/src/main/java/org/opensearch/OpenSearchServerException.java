@@ -14,13 +14,7 @@ import org.opensearch.crypto.CryptoRegistryException;
 import static org.opensearch.OpenSearchException.OpenSearchExceptionHandle;
 import static org.opensearch.OpenSearchException.OpenSearchExceptionHandleRegistry.registerExceptionHandle;
 import static org.opensearch.OpenSearchException.UNKNOWN_VERSION_ADDED;
-import static org.opensearch.Version.V_2_10_0;
-import static org.opensearch.Version.V_2_1_0;
-import static org.opensearch.Version.V_2_4_0;
-import static org.opensearch.Version.V_2_5_0;
-import static org.opensearch.Version.V_2_6_0;
-import static org.opensearch.Version.V_2_7_0;
-import static org.opensearch.Version.V_3_0_0;
+import static org.opensearch.Version.*;
 
 /**
  * Utility class to register server exceptions
@@ -1177,11 +1171,20 @@ public final class OpenSearchServerException {
         registerExceptionHandle(new OpenSearchExceptionHandle(CryptoRegistryException.class, CryptoRegistryException::new, 171, V_2_10_0));
         registerExceptionHandle(
             new OpenSearchExceptionHandle(
+                org.opensearch.action.PrimaryShardSplitException.class,
+                org.opensearch.action.PrimaryShardSplitException::new,
+                172,
+                V_2_9_0
+            )
+        );
+        registerExceptionHandle(
+            new OpenSearchExceptionHandle(
                 org.opensearch.cluster.block.IndexCreateBlockException.class,
                 org.opensearch.cluster.block.IndexCreateBlockException::new,
                 CUSTOM_ELASTICSEARCH_EXCEPTIONS_BASE_ID + 1,
                 V_3_0_0
             )
         );
+
     }
 }

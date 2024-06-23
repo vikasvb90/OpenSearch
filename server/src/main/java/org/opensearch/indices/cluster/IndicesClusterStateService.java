@@ -783,6 +783,10 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                 + shardRouting
                 + " local: "
                 + currentRoutingEntry;
+        if (currentRoutingEntry.isSplitTarget() && shardRouting.isSplitTarget()) {
+            // Nothing to update yet on recovering child shard.
+            return;
+        }
 
         final long primaryTerm;
         try {

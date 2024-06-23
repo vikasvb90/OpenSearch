@@ -37,6 +37,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.WriteResponse;
@@ -170,7 +171,8 @@ public class RetentionLeaseSyncAction extends TransportWriteAction<
                             e,
                             IndexNotFoundException.class,
                             AlreadyClosedException.class,
-                            IndexShardClosedException.class
+                            IndexShardClosedException.class,
+                            PrimaryShardSplitException.class
                         ) == null) {
                             getLogger().warn(new ParameterizedMessage("{} retention lease sync failed", shardId), e);
                         }

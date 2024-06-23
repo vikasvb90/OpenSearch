@@ -37,6 +37,9 @@ import org.opensearch.common.logging.Loggers;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexSettings;
 
+import java.util.Collections;
+import java.util.List;
+
 /**
  * Base index shard class
  *
@@ -62,5 +65,9 @@ public abstract class AbstractIndexShardComponent implements IndexShardComponent
     @Override
     public IndexSettings indexSettings() {
         return indexSettings;
+    }
+
+    public ShardId getParentShardId() {
+        return null;
     }
 }

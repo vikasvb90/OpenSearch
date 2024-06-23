@@ -107,6 +107,7 @@ import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.breaker.HierarchyCircuitBreakerService;
 import org.opensearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.opensearch.indices.recovery.RecoverySettings;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.node.MockNode;
 import org.opensearch.node.Node;
 import org.opensearch.node.Node.DiscoverySettings;
@@ -284,6 +285,8 @@ public final class InternalTestCluster extends TestCluster {
     private final Function<Client, Client> clientWrapper;
 
     private int bootstrapClusterManagerNodeIndex = -1;
+
+    private InPlaceShardSplitRecoveryService splitRecoveryService;
 
     public InternalTestCluster(
         final long clusterSeed,
@@ -813,7 +816,8 @@ public final class InternalTestCluster extends TestCluster {
             // we clone this here since in the case of a node restart we might need it again
             secureSettings = ((MockSecureSettings) secureSettings).clone();
         }
-        MockNode node = new MockNode(settings, plugins, nodeConfigurationSource.nodeConfigPath(nodeId), forbidPrivateIndexSettings);
+        MockNode node = new MockNode(settings, plugins, nodeConfigurationSource.nodeConfigPath(nodeId),
+            forbidPrivateIndexSettings, splitRecoveryService);
         node.injector().getInstance(TransportService.class).addLifecycleListener(new LifecycleListener() {
             @Override
             public void afterStart() {
@@ -2304,6 +2308,17 @@ public final class InternalTestCluster extends TestCluster {
      * Starts multiple nodes with the given settings and returns their names
      */
     public List<String> startNodes(int numOfNodes, Settings settings) {
+        return startNodes(Collections.nCopies(numOfNodes, settings).toArray(new Settings[0]));
+    }
+
+    /**
+     * Starts multiple nodes with the given settings and returns their names
+     */
+    public synchronized List<String> startNodesWithTestSplitRecoveryService(
+        int numOfNodes, InPlaceShardSplitRecoveryService recoveryService, Settings settings) {
+        if (this.splitRecoveryService == null) {
+            this.splitRecoveryService = recoveryService;
+        }
         return startNodes(Collections.nCopies(numOfNodes, settings).toArray(new Settings[0]));
     }
 

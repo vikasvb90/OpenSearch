@@ -81,7 +81,7 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
             onSendFileStepComplete(sendFileStep, wrappedSafeCommit, releaseStore);
 
             assert Transports.assertNotTransportThread(this + "[phase1]");
-            phase1(wrappedSafeCommit.get(), startingSeqNo, () -> 0, sendFileStep, shouldSkipCreateRetentionLeaseStep());
+            phase1(wrappedSafeCommit.get(), startingSeqNo, () -> 0, sendFileStep, true);
         } catch (final Exception e) {
             throw new RecoveryEngineException(shard.shardId(), 1, "sendFileStep failed", e);
         }
@@ -108,8 +108,6 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
             sendSnapshotStep.onResponse(Collections.singletonList(new SendSnapshotResult(endingSeqNo,
                 0, TimeValue.ZERO, request.targetAllocationId())));
         }, onFailure);
-
-        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, new StepListener<>(), onFailure);
     }
 
 

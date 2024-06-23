@@ -35,6 +35,7 @@ package org.opensearch.index.seqno;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.replication.ReplicationRequest;
 import org.opensearch.action.support.replication.ReplicationResponse;
@@ -100,7 +101,8 @@ public class GlobalCheckpointSyncAction extends TransportReplicationAction<
         try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {
             threadContext.markAsSystemContext();
             execute(new Request(shardId), ActionListener.wrap(r -> {}, e -> {
-                if (ExceptionsHelper.unwrap(e, AlreadyClosedException.class, IndexShardClosedException.class) == null) {
+                if (ExceptionsHelper.unwrap(e, AlreadyClosedException.class, IndexShardClosedException.class,
+                    PrimaryShardSplitException.class) == null) {
                     logger.info(new ParameterizedMessage("{} global checkpoint sync failed", shardId), e);
                 }
             }));
