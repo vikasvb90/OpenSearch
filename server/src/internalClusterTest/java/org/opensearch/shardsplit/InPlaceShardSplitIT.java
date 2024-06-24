@@ -11,12 +11,14 @@ package org.opensearch.shardsplit;
 import org.opensearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.opensearch.action.admin.indices.split.InPlaceShardSplitRequest;
 import org.opensearch.action.admin.indices.split.InPlaceShardSplitResponse;
+import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.ShardStats;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.Priority;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.index.engine.Engine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.search.SearchHits;
 import org.opensearch.test.BackgroundIndexer;
@@ -98,12 +100,8 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             .execute()
             .actionGet()
             .getHits();
-//        assertThat(hits.getTotalHits().value, equalTo(indexer.totalIndexedDocs()));
-        List<String> ids = indexer.getOrderedIds();
-        int idx=-1;
-        for (String id : ids) {
-            idx++;
-            logger.info("Ordered id " + idx);
+        assertThat(hits.getTotalHits().value, equalTo(indexer.totalIndexedDocs()));
+        for (String id : indexer.getIds()) {
             // Make sure there is no duplicate doc.
             assertHitCount(client().prepareSearch("test").setSize(0)
                 .setQuery(matchQuery("_id", id)).get(), 1);
@@ -143,6 +141,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
         ensureGreen();
         int numDocs = scaledRandomIntBetween(200, 2500);
         try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs)) {
+            indexer.setIgnoreIndexingFailures(false);
             logger.info("--> waiting for {} docs to be indexed ...", numDocs);
             waitForDocs(numDocs, indexer);
             logger.info("--> {} docs indexed", numDocs);

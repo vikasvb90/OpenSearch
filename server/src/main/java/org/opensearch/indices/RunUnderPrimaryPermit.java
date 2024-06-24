@@ -38,10 +38,8 @@ public final class RunUnderPrimaryPermit {
             final ActionListener<Releasable> onAcquired = new ActionListener<>() {
                 @Override
                 public void onResponse(Releasable releasable) {
-                    logger.info("Acquired primary shard reference " + primary.shardId());
                     if (permit.complete(releasable) == false) {
                         releasable.close();
-                        logger.info("Released primary shard reference in complete " + primary.shardId());
                     }
                 }
 
@@ -51,7 +49,6 @@ public final class RunUnderPrimaryPermit {
                 }
             };
             primary.acquirePrimaryOperationPermit(onAcquired, ThreadPool.Names.SAME, reason);
-
             try (Releasable ignored = FutureUtils.get(permit)) {
                 // check that the IndexShard still has the primary authority. This needs to be checked under operation permit to prevent
                 // races, as IndexShard will switch its authority only when it holds all operation permits, see IndexShard.relocated()
@@ -64,7 +61,6 @@ public final class RunUnderPrimaryPermit {
                 permit.whenComplete((r, e) -> {
                     if (r != null) {
                         r.close();
-                        logger.info("Released primary shard reference " + primary.shardId());
                     }
                     if (e != null) {
                         logger.trace("suppressing exception on completion (it was already bubbled up or the operation was aborted)", e);

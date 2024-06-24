@@ -373,6 +373,9 @@ public class InternalEngine extends Engine {
         );
         maxSeqNo = seqNoStats.maxSeqNo;
         localCheckpoint = seqNoStats.localCheckpoint;
+        if (shardId.id() > 2) {
+            logger.info("Created local checkpoint tracker with local checkpoint: " + localCheckpoint + " on shard " + shardId.id());
+        }
         logger.trace("recovered maximum sequence number [{}] and local checkpoint [{}]", maxSeqNo, localCheckpoint);
         return localCheckpointTrackerSupplier.apply(maxSeqNo, localCheckpoint);
     }
@@ -956,6 +959,9 @@ public class InternalEngine extends Engine {
                     );
                 }
                 localCheckpointTracker.markSeqNoAsProcessed(indexResult.getSeqNo());
+                if (indexResult.getSeqNo() == 490 && shardId.id() > 2) {
+                    logger.info("Marking as indexed op in internal engine ");
+                }
                 if (indexResult.getTranslogLocation() == null) {
                     // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                     assert index.origin().isFromTranslog() || indexResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
@@ -993,6 +999,7 @@ public class InternalEngine extends Engine {
         // a delete state and return false for the created flag in favor of code simplicity
         final long maxSeqNoOfUpdatesOrDeletes = getMaxSeqNoOfUpdatesOrDeletes();
         if (hasBeenProcessedBefore(index)) {
+            logger.info("Has been processed before");
             // the operation seq# was processed and thus the same operation was already put into lucene
             // this can happen during recovery where older operations are sent from the translog that are already
             // part of the lucene commit (either from a peer recovery or a local translog)
@@ -1385,6 +1392,9 @@ public class InternalEngine extends Engine {
                 deleteResult.setTranslogLocation(location);
             }
             localCheckpointTracker.markSeqNoAsProcessed(deleteResult.getSeqNo());
+            if (deleteResult.getSeqNo() == 490 && shardId.id() > 2) {
+                logger.info("Marking as deleted op in internal engine ");
+            }
             if (deleteResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or does not have a sequence number (version conflict)
                 assert delete.origin().isFromTranslog() || deleteResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
@@ -1725,6 +1735,9 @@ public class InternalEngine extends Engine {
                 }
             }
             localCheckpointTracker.markSeqNoAsProcessed(noOpResult.getSeqNo());
+            if (seqNo == 490 && shardId.id() > 2) {
+                logger.info("Marking as no op in internal engine ");
+            }
             if (noOpResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                 assert noOp.origin().isFromTranslog() || noOpResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;
@@ -1783,7 +1796,6 @@ public class InternalEngine extends Engine {
                 if (refreshed) {
                     lastRefreshedCheckpointListener.updateRefreshedCheckpoint(localCheckpointBeforeRefresh);
                 }
-                logger.info("Refreshed checkpoint " + localCheckpointBeforeRefresh);
             } else {
                 refreshed = false;
             }
@@ -2927,6 +2939,9 @@ public class InternalEngine extends Engine {
                 final long primaryTerm = dv.docPrimaryTerm(docId);
                 final long seqNo = dv.docSeqNo(docId);
                 localCheckpointTracker.markSeqNoAsProcessed(seqNo);
+                if (seqNo == 490 && shardId.id() > 2) {
+                    logger.info("Marking in restore with seq: ");
+                }
                 localCheckpointTracker.markSeqNoAsPersisted(seqNo);
                 idFieldVisitor.reset();
                 storedFields.document(docId, idFieldVisitor);

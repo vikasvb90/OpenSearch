@@ -405,7 +405,7 @@ public abstract class RecoverySourceHandler {
             final Store.MetadataSnapshot recoverySourceMetadata;
             try {
                 recoverySourceMetadata = store.getMetadata(snapshot);
-                System.out.println("Metadata docs " + recoverySourceMetadata.getNumDocs());
+                logger.info("Metadata docs " + recoverySourceMetadata.getNumDocs());
             } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
                 shard.failShard("recovery", ex);
                 throw ex;

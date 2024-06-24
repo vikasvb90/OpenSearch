@@ -228,7 +228,7 @@ public final class StoreRecovery {
         Directory statsDirectory = new StatsDirectoryWrapper(hardLinkOrCopyTarget, indexRecoveryStats);
 
         Tuple<Boolean, Directory> addIndexDirectoryTuple = new Tuple<>(true, statsDirectory);
-        addIndices(indexRecoveryStats, indexSort, sources, maxSeqNo, maxUnsafeAutoIdTimestamp, indexMetadata,
+        addIndices(indexRecoveryStats, indexSort, sources, maxSeqNo, maxSeqNo, maxUnsafeAutoIdTimestamp, indexMetadata,
             shardId, split, hasNested, addIndexDirectoryTuple, indexMetadata::isNonServingShard,
             IndexWriterConfig.OpenMode.CREATE);
     }
@@ -237,6 +237,7 @@ public final class StoreRecovery {
         final ReplicationLuceneIndex indexRecoveryStats,
         final Sort indexSort,
         final Directory[] sources,
+        final long localCheckpoint,
         final long maxSeqNo,
         final long maxUnsafeAutoIdTimestamp,
         IndexMetadata indexMetadata,
@@ -278,7 +279,7 @@ public final class StoreRecovery {
             writer.setLiveCommitData(() -> {
                 final HashMap<String, String> liveCommitData = new HashMap<>(3);
                 liveCommitData.put(SequenceNumbers.MAX_SEQ_NO, Long.toString(maxSeqNo));
-                liveCommitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(maxSeqNo));
+                liveCommitData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, Long.toString(localCheckpoint));
                 liveCommitData.put(Engine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID, Long.toString(maxUnsafeAutoIdTimestamp));
                 return liveCommitData.entrySet().iterator();
             });

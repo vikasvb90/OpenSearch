@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * The OpenSearch Contributors require contributions made to
+ * The OpenSearch] Contributors require contributions made to
  * this file be licensed under the Apache-2.0 license or a
  * compatible open source license.
  */
@@ -158,7 +158,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 
         postSendFileComplete(sendFileStep, lastCommit, releaseStore, delayedStaleCommitDeleteOps);
         long startingSeqNo = Long.parseLong(lastCommit.get().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) + 1L;
-
+        long maxSeq = Long.parseLong(lastCommit.get().getUserData().get(SequenceNumbers.MAX_SEQ_NO));
         assert Transports.assertNotTransportThread(this + "[phase1]");
         phase1(lastCommit.get(), startingSeqNo, () -> 0, sendFileStep, true);
 
@@ -174,6 +174,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             long startingSeqNoForSnapShot = Math.min(startingSeqNo, endingSeqNo);
             final Translog.Snapshot phase2Snapshot = sourceShard.getHistoryOperationsFromTranslog(startingSeqNoForSnapShot, endingSeqNo);
             resources.add(phase2Snapshot);
+            logger.info("Send snapshot number of docs " + phase2Snapshot.totalOperations());
             translogRetentionLock.close();
             logger.info("snapshot translog for recovery; current size is [{}]", phase2Snapshot.totalOperations());
 
@@ -294,10 +295,11 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
                              ActionListener<Void> listener, IndexCommit snapshot) {
 
         try {
+            long localCheckpoint = Long.parseLong(snapshot.getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY));
             long maxSeqNo = Long.parseLong(snapshot.getUserData().get(SequenceNumbers.MAX_SEQ_NO));
             long maxUnsafeAutoIdTimestamp = Long.parseLong(snapshot.getUserData().get(
                 Engine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID));
-            recoveryTarget.receiveFilesAndSplit(store, files, maxSeqNo, splitCommitMetadata.get(),
+            recoveryTarget.receiveFilesAndSplit(store, files, localCheckpoint, maxSeqNo, splitCommitMetadata.get(),
                 maxUnsafeAutoIdTimestamp);
             listener.onResponse(null);
         } catch (Exception e) {

@@ -230,6 +230,7 @@ public class NRTReplicationEngine extends Engine {
 
     @Override
     public IndexResult index(Index index) throws IOException {
+        logger.info("Replication engine: Indexing operation " + index.seqNo() + " on shard " + shardId.id());
         ensureOpen();
         IndexResult indexResult = new IndexResult(index.version(), index.primaryTerm(), index.seqNo(), false);
         final Translog.Location location = translogManager.add(new Translog.Index(index, indexResult));

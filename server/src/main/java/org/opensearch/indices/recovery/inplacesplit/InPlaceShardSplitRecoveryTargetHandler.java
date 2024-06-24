@@ -302,7 +302,7 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
         );
     }
 
-    public void receiveFilesAndSplit(Store store, StoreFileMetadata[] files, long maxSeqNo,
+    public void receiveFilesAndSplit(Store store, StoreFileMetadata[] files, long localCheckpoint, long maxSeqNo,
                                      SplitCommitMetadata splitCommitMetadata,
                                      long maxUnsafeAutoIdTimestamp)
         throws Exception {
@@ -318,7 +318,7 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
                 try (Releasable ignore = Objects.requireNonNull(storeAcquirer.get()).apply(context.getIndexShard().store())) {
                     Directory directory = syncLocalDirectory(store, files, context.getIndexShard());
                     cancellableThreads.checkForCancel();
-                    split(maxSeqNo, maxUnsafeAutoIdTimestamp, directory, context);
+                    split(localCheckpoint, maxSeqNo, maxUnsafeAutoIdTimestamp, directory, context);
 
                     if (remoteStore != null) {
                         cancellableThreads.checkForCancel();
@@ -372,13 +372,16 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
         return hardLinkOrCopyTarget;
     }
 
-    private void split(long maxSeqNo, long maxUnsafeAutoIdTimestamp, Directory childShardDirectory,
+    private void split(long localCheckpoint, long maxSeqNo, long maxUnsafeAutoIdTimestamp, Directory childShardDirectory,
                        InPlaceShardRecoveryContext context) throws IOException {
         Tuple<Boolean, Directory> addIndexSplitDirectory = new Tuple<>(false, childShardDirectory);
+        System.out.println("Creating commits with max seq number: " + maxSeqNo);
+
         StoreRecovery.addIndices(
             context.getRecoveryState().getIndex(),
             sourceShard.getIndexSort(),
             new Directory[]{childShardDirectory},
+            localCheckpoint,
             maxSeqNo,
             maxUnsafeAutoIdTimestamp,
             sourceShard.indexSettings().getIndexMetadata(),

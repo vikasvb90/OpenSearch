@@ -85,8 +85,6 @@ public class BackgroundIndexer implements AutoCloseable {
 
     private boolean autoStart = false;
     private final Set<String> ids = ConcurrentCollections.newConcurrentSet();
-    private final List<String> orderedIds = Collections.synchronizedList(new ArrayList<>());
-//    private final Queue<String> orderedIds = ConcurrentCollections.newDeque();
     private volatile Consumer<Exception> failureAssertion = null;
 
     volatile int minFieldSize = 10;
@@ -189,7 +187,6 @@ public class BackgroundIndexer implements AutoCloseable {
                                         if (bulkItemResponse.isFailed() == false) {
                                             boolean add = ids.add(bulkItemResponse.getId());
                                             assert add : "ID: " + bulkItemResponse.getId() + " already used";
-                                            orderedIds.add(bulkItemResponse.getId());
                                         } else {
                                             trackFailure(bulkItemResponse.getFailure().getCause());
                                         }
@@ -214,7 +211,6 @@ public class BackgroundIndexer implements AutoCloseable {
                                             .get();
                                         boolean add = ids.add(indexResponse.getId());
                                         assert add : "ID: " + indexResponse.getId() + " already used";
-                                        orderedIds.add(indexResponse.getId());
                                     } catch (Exception e) {
                                         if (ignoreIndexingFailures == false) {
                                             throw e;
@@ -229,7 +225,6 @@ public class BackgroundIndexer implements AutoCloseable {
                                             .get();
                                         boolean add = ids.add(indexResponse.getId());
                                         assert add : "ID: " + indexResponse.getId() + " already used";
-                                        orderedIds.add(indexResponse.getId());
                                     } catch (Exception e) {
                                         if (ignoreIndexingFailures == false) {
                                             throw e;
@@ -363,11 +358,6 @@ public class BackgroundIndexer implements AutoCloseable {
 
     public long totalIndexedDocs() {
         return ids.size();
-    }
-
-    public List<String> getOrderedIds() {
-
-        return orderedIds;
     }
 
     public void assertNoFailures() {
