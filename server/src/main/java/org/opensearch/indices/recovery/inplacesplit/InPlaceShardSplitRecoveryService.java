@@ -104,6 +104,10 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
                                     InPlaceShardSplitRecoveryListener replicationListener,
                                     List<ShardId> shardIds,
                                     StartRecoveryRequest request) {
+        if (ongoingRecoveries.isRecoveryOfShardOnGoing(sourceShard.shardId())) {
+            return;
+        }
+
         Set<String> childShardAllocationIds = new HashSet<>();
         recoveryContexts.forEach(context -> childShardAllocationIds.add(context.getIndexShard()
             .routingEntry().allocationId().getId()));
@@ -142,6 +146,10 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
                 this.sourceHandler = sourceHandler;
                 this.replicationListener = replicationListener;
             }
+        }
+
+        private boolean isRecoveryOfShardOnGoing(ShardId shardId) {
+            return recoveries.get(shardId) != null;
         }
 
         synchronized InPlaceShardSplitRecoverySourceHandler addNewRecovery(

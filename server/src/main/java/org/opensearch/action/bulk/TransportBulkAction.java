@@ -614,19 +614,18 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                     continue;
                 }
                 String concreteIndex = concreteIndices.getConcreteIndex(request.index()).getName();
-                ShardId shardId = clusterService.operationRouting()
-                    .indexShards(clusterState, concreteIndex, request.id(), request.routing())
-                    .shardId();
+                ShardId shardId;
                 if (reDriveOnChildShards) {
                     shardId = clusterService.operationRouting().shardWithRecoveringChild(clusterState,
-                        concreteIndex, request.id(), request.routing(), shardId.getIndex());
+                        concreteIndex, request.id(), request.routing(), clusterState.routingTable().index(concreteIndex).getIndex());
+                } else {
+                    shardId = clusterService.operationRouting()
+                        .indexShards(clusterState, concreteIndex, request.id(), request.routing())
+                        .shardId();
                 }
 
                 List<BulkItemRequest> shardRequests = requestsByShard.computeIfAbsent(shardId, shard -> new ArrayList<>());
                 shardRequests.add(new BulkItemRequest(i, request));
-            }
-            if (reDriveOnChildShards) {
-                logger.info("Redriving requests on child shards, count " + bulkRequest.requests.size());
             }
 
             if (requestsByShard.isEmpty()) {

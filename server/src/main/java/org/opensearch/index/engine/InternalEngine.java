@@ -1900,6 +1900,7 @@ public class InternalEngine extends Engine {
                         );
 
                         logger.info("Refresing in flush");
+                        Thread.sleep(2000);
                         // we need to refresh in order to clear older version values
                         refresh("version_table_flush", SearcherScope.INTERNAL, true);
 

@@ -74,6 +74,9 @@ public class ApiAnnotationProcessor extends AbstractProcessor {
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
+        if (true) {
+            return false;
+        }
         processingEnv.getMessager().printMessage(Kind.NOTE, "Processing OpenSearch Api annotations");
 
         if (processingEnv.getOptions().containsKey(OPTION_CONTINUE_ON_FAILING_CHECKS) == true) {
@@ -106,6 +109,10 @@ public class ApiAnnotationProcessor extends AbstractProcessor {
      * @param enclosing enclosing element
      */
     private void process(ExecutableElement executable, Element enclosing) {
+        if (true) {
+            return;
+        }
+
         if (!inspectable(executable)) {
             return;
         }
@@ -174,6 +181,9 @@ public class ApiAnnotationProcessor extends AbstractProcessor {
      * @param ref reference type
      */
     private void process(ExecutableElement executable, ReferenceType ref) {
+        if (true) {
+            return;
+        }
         // The element has been processed already
         if (processed.add(ref) == false) {
             return;

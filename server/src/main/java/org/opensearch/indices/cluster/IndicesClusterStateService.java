@@ -499,8 +499,6 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         // remove shards based on routing nodes (no deletion of data)
         RoutingNode localRoutingNode = state.getRoutingNodes().node(localNodeId);
         for (AllocatedIndex<? extends Shard> indexService : indicesService) {
-            IndexMetadata indexMetadata = state.metadata().index(indexService.index());
-            Map<ShardId, List<ShardId>> activeChildRoutings = new HashMap<>();
             for (Shard shard : indexService) {
                 ShardRouting currentRoutingEntry = shard.routingEntry();
                 ShardId shardId = currentRoutingEntry.shardId();
@@ -530,8 +528,6 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     // and assigning an initializing primary to this node
                     logger.debug("{} removing shard (not active, current {}, new {})", shardId, currentRoutingEntry, newShardRouting);
                     indexService.removeShard(shardId.id(), "removing shard (stale copy)");
-                } else if (localRoutingNode.getByShardId(shard.getParentShardId()) != null && shard.state() == IndexShardState.STARTED){
-                    activeChildRoutings.computeIfAbsent(newShardRouting.shardId(), k -> new ArrayList<>());
                 }
             }
         }
@@ -693,7 +689,9 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                                            ClusterState state) {
         // Before we begin creating child shards, previous iteration of shard routing made sure that source shard
         // routing is updated.
-        childShardRoutings.forEach((parentShardId, routings) -> {
+        for (ShardId parentShardId : childShardRoutings.keySet()) {
+            Tuple<ShardRouting, List<ShardRouting>> routings = childShardRoutings.get(parentShardId);
+
             final long primaryTerm = state.metadata().index(parentShardId.getIndex()).primaryTerm(parentShardId.id());
             InPlaceShardSplitRecoveryListener replicationListener = new InPlaceShardSplitRecoveryListener(routings.v2(),
                 this, routings.v1(), primaryTerm);
@@ -733,7 +731,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     replicationListener.onFailure(null, new RecoveryFailedException(request, e.getCause()), true);
                 });
             }
-        });
+        }
     }
 
     private void createShard(DiscoveryNodes nodes, RoutingTable routingTable, ShardRouting shardRouting, ClusterState state) {

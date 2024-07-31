@@ -157,13 +157,7 @@ public class MetadataInPlaceShardSplitService {
             childShardIds.add(maxUsedShardId + i);
         }
 
-        Integer parentShardId = curIndexMetadata.getParentShardIdOrNull(sourceShardId.id());
-        int parentRoutingFactor = parentShardId == null ? curIndexMetadata.getRoutingFactor() :
-            curIndexMetadata.getSplitMetadata(parentShardId).getRoutingFactor();
-
-        SplitMetadata splitMetadata = new SplitMetadata(sourceShardId.id(), childShardIds, parentRoutingFactor);
-
-        indexMetadataBuilder.putParentToChildShardMetadata(splitMetadata);
+        indexMetadataBuilder.addChildShardsForSplittingShard(sourceShardId.id(), childShardIds);
         RoutingTable routingTable = routingTableBuilder.build();
         metadataBuilder.put(indexMetadataBuilder);
 

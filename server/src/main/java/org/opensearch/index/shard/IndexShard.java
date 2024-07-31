@@ -895,7 +895,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // acquire all permits. This will ensure that the remote store uploads can still be done by the existing primary shard.
         List<Releasable> releasablesOnHandoffFailures = new ArrayList<>(2);
         try (Releasable forceRefreshes = refreshListeners.forceRefreshes()) {
-            logger.info("Blocking operations. Active operations: " + indexShardOperationPermits.getActiveOperations());
             TransportShardBulkAction.debugRequest.set(true);
             Thread.sleep(1000);
             indexShardOperationPermits.blockOperations(30, TimeUnit.MINUTES, () -> {
@@ -2110,11 +2109,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             logger.error("Exception while reading latest metadata", e);
         }
         return false;
-    }
-
-    public RemoteSegmentMetadata getLatestMetadataFile() throws IOException {
-        RemoteSegmentStoreDirectory directory = getRemoteDirectory();
-        return directory.readLatestMetadataFile();
     }
 
     public Tuple<String, RemoteSegmentMetadata> getMetadataContentForCommit(long primaryTerm, long generation) throws IOException{

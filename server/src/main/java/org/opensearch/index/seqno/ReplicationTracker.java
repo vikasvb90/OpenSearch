@@ -1655,7 +1655,6 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             + allocationId
             + "]";
         if (localCheckpoint > cps.localCheckpoint) {
-            logger.info("updated local checkpoint of [{}] from [{}] to [{}]", allocationId, cps.localCheckpoint, localCheckpoint);
             cps.localCheckpoint = localCheckpoint;
             return true;
         } else {

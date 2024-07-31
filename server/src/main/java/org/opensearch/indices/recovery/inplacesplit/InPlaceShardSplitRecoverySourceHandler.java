@@ -125,15 +125,16 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     protected void innerRecoveryToTarget(ActionListener<RecoveryResponse> listener, Consumer<Exception> onFailure) throws IOException {
 //        onFailure = consumerForCleanupOnFailure(onFailure);
         // Clean up shard directories if previous shard closures failed.
+        logger.info("Starting split");
         cleanupChildShardDirectories();
 
         List<Releasable> delayedStaleCommitDeleteOps = sourceShard.delayStaleCommitDeletions();
         resources.addAll(delayedStaleCommitDeleteOps);
         GatedCloseable<Long> translogRetentionLock = sourceShard.acquireRetentionLockWithMinGen();
         resources.add(translogRetentionLock);
-        // Make sure that all operations after acquired translog generation are present in the last commit.
+        // Make sure that all operations before acquired translog generation are present in the last commit.
         // In remote store replication mode refreshed but not flushed ops are also trimmed from translog and hence,
-        // a flush is required to ensure that all operations after the commit can be fetched from local translog.
+        // a flush is required to ensure that all operations before the acquired translog are present in the local commit.
         // Also, a refresh is done as part of flush and therefore, we can expect commit to be present in remote store
         // as well.
         sourceShard.flush(new FlushRequest().waitIfOngoing(true).force(true));
@@ -158,7 +159,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 
         postSendFileComplete(sendFileStep, lastCommit, releaseStore, delayedStaleCommitDeleteOps);
         long startingSeqNo = Long.parseLong(lastCommit.get().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) + 1L;
-        long maxSeq = Long.parseLong(lastCommit.get().getUserData().get(SequenceNumbers.MAX_SEQ_NO));
+        logger.info("Docs in commit " + (startingSeqNo-1));
         assert Transports.assertNotTransportThread(this + "[phase1]");
         phase1(lastCommit.get(), startingSeqNo, () -> 0, sendFileStep, true);
 
@@ -170,11 +171,14 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             initiateTracking();
 
             final long endingSeqNo = sourceShard.seqNoStats().getMaxSeqNo();
-            // If no ops were indexed after commit was acquired then there wouldn't be any op in the snapshot.
-            long startingSeqNoForSnapShot = Math.min(startingSeqNo, endingSeqNo);
-            final Translog.Snapshot phase2Snapshot = sourceShard.getHistoryOperationsFromTranslog(startingSeqNoForSnapShot, endingSeqNo);
+            final Translog.Snapshot phase2Snapshot;
+            if (startingSeqNo > endingSeqNo) {
+                phase2Snapshot = new EmptySnapshot();
+            } else {
+                phase2Snapshot = sourceShard.getHistoryOperationsFromTranslog(startingSeqNo, endingSeqNo);
+            }
+
             resources.add(phase2Snapshot);
-            logger.info("Send snapshot number of docs " + phase2Snapshot.totalOperations());
             translogRetentionLock.close();
             logger.info("snapshot translog for recovery; current size is [{}]", phase2Snapshot.totalOperations());
 
@@ -262,7 +266,20 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         return null;
     }
 
+    private static class EmptySnapshot implements Translog.Snapshot {
+        @Override
+        public int totalOperations() {
+            return 0;
+        }
 
+        @Override
+        public Translog.Operation next() throws IOException {
+            return null;
+        }
+
+        @Override
+        public void close() throws IOException {}
+    }
 
     @Override
     public boolean shouldSkipCreateRetentionLeaseStep() {

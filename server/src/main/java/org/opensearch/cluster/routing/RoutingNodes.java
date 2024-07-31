@@ -193,7 +193,6 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     private void updateRecoveryCounts(final ShardRouting routing, final boolean increment, @Nullable final ShardRouting primary) {
-
         final int howMany = increment ? 1 : -1;
         assert routing.initializing() : "routing must be initializing: " + routing;
         // TODO: check primary == null || primary.active() after all tests properly add ReplicaAfterPrimaryActiveAllocationDecider
@@ -614,47 +613,49 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
     public void startInPlaceChildShards(
         Logger logger,
-        List<ShardRouting> inPlaceChildShards,
+        List<ShardRouting> childShards,
         IndexMetadata indexMetadata,
         RoutingChangesObserver routingChangesObserver
     ) {
         ensureMutable();
-        assert !inPlaceChildShards.isEmpty();
-        ShardRouting sourceShard = getByAllocationId(
-            inPlaceChildShards.get(0).getSplittingShardId(),
-            inPlaceChildShards.get(0).allocationId().getParentAllocationId()
+        assert !childShards.isEmpty();
+        ShardRouting parentShard = getByAllocationId(
+            childShards.get(0).getSplittingShardId(),
+            childShards.get(0).allocationId().getParentAllocationId()
         );
         int validShardEvents = 0, invalidShardEvents = 0;
-        for (ShardRouting childShardStartedEvent : inPlaceChildShards) {
-            if (childShardStartedEvent.isSplitTargetOf(sourceShard) == false) {
+        for (ShardRouting childShard : childShards) {
+            if (childShard.isSplitTargetOf(parentShard) == false) {
                 invalidShardEvents++;
             } else {
                 validShardEvents++;
             }
         }
 
-        if (invalidShardEvents != 0 || validShardEvents != sourceShard.getRecoveringChildShards().length) {
+        if (invalidShardEvents != 0 || validShardEvents != parentShard.getRecoveringChildShards().length) {
             logger.error(
                 "Invalid shard started event for child shards received. Unknown child found :["
                     + (invalidShardEvents != 0)
                     + "], Number of missing child shards in started shard event: ["
-                    + (sourceShard.getRecoveringChildShards().length - validShardEvents)
+                    + (parentShard.getRecoveringChildShards().length - validShardEvents)
+                    + "], Parent shard is valid: ["
+                    + (indexMetadata.isParentShard(parentShard.shardId().id()) == true)
                     + "]. Failing all child shards and cancelling relocation."
             );
             // We just need to fail one child shard because failShard ensures that failure of any child shard
-            // fails all child shards and cancels relocation of source.
+            // fails all child shards and cancels split of source shard.
             UnassignedInfo unassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.ALLOCATION_FAILED, "");
-            failShard(logger, inPlaceChildShards.get(0), unassignedInfo, indexMetadata, routingChangesObserver);
+            failShard(logger, childShards.get(0), unassignedInfo, indexMetadata, routingChangesObserver);
             return;
         }
 
-        inPlaceChildShards.forEach(childShard -> {
+        childShards.forEach(childShard -> {
             ShardRouting startedShard = started(childShard);
             logger.trace("{} marked shard as started (routing: {})", childShard.shardId(), childShard);
             routingChangesObserver.shardStarted(childShard, startedShard);
         });
-        remove(sourceShard);
-        routingChangesObserver.splitCompleted(sourceShard, indexMetadata);
+        remove(parentShard);
+        routingChangesObserver.splitCompleted(parentShard, indexMetadata);
     }
 
     /**

@@ -430,19 +430,6 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
     }
 
     /**
-     * Copies metadata file from source remote data directory to current remote. If async transfer is not supported
-     * then it uploads from local directory.
-     */
-    public void copyMetadataFromSrcRemoteToCurRemote(String metadataFile, Directory localDirectory,
-                                                         RemoteSegmentStoreDirectory sourceRemoteDir) throws IOException {
-//        boolean copied = remoteMetadataDirectory.copyFilesFromSrcRemoteToCurRemote(sourceRemoteDir.remoteMetadataDirectory,
-//            new HashSet<>(Collections.singletonList(metadataFile)));
-//        if (copied == false) {
-//            remoteMetadataDirectory.copyFrom(localDirectory, metadataFile, metadataFile, IOContext.DEFAULT);
-//        }
-    }
-
-    /**
      * Returns the byte length of a segment file in the remote segment store.
      *
      * @param name the name of an existing segment file in local filesystem.

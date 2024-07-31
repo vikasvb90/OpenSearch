@@ -906,7 +906,6 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 }
                 assert response.getResponse().getSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO;
                 if (discardOperation) {
-                    logger.info("Discarding operation " + response.getResponse().getSeqNo());
                     operationResult = replica.markSeqNoAsNoop(
                         response.getResponse().getSeqNo(),
                         response.getResponse().getPrimaryTerm(),

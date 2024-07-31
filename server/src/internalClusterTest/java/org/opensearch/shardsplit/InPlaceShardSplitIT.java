@@ -11,22 +11,18 @@ package org.opensearch.shardsplit;
 import org.opensearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.opensearch.action.admin.indices.split.InPlaceShardSplitRequest;
 import org.opensearch.action.admin.indices.split.InPlaceShardSplitResponse;
-import org.opensearch.action.admin.indices.stats.IndexStats;
 import org.opensearch.action.admin.indices.stats.ShardStats;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.Priority;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
-import org.opensearch.index.engine.Engine;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.search.SearchHits;
 import org.opensearch.test.BackgroundIndexer;
 import org.opensearch.test.OpenSearchIntegTestCase;
 
 import java.util.HashSet;
-import java.util.List;
-import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -78,7 +74,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
         System.out.println("Shard split completed");
     }
 
-    private void verifyAfterSplit(BackgroundIndexer indexer, int parentShardId, Set<Integer> childShardIds) throws InterruptedException {
+    private void verifyAfterSplit(long totalIndexedDocs, Set<String> ids, int parentShardId, Set<Integer> childShardIds) throws InterruptedException {
         ClusterState clusterState = client().admin().cluster().prepareState().get().getState();
         IndexMetadata indexMetadata = clusterState.metadata().index("test");
         assertTrue(indexMetadata.isParentShard(parentShardId));
@@ -90,18 +86,22 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
         }
         assertEquals(childShardIds, newServingChildShardIds);
 
-        indexer.pauseIndexing();
-        indexer.stopAndAwaitStopped();
         refresh("test");
+        ShardStats[] stats = client().admin().indices().prepareStats("test").get().getShards();
+        for (ShardStats shardStat : stats) {
+            logger.info("Shard stat after first indexing of shard " + shardStat.getShardRouting().shardId().id() + " docs: "
+                + shardStat.getStats().indexing.getTotal().getIndexCount() + " seq no: " + shardStat.getSeqNoStats().getMaxSeqNo());
+        }
+
         SearchHits hits = client().prepareSearch("test")
             .setQuery(matchAllQuery())
-            .setSize((int) indexer.totalIndexedDocs())
+            .setSize((int) totalIndexedDocs)
             .storedFields()
             .execute()
             .actionGet()
             .getHits();
-        assertThat(hits.getTotalHits().value, equalTo(indexer.totalIndexedDocs()));
-        for (String id : indexer.getIds()) {
+        assertThat(hits.getTotalHits().value, equalTo(totalIndexedDocs));
+        for (String id : ids) {
             // Make sure there is no duplicate doc.
             assertHitCount(client().prepareSearch("test").setSize(0)
                 .setQuery(matchQuery("_id", id)).get(), 1);
@@ -119,7 +119,6 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> waiting for {} docs to be indexed ...", numDocs);
             waitForDocs(numDocs, indexer);
             logger.info("--> {} docs indexed", numDocs);
-
             numDocs = scaledRandomIntBetween(200, 1000);
             logger.info("--> Allow indexer to index [{}] more documents", numDocs);
             indexer.continueIndexing(numDocs);
@@ -130,7 +129,9 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             waitForSplit(numberOfSplits, childShardIds, parentShardId);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
-            verifyAfterSplit(indexer, parentShardId, childShardIds);
+            indexer.pauseIndexing();
+            indexer.stopAndAwaitStopped();
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
         }
     }
 
@@ -160,7 +161,36 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             waitForSplit(numberOfSplits, childShardIds, parentShardId);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
-            verifyAfterSplit(indexer, parentShardId, childShardIds);
+            indexer.pauseIndexing();
+            indexer.stopAndAwaitStopped();
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+        }
+    }
+
+    public void testSplittingShardWithNoTranslogReplay() throws Exception {
+        internalCluster().startNodes(2);
+        prepareCreate("test", Settings.builder().put("index.number_of_shards", 1)
+            .put("index.number_of_replicas", 0)).get();
+        ensureGreen();
+        int numDocs = scaledRandomIntBetween(200, 2500);
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs)) {
+            indexer.setIgnoreIndexingFailures(false);
+            logger.info("--> waiting for {} docs to be indexed ...", numDocs);
+            waitForDocs(numDocs, indexer);
+            logger.info("--> {} docs indexed", numDocs);
+            indexer.stopAndAwaitStopped();
+            flushAndRefresh("test");
+            ShardStats shardStat = client().admin().indices().prepareStats("test").get().getShards()[0];
+            assertEquals(numDocs, shardStat.getCommitStats().getNumDocs());
+
+            int numberOfSplits = 3, parentShardId = 0;
+            logger.info("--> starting split...");
+            Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
+            logger.info("--> waiting for shards to be split ...");
+            waitForSplit(numberOfSplits, childShardIds, parentShardId);
+            logger.info("--> Shard split completed ...");
+            logger.info("--> Verifying after split ...");
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
         }
     }
 

@@ -313,13 +313,6 @@ public class InternalTranslogManager implements TranslogManager, Closeable {
         return translog.drainSync();
     }
 
-//    @Override
-    public void copyTranslogToTarget(TranslogManager translogManager) {
-        assert translogManager instanceof InternalTranslogManager;
-        InternalTranslogManager targetTranslogManager = (InternalTranslogManager) translogManager;
-        translog.copyTranslogToTarget(targetTranslogManager.translog);
-    }
-
     @Override
     public GatedCloseable<Long> acquireRetentionLockWithMinGen() {
         return translog.acquireRetentionLockWithMinGen();
