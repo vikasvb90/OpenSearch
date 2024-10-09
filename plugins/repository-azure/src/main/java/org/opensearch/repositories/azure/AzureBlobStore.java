@@ -311,7 +311,7 @@ public class AzureBlobStore implements BlobStore {
 
                 final BlobItemProperties properties = blobItem.getProperties();
                 logger.trace(() -> new ParameterizedMessage("blob name [{}], size [{}]", name, properties.getContentLength()));
-                blobsBuilder.put(name, new PlainBlobMetadata(name, properties.getContentLength()));
+                blobsBuilder.put(name, new PlainBlobMetadata(name, properties.getContentLength(), properties.getLastModified().toInstant().toEpochMilli()));
             }
         });
 

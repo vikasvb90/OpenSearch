@@ -121,6 +121,12 @@ public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     }
 
     @Override
+    public boolean isSplitOfShardFailed(ShardRouting parentShard) {
+        // Nothing to do here since splitFailed would have already marked changes in case of split failure.
+        return false;
+    }
+
+    @Override
     public void replicaPromoted(ShardRouting replicaShard) {
         assert replicaShard.started() && replicaShard.primary() == false : "expected started replica shard " + replicaShard;
         setChanged();

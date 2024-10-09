@@ -48,6 +48,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static org.opensearch.index.seqno.SequenceNumbers.LOCAL_CHECKPOINT_KEY;
@@ -89,6 +90,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
     private final RemoteSegmentTransferTracker segmentTracker;
     private final Map<String, String> localSegmentChecksumMap;
     private volatile long primaryTerm;
+    private volatile long commitGen = -1;
     private volatile Iterator<TimeValue> backoffDelayIterator;
     private final SegmentReplicationCheckpointPublisher checkpointPublisher;
     private final AtomicBoolean staleCommitDeletionDelayed = new AtomicBoolean();
@@ -153,7 +155,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
     protected boolean performAfterRefreshWithPermit(boolean didRefresh) {
         boolean successful;
         if (shouldSync(didRefresh, false)) {
-            successful = syncSegments();
+            successful = syncSegments(false);
         } else {
             successful = true;
         }
@@ -198,7 +200,7 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
     /*
      @return false if retry is needed
      */
-    private boolean syncSegments() {
+    private boolean syncSegments(boolean firstSyncAfterCommit) {
         if (isReadyForUpload() == false) {
             // Following check is required to enable retry and make sure that we do not lose this refresh event
             // When primary shard is restored from remote store, the recovery happens first followed by changing
@@ -223,8 +225,19 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                     remoteDirectory.deleteStaleSegmentsAsync(indexShard.getRecoverySettings().getMinRemoteSegmentMetadataFiles());
                 }
 
-                try (GatedCloseable<SegmentInfos> segmentInfosGatedCloseable = indexShard.getSegmentInfosSnapshot()) {
+                try (GatedCloseable<SegmentInfos> segmentInfosGatedCloseable = (
+                    firstSyncAfterCommit ?
+                        new GatedCloseable<>(indexShard.store().readLastCommittedSegmentsInfo(), ()->{}) :
+                        indexShard.getSegmentInfosSnapshot()
+                        )
+                ) {
+                    indexShard.store().readLastCommittedSegmentsInfo();
                     SegmentInfos segmentInfos = segmentInfosGatedCloseable.get();
+
+                    if (firstSyncAfterCommit == false && segmentInfos.getGeneration() != commitGen) {
+                        syncSegments(true);
+                        commitGen = segmentInfos.getGeneration();
+                    }
                     final ReplicationCheckpoint checkpoint = indexShard.computeReplicationCheckpoint(segmentInfos);
                     if (checkpoint.getPrimaryTerm() != indexShard.getOperationPrimaryTerm()) {
                         throw new IllegalStateException(
@@ -240,7 +253,6 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                     // move.
                     long lastRefreshedCheckpoint = ((InternalEngine) indexShard.getEngine()).lastRefreshedCheckpoint();
                     Collection<String> localSegmentsPostRefresh = segmentInfos.files(true);
-
                     // Create a map of file name to size and update the refresh segment tracker
                     updateLocalSizeMapAndTracker(localSegmentsPostRefresh);
                     CountDownLatch latch = new CountDownLatch(1);

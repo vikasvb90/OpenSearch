@@ -111,6 +111,10 @@ public class RemoteDirectory extends Directory {
     }
 
     public List<String> listFilesByPrefixInLexicographicOrder(String filenamePrefix, int limit) throws IOException {
+        return listFilesByPrefixInOrder(filenamePrefix, limit, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC);
+    }
+
+    public List<String> listFilesByPrefixInOrder(String filenamePrefix, int limit, BlobContainer.BlobNameSortOrder order) throws IOException {
         List<String> sortedBlobList = new ArrayList<>();
         AtomicReference<Exception> exception = new AtomicReference<>();
         final CountDownLatch latch = new CountDownLatch(1);
@@ -130,7 +134,7 @@ public class RemoteDirectory extends Directory {
             blobContainer.listBlobsByPrefixInSortedOrder(
                 filenamePrefix,
                 limit,
-                BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC,
+                order,
                 actionListener
             );
             latch.await();

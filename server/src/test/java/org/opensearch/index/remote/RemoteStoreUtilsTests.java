@@ -157,18 +157,18 @@ public class RemoteStoreUtilsTests extends OpenSearchTestCase {
         TranslogTransferMetadata tm2 = new TranslogTransferMetadata(1, 1, 1, 2, "node--1");
         String mdFilename2 = tm2.getFileName();
         List<BlobMetadata> bmList = new LinkedList<>();
-        bmList.add(new PlainBlobMetadata(mdFilename, 1));
-        bmList.add(new PlainBlobMetadata(mdFilename2, 1));
-        bmList.add(new PlainBlobMetadata(getOldTranslogMetadataFilename(1, 1, 1), 1));
+        bmList.add(new PlainBlobMetadata(mdFilename, 1, System.currentTimeMillis()));
+        bmList.add(new PlainBlobMetadata(mdFilename2, 1, System.currentTimeMillis()));
+        bmList.add(new PlainBlobMetadata(getOldTranslogMetadataFilename(1, 1, 1), 1, System.currentTimeMillis()));
         RemoteStoreUtils.verifyNoMultipleWriters(
             bmList.stream().map(BlobMetadata::name).collect(Collectors.toList()),
             TranslogTransferMetadata::getNodeIdByPrimaryTermAndGen
         );
 
         bmList = new LinkedList<>();
-        bmList.add(new PlainBlobMetadata(mdFilename, 1));
+        bmList.add(new PlainBlobMetadata(mdFilename, 1, System.currentTimeMillis()));
         TranslogTransferMetadata tm3 = new TranslogTransferMetadata(1, 1, 1, 2, "node--2");
-        bmList.add(new PlainBlobMetadata(tm3.getFileName(), 1));
+        bmList.add(new PlainBlobMetadata(tm3.getFileName(), 1, System.currentTimeMillis()));
         List<BlobMetadata> finalBmList = bmList;
         assertThrows(
             IllegalStateException.class,

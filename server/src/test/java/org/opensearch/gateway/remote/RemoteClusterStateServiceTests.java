@@ -674,7 +674,7 @@ public class RemoteClusterStateServiceTests extends OpenSearchTestCase {
         final ClusterState clusterState = generateClusterStateWithOneIndex().nodes(nodesWithLocalNodeClusterManager()).build();
 
         BlobContainer blobContainer = mockBlobStoreObjects();
-        BlobMetadata blobMetadata = new PlainBlobMetadata("manifestFileName", 1);
+        BlobMetadata blobMetadata = new PlainBlobMetadata("manifestFileName", 1, System.currentTimeMillis());
         when(blobContainer.listBlobsByPrefixInSortedOrder("manifest" + DELIMITER, 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC))
             .thenReturn(Arrays.asList(blobMetadata));
         when(blobContainer.readBlob("manifestFileName")).thenThrow(FileNotFoundException.class);
@@ -1054,14 +1054,14 @@ public class RemoteClusterStateServiceTests extends OpenSearchTestCase {
                 Integer.MAX_VALUE,
                 BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC
             )
-        ).thenReturn(List.of(new PlainBlobMetadata("mainfest2", 1L)));
+        ).thenReturn(List.of(new PlainBlobMetadata("mainfest2", 1L, System.currentTimeMillis())));
         when(
             manifest3Container.listBlobsByPrefixInSortedOrder(
                 MANIFEST_FILE_PREFIX + DELIMITER,
                 Integer.MAX_VALUE,
                 BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC
             )
-        ).thenReturn(List.of(new PlainBlobMetadata("mainfest3", 1L)));
+        ).thenReturn(List.of(new PlainBlobMetadata("mainfest3", 1L, System.currentTimeMillis())));
         remoteClusterStateService.start();
         remoteClusterStateService.deleteStaleClusterUUIDs(clusterState, clusterMetadataManifest);
         try {
@@ -1421,7 +1421,7 @@ public class RemoteClusterStateServiceTests extends OpenSearchTestCase {
         String manifestFileName = codecVersion >= ClusterMetadataManifest.CODEC_V1
             ? "manifest__manifestFileName__abcd__abcd__abcd__1"
             : "manifestFileName";
-        BlobMetadata blobMetadata = new PlainBlobMetadata(manifestFileName, 1);
+        BlobMetadata blobMetadata = new PlainBlobMetadata(manifestFileName, 1, System.currentTimeMillis());
         when(blobContainer.listBlobsByPrefixInSortedOrder("manifest" + DELIMITER, 1, BlobContainer.BlobNameSortOrder.LEXICOGRAPHIC))
             .thenReturn(Arrays.asList(blobMetadata));
 
@@ -1461,7 +1461,7 @@ public class RemoteClusterStateServiceTests extends OpenSearchTestCase {
         Metadata metadata
     ) throws IOException {
         String mockManifestFileName = "manifest__1__2__C__456__1";
-        BlobMetadata blobMetadata = new PlainBlobMetadata(mockManifestFileName, 1);
+        BlobMetadata blobMetadata = new PlainBlobMetadata(mockManifestFileName, 1, System.currentTimeMillis());
         when(
             blobContainer.listBlobsByPrefixInSortedOrder(
                 "manifest" + RemoteClusterStateService.DELIMITER,

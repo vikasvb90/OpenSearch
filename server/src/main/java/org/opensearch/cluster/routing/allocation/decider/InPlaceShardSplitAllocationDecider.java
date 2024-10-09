@@ -25,7 +25,7 @@ public class InPlaceShardSplitAllocationDecider extends AllocationDecider {
         // If shardRouting is a started parent shard and fact that it exists is sufficient to conclude
         // that it needs to be split.
         if (allocation.metadata().getIndexSafe(shardRouting.index()).isParentShard(shardRouting.shardId().id())
-            && shardRouting.started()) {
+            && shardRouting.started() && allocation.changes().isSplitOfShardFailed(shardRouting) == false) {
             return Decision.SPLIT;
         }
         return Decision.ALWAYS;

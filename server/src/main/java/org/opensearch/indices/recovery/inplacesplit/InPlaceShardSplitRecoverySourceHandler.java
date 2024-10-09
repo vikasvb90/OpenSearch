@@ -27,6 +27,7 @@ import org.opensearch.index.engine.Engine;
 import org.opensearch.index.seqno.RetentionLeases;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
+import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.store.StoreFileMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
@@ -44,6 +45,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -125,7 +127,6 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     protected void innerRecoveryToTarget(ActionListener<RecoveryResponse> listener, Consumer<Exception> onFailure) throws IOException {
 //        onFailure = consumerForCleanupOnFailure(onFailure);
         // Clean up shard directories if previous shard closures failed.
-        logger.info("Starting split");
         cleanupChildShardDirectories();
 
         List<Releasable> delayedStaleCommitDeleteOps = sourceShard.delayStaleCommitDeletions();
@@ -205,9 +206,8 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     }
 
     private void ensureMetadataHasAllSegmentsFromCommit(IndexCommit indexCommit, RemoteSegmentMetadata metadata) throws IOException {
-        Collection<String> files = indexCommit.getFileNames();
         List<String> missingFiles = new ArrayList<>();
-        for (String file : files) {
+        for (String file : indexCommit.getFileNames()) {
             if (metadata.getMetadata().containsKey(file) == false) {
                 missingFiles.add(file);
             }

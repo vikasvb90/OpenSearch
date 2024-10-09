@@ -366,8 +366,8 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(mdFilename1, 1));
-            bmList.add(new PlainBlobMetadata(mdFilename2, 1));
+            bmList.add(new PlainBlobMetadata(mdFilename1, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(mdFilename2, 1, System.currentTimeMillis()));
             latchedActionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -400,7 +400,7 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(mdFilename, 1));
+            bmList.add(new PlainBlobMetadata(mdFilename, 1, System.currentTimeMillis()));
             latchedActionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -528,9 +528,9 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             ActionListener<List<BlobMetadata>> actionListener = invocation.getArgument(4);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(tm1, 1));
-            bmList.add(new PlainBlobMetadata(tm2, 1));
-            bmList.add(new PlainBlobMetadata(tm3, 1));
+            bmList.add(new PlainBlobMetadata(tm1, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(tm2, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(tm3, 1, System.currentTimeMillis()));
             actionListener.onResponse(bmList);
             return null;
         }).when(transferService)
@@ -628,8 +628,8 @@ public class TranslogTransferManagerTests extends OpenSearchTestCase {
         doAnswer(invocation -> {
             LatchedActionListener<List<BlobMetadata>> latchedActionListener = invocation.getArgument(3);
             List<BlobMetadata> bmList = new LinkedList<>();
-            bmList.add(new PlainBlobMetadata(mdFilename, 1));
-            bmList.add(new PlainBlobMetadata(mdFilename2, 1));
+            bmList.add(new PlainBlobMetadata(mdFilename, 1, System.currentTimeMillis()));
+            bmList.add(new PlainBlobMetadata(mdFilename2, 1, System.currentTimeMillis()));
             latchedActionListener.onResponse(bmList);
             return null;
         }).when(transferService)

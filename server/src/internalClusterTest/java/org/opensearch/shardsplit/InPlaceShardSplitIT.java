@@ -8,16 +8,21 @@
 
 package org.opensearch.shardsplit;
 
+import org.opensearch.OpenSearchParseException;
 import org.opensearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.opensearch.action.admin.indices.split.InPlaceShardSplitRequest;
 import org.opensearch.action.admin.indices.split.InPlaceShardSplitResponse;
 import org.opensearch.action.admin.indices.stats.ShardStats;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.health.ClusterHealthStatus;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.Priority;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.core.rest.RestStatus;
 import org.opensearch.index.mapper.MapperService;
+import org.opensearch.rest.RestRequest;
+import org.opensearch.rest.action.cat.RestClusterManagerAction;
 import org.opensearch.search.SearchHits;
 import org.opensearch.test.BackgroundIndexer;
 import org.opensearch.test.OpenSearchIntegTestCase;
@@ -26,7 +31,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.*;
 import static org.opensearch.index.query.QueryBuilders.matchAllQuery;
 import static org.opensearch.index.query.QueryBuilders.matchQuery;
 import static org.opensearch.test.OpenSearchIntegTestCase.ClusterScope;
@@ -62,6 +67,11 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             assertEquals(numberOfSplits, startedChildShards);
         }, maxWaitTimeMs, TimeUnit.MILLISECONDS);
 
+        assertClusterHealth();
+        logger.info("Shard split completed");
+    }
+
+    private void assertClusterHealth() {
         ClusterHealthResponse clusterHealthResponse = client().admin()
             .cluster()
             .prepareHealth()
@@ -70,12 +80,14 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             .setTimeout(ACCEPTABLE_RELOCATION_TIME)
             .execute()
             .actionGet();
+        assertThat(clusterHealthResponse, notNullValue());
         assertThat(clusterHealthResponse.isTimedOut(), equalTo(false));
-        System.out.println("Shard split completed");
+        assertThat(clusterHealthResponse.status(), equalTo(RestStatus.OK));
+        assertThat(clusterHealthResponse.getStatus(), equalTo(ClusterHealthStatus.GREEN));
     }
 
     private void verifyAfterSplit(long totalIndexedDocs, Set<String> ids, int parentShardId, Set<Integer> childShardIds) throws InterruptedException {
-        ClusterState clusterState = client().admin().cluster().prepareState().get().getState();
+        ClusterState clusterState = internalCluster().clusterManagerClient().admin().cluster().prepareState().get().getState();
         IndexMetadata indexMetadata = clusterState.metadata().index("test");
         assertTrue(indexMetadata.isParentShard(parentShardId));
         assertEquals(childShardIds, new HashSet<>(indexMetadata.getChildShardIds(parentShardId)));
@@ -115,7 +127,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             .put("index.number_of_replicas", 0)).get();
         ensureGreen();
         int numDocs = scaledRandomIntBetween(200, 2500);
-        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs)) {
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs, 4)) {
             logger.info("--> waiting for {} docs to be indexed ...", numDocs);
             waitForDocs(numDocs, indexer);
             logger.info("--> {} docs indexed", numDocs);
@@ -141,7 +153,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             .put("index.number_of_replicas", 0)).get();
         ensureGreen();
         int numDocs = scaledRandomIntBetween(200, 2500);
-        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs)) {
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs, 4)) {
             indexer.setIgnoreIndexingFailures(false);
             logger.info("--> waiting for {} docs to be indexed ...", numDocs);
             waitForDocs(numDocs, indexer);
@@ -173,7 +185,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             .put("index.number_of_replicas", 0)).get();
         ensureGreen();
         int numDocs = scaledRandomIntBetween(200, 2500);
-        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs)) {
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs, 4)) {
             indexer.setIgnoreIndexingFailures(false);
             logger.info("--> waiting for {} docs to be indexed ...", numDocs);
             waitForDocs(numDocs, indexer);

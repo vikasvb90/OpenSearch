@@ -96,6 +96,11 @@ public interface RoutingChangesObserver {
     void splitFailed(ShardRouting splitSource, IndexMetadata indexMetadata);
 
     /**
+     * Called to determine if shard split has failed in current cluster update.
+     */
+    boolean isSplitOfShardFailed(ShardRouting parentShard);
+
+    /**
      * Called when started replica is promoted to primary.
      */
     void replicaPromoted(ShardRouting replicaShard);
@@ -140,6 +145,11 @@ public interface RoutingChangesObserver {
         @Override
         public void shardFailed(ShardRouting activeShard, UnassignedInfo unassignedInfo) {
 
+        }
+
+        @Override
+        public boolean isSplitOfShardFailed(ShardRouting parentShard) {
+            return false;
         }
 
         @Override
@@ -212,6 +222,17 @@ public interface RoutingChangesObserver {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.splitStarted(startedShard, childSplitShards);
             }
+        }
+
+        @Override
+        public boolean isSplitOfShardFailed(ShardRouting parentShard) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                if (routingChangesObserver.isSplitOfShardFailed(parentShard)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         @Override

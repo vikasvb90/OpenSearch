@@ -45,9 +45,12 @@ public class PlainBlobMetadata implements BlobMetadata {
 
     private final long length;
 
-    public PlainBlobMetadata(String name, long length) {
+    private final long lastModified;
+
+    public PlainBlobMetadata(String name, long length, long lastModified) {
         this.name = name;
         this.length = length;
+        this.lastModified = lastModified;
     }
 
     @Override
@@ -58,6 +61,11 @@ public class PlainBlobMetadata implements BlobMetadata {
     @Override
     public long length() {
         return this.length;
+    }
+
+    @Override
+    public long lastModified() {
+        return this.lastModified;
     }
 
     @Override

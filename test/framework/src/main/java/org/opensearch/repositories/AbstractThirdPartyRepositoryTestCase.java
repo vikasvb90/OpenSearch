@@ -160,7 +160,7 @@ public abstract class AbstractThirdPartyRepositoryTestCase extends OpenSearchSin
         assertBlobsByPrefix(
             repo.basePath().add("foo"),
             "nest",
-            Collections.singletonMap("nested-blob", new PlainBlobMetadata("nested-blob", testBlobLen))
+            Collections.singletonMap("nested-blob", new PlainBlobMetadata("nested-blob", testBlobLen, System.currentTimeMillis()))
         );
         assertChildren(repo.basePath().add("foo").add("nested"), Collections.emptyList());
         if (randomBoolean()) {

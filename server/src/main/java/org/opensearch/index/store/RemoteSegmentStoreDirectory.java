@@ -25,6 +25,7 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.Version;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.annotation.PublicApi;
+import org.opensearch.common.blobstore.BlobContainer;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.io.VersionedCodecStreamWrapper;
 import org.opensearch.common.logging.Loggers;
@@ -562,9 +563,10 @@ public final class RemoteSegmentStoreDirectory extends FilterDirectory implement
 
     // Visible for testing
     public String getMetadataFileForCommit(long primaryTerm, long generation) throws IOException {
-        List<String> metadataFiles = remoteMetadataDirectory.listFilesByPrefixInLexicographicOrder(
+        List<String> metadataFiles = remoteMetadataDirectory.listFilesByPrefixInOrder(
             MetadataFilenameUtils.getMetadataFilePrefixForCommit(primaryTerm, generation),
-            1
+            1,
+            BlobContainer.BlobNameSortOrder.CHRONOLOGICAL
         );
 
         if (metadataFiles.isEmpty()) {

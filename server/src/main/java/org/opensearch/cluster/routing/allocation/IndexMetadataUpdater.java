@@ -118,14 +118,8 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     @Override
     public boolean isSplitOfShardFailed(ShardRouting parentShard) {
-        if (failedShard.active() && failedShard.primary() && failedShard.isSplitTarget() == false) {
-            Updates updates = changes(failedShard.shardId());
-            if (updates.firstFailedPrimary == null) {
-                // more than one primary can be failed (because of batching, primary can be failed, replica promoted and then failed...)
-                updates.firstFailedPrimary = failedShard;
-            }
-            increasePrimaryTerm(failedShard.shardId());
-        }
+        Updates updates = changes(parentShard.shardId());
+        return updates.splitFailed;
     }
 
     @Override

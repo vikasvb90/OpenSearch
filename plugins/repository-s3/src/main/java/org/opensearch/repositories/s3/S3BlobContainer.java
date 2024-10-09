@@ -523,7 +523,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
             try (AmazonS3Reference clientReference = blobStore.clientReference()) {
                 List<BlobMetadata> blobs = executeListing(clientReference, listObjectsRequest(prefix, limit), limit).stream()
                     .flatMap(listing -> listing.contents().stream())
-                    .map(s3Object -> new PlainBlobMetadata(s3Object.key().substring(keyPath.length()), s3Object.size()))
+                    .map(s3Object -> new PlainBlobMetadata(s3Object.key().substring(keyPath.length()), s3Object.size(), s3Object.lastModified().toEpochMilli()))
                     .collect(Collectors.toList());
                 return blobs.subList(0, Math.min(limit, blobs.size()));
             } catch (final Exception e) {
@@ -538,7 +538,7 @@ class S3BlobContainer extends AbstractBlobContainer implements AsyncMultiStreamB
         try (AmazonS3Reference clientReference = blobStore.clientReference()) {
             return executeListing(clientReference, listObjectsRequest(prefix, blobStore)).stream()
                 .flatMap(listing -> listing.contents().stream())
-                .map(s3Object -> new PlainBlobMetadata(s3Object.key().substring(keyPath.length()), s3Object.size()))
+                .map(s3Object -> new PlainBlobMetadata(s3Object.key().substring(keyPath.length()), s3Object.size(), s3Object.lastModified().toEpochMilli()))
                 .collect(Collectors.toMap(PlainBlobMetadata::name, Function.identity()));
         } catch (final SdkException e) {
             throw new IOException("Exception when listing blobs by prefix [" + prefix + "]", e);
