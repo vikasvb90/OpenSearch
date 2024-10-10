@@ -160,7 +160,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 
         postSendFileComplete(sendFileStep, lastCommit, releaseStore, delayedStaleCommitDeleteOps);
         long startingSeqNo = Long.parseLong(lastCommit.get().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) + 1L;
-        logger.info("Docs in commit " + (startingSeqNo-1));
+        logger.info("Docs in commit " + (startingSeqNo));
         assert Transports.assertNotTransportThread(this + "[phase1]");
         phase1(lastCommit.get(), startingSeqNo, () -> 0, sendFileStep, true);
 
@@ -302,6 +302,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     @Override
     protected void relocateShard(Runnable forceSegRepRunnable) throws InterruptedException {
         shard.relocated(childShardsAllocationIds, recoveryTarget::handoffPrimaryContext, forceSegRepRunnable);
+        recoveryTarget.flushOnAllChildShards();
     }
 
     public void cleanupChildShardDirectories() throws IOException {

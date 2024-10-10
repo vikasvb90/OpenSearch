@@ -18,6 +18,7 @@ import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.IOUtils;
 import org.opensearch.action.LatchedActionListener;
+import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.support.GroupedActionListener;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.common.CheckedRunnable;
@@ -169,6 +170,24 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
                 mappingVersionOnPrimary,
                 checkpointListener
             );
+        });
+    }
+
+    /**
+     * This is required because in translog replay of operations from translog snapshot, each operation is actually
+     * processed only on one of the child shards and other child shards treat it as a NoOp where only local checkpoint
+     * is advanced. In this case local checkpoint is also the global checkpoint since we are creating a new shard
+     * and hence a new replication group. In scenario where one or more of the child shards are relocated before
+     * next flush gets triggered, translog replay of operations from snapshot taken from lucene in these peer
+     * recoveries will not have no-ops and therefore, peer recovery will fail while waiting for target shard to
+     * catch up to global checkpoint. So, to make sure that operations till global checkpoint are available, we
+     * will need to trigger a flush to create a new commit on all child shards.
+     * Same principle is applicable till child shards are completely handed off to serve as independent shards
+     * because no-op ops can continue to arrive till it is done.
+     */
+    public void flushOnAllChildShards() {
+        recoveryContexts.forEach(recoveryTarget -> {
+            recoveryTarget.getIndexShard().flush(new FlushRequest().waitIfOngoing(true).force(true));
         });
     }
 
