@@ -41,6 +41,7 @@ import org.opensearch.transport.Transports;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -133,26 +134,17 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         resources.addAll(delayedStaleCommitDeleteOps);
         GatedCloseable<Long> translogRetentionLock = sourceShard.acquireRetentionLockWithMinGen();
         resources.add(translogRetentionLock);
-        // Make sure that all operations before acquired translog generation are present in the last commit.
-        // In remote store replication mode refreshed but not flushed ops are also trimmed from translog and hence,
-        // a flush is required to ensure that all operations before the acquired translog are present in the local commit.
-        // Also, a refresh is done as part of flush and therefore, we can expect commit to be present in remote store
-        // as well.
-        sourceShard.flush(new FlushRequest().waitIfOngoing(true).force(true));
-
         Releasable releaseStore = acquireStore(sourceShard.store());
         resources.add(releaseStore);
-        GatedCloseable<IndexCommit> lastCommit = acquireLastCommit(sourceShard,false);
-        resources.add(lastCommit);
 
-        Tuple<String, RemoteSegmentMetadata> fetchedMetadataTuple = null;
-        if (sourceShard.remoteStore() != null) {
-            fetchedMetadataTuple = sourceShard.getMetadataContentForCommit(
-                sourceShard.getOperationPrimaryTerm(),
-                lastCommit.get().getGeneration());
-            ensureMetadataHasAllSegmentsFromCommit(lastCommit.get(), fetchedMetadataTuple.v2());
+        GatedCloseable<IndexCommit> lastCommit;
+        try {
+            lastCommit = acquireCommitAndFetchMetadata(translogRetentionLock);
+        } catch (NoSuchFileException ex) {
+            // Handling of a known issue in remote store flow https://github.com/opensearch-project/OpenSearch/pull/10341
+            logger.warn("Exception while acquiring commit and fetching metadata", ex);
+            lastCommit = acquireCommitAndFetchMetadata(translogRetentionLock);
         }
-        splitCommitMetadata.set(new SplitCommitMetadata(translogRetentionLock.get(), fetchedMetadataTuple));
 
         final StepListener<SendFileResult> sendFileStep = new StepListener<>();
         final StepListener<TimeValue> prepareEngineStep = new StepListener<>();
@@ -203,6 +195,28 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             cleanUpMaybeRemoteOnFinalize();
         }, onFailure);
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStepWithEmptyResult(), prepareEngineStep, finalizeStep, onFailure);
+    }
+
+    private GatedCloseable<IndexCommit> acquireCommitAndFetchMetadata(GatedCloseable<Long> translogRetentionLock) throws IOException {
+        // Make sure that all operations before acquired translog generation are present in the last commit.
+        // In remote store replication mode refreshed but not flushed ops are also trimmed from translog and hence,
+        // a flush is required to ensure that all operations before the acquired translog are present in the local commit.
+        // Also, a refresh is done as part of flush and therefore, we can expect commit to be present in remote store
+        // as well.
+        sourceShard.flush(new FlushRequest().waitIfOngoing(true).force(true));
+
+        GatedCloseable<IndexCommit> lastCommit = acquireLastCommit(sourceShard,false);
+        resources.add(lastCommit);
+
+        Tuple<String, RemoteSegmentMetadata> fetchedMetadataTuple = null;
+        if (sourceShard.remoteStore() != null) {
+            fetchedMetadataTuple = sourceShard.getMetadataContentForCommit(
+                sourceShard.getOperationPrimaryTerm(),
+                lastCommit.get().getGeneration());
+            ensureMetadataHasAllSegmentsFromCommit(lastCommit.get(), fetchedMetadataTuple.v2());
+        }
+        splitCommitMetadata.set(new SplitCommitMetadata(translogRetentionLock.get(), fetchedMetadataTuple));
+        return lastCommit;
     }
 
     private void ensureMetadataHasAllSegmentsFromCommit(IndexCommit indexCommit, RemoteSegmentMetadata metadata) throws IOException {
