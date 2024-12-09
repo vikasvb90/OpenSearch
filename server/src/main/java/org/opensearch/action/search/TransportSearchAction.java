@@ -49,6 +49,7 @@ import org.opensearch.cluster.block.ClusterBlockException;
 import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
+import org.opensearch.cluster.metadata.ShardRange;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.routing.GroupShardsIterator;
@@ -1441,10 +1442,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 final ShardId shardId = entry.getKey();
                 IndexMetadata indexMetadata = clusterState.metadata().getIndexSafe(shardId.getIndex());
                 final List<ShardId> allShardIds;
-                if (indexMetadata.isNonServingShard(shardId.id()) && indexMetadata.isParentShard(shardId.id())) {
-                    List<Integer> childShardIDs = indexMetadata.getSplitMetadata(shardId.id()).getChildShards();
+                if (indexMetadata.getSplitShardsMetadata().isEmptyParentShard(shardId.id())) {
+                    ShardRange[] childShards = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(shardId.id());
                     allShardIds = new ArrayList<>();
-                    childShardIDs.forEach(childShardId -> allShardIds.add(new ShardId(shardId.getIndex(), childShardId)));
+                    for (ShardRange childShard : childShards) {
+                        allShardIds.add(new ShardId(shardId.getIndex(), childShard.getShardId()));
+                    }
                 } else {
                     allShardIds = List.of(shardId);
                 }

@@ -37,6 +37,7 @@ import org.apache.lucene.util.CollectionUtil;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.metadata.ShardRange;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.UnassignedInfo.AllocationStatus;
 import org.opensearch.cluster.routing.allocation.ExistingShardsAllocator;
@@ -290,7 +291,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         }
 
         if (routing.isSplitTarget()) {
-            List<ShardRouting> shardRoutings = assignedShards.get(routing.getSplittingShardId());
+            List<ShardRouting> shardRoutings = assignedShards.get(routing.getParentShardId());
             if (shardRoutings != null) {
                 for (ShardRouting shardRouting : shardRoutings) {
                     if (shardRouting.primary()) {
@@ -298,7 +299,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                             return shardRouting;
                         } else if (primary == null) {
                             primary = shardRouting;
-                        } else if (primary.getRecoveringChildShardIds() != null) {
+                        } else if (primary.getRecoveringChildShardRanges() != null) {
                             primary = shardRouting;
                         }
                     }
@@ -597,7 +598,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     ) {
         ensureMutable();
         splittingShards++;
-        ShardRouting source = startedShard.split(indexMetadata.getChildShardIds(startedShard.shardId().id()), expectedShardSize);
+        ShardRange[] childShardRanges = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(startedShard.shardId().id());
+        ShardRouting source = startedShard.split(childShardRanges, expectedShardSize);
         updateAssigned(startedShard, source);
         ShardRouting[] childShards = source.getRecoveringChildShards();
         List<ShardRouting> childShardsList = Arrays.asList(childShards);
@@ -620,7 +622,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         ensureMutable();
         assert !childShards.isEmpty();
         ShardRouting parentShard = getByAllocationId(
-            childShards.get(0).getSplittingShardId(),
+            childShards.get(0).getParentShardId(),
             childShards.get(0).allocationId().getParentAllocationId()
         );
         int validShardEvents = 0, invalidShardEvents = 0;
@@ -639,8 +641,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                     + "], Number of missing child shards in started shard event: ["
                     + (parentShard.getRecoveringChildShards().length - validShardEvents)
                     + "], Parent shard is valid: ["
-                    + (indexMetadata.isParentShard(parentShard.shardId().id()) == true)
-                    + "]. Failing all child shards and cancelling relocation."
+                    + (indexMetadata.getSplitShardsMetadata().isSplitOfShardInProgress(parentShard.shardId().id()) == true)
+                    + "]. Failing all child shards and cancelling split."
             );
             // We just need to fail one child shard because failShard ensures that failure of any child shard
             // fails all child shards and cancels split of source shard.
@@ -741,6 +743,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         RoutingChangesObserver routingChangesObserver
     ) {
         ensureMutable();
+        if (failedShard.isSplitTarget() && getByAllocationId(failedShard.shardId(), failedShard.allocationId().getId()) == null) {
+            // We already removed this child when parent failed.
+            return;
+        }
         assert failedShard.assignedToNode() : "only assigned shards can be failed";
         assert indexMetadata.getIndex().equals(failedShard.index()) : "shard failed for unknown index (shard entry: " + failedShard + ")";
         assert getByAllocationId(failedShard.shardId(), failedShard.allocationId().getId()) == failedShard
@@ -816,7 +822,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                 }
             } else if (failedShardAllocId.getParentAllocationId() != null) {
                 ShardRouting sourceShard = getByAllocationId(
-                    failedShard.getSplittingShardId(),
+                    failedShard.getParentShardId(),
                     failedShard.allocationId().getParentAllocationId()
                 );
                 // If source shard is not splitting then we must have failed it in previous iteration of child shard.
@@ -1460,7 +1466,6 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         boolean verifyOutgoingRecoveries,
         Function<ShardRouting, Boolean> incomingCountFilter
     ) {
-        Set<ShardId> splittingShards = new HashSet<>();
         for (Map.Entry<String, Recoveries> recoveries : recoveriesPerNode.entrySet()) {
             String node = recoveries.getKey();
             final Recoveries value = recoveries.getValue();
@@ -1479,12 +1484,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                             if (assigned.initializing() && assigned.recoverySource().getType() == RecoverySource.Type.PEER) {
                                 outgoing++;
                             } else if (assigned.splitting()) {
-                                assert assigned.getRecoveringChildShards().length == assigned.getRecoveringChildShardIds().length;
+                                assert assigned.getRecoveringChildShards().length == assigned.getRecoveringChildShardRanges().length;
                                 for (ShardRouting childShardRouting : assigned.getRecoveringChildShards()) {
                                     assert routingNodes.assignedShards.containsKey(childShardRouting.shardId());
                                     for (ShardRouting assignedChildShard : routingNodes.assignedShards.get(childShardRouting.shardId())) {
-                                        assert assignedChildShard.primary() == false
-                                            || assignedChildShard.getSplittingShardId().equals(assigned.shardId());
+                                        assert assignedChildShard.getParentShardId().equals(assigned.shardId());
                                     }
                                 }
                                 outgoing++;

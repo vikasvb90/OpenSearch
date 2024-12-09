@@ -34,7 +34,6 @@ package org.opensearch.index.shard;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.index.CheckIndex;
 import org.apache.lucene.index.DirectoryReader;
@@ -66,7 +65,6 @@ import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.upgrade.post.UpgradeRequest;
 import org.opensearch.action.bulk.TransportShardBulkAction;
 import org.opensearch.action.support.replication.PendingReplicationActions;
-import org.opensearch.action.support.replication.ReplicationOperation;
 import org.opensearch.action.support.replication.ReplicationResponse;
 import org.opensearch.cluster.metadata.DataStream;
 import org.opensearch.cluster.metadata.IndexMetadata;
@@ -431,7 +429,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final String aId = shardRouting.allocationId().getId();
         final long primaryTerm;
         if (shardRouting.isSplitTarget()) {
-            primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardRouting.getSplittingShardId().id());
+            primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardRouting.getParentShardId().id());
         } else {
             primaryTerm = indexSettings.getIndexMetadata().primaryTerm(shardId.id());
         }
@@ -2399,7 +2397,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
         final Translog.Index index = (Translog.Index) operation;
         int computedShardId = OperationRouting.generateShardId(indexSettings().getIndexMetadata(),
-            index.id(), index.routing(), (shardId) -> true);
+            index.id(), index.routing(), true);
         if (computedShardId != shardId().id()) {
             return new Translog.NoOp(index.seqNo(), index.primaryTerm(), "op belongs to another child shard");
         }

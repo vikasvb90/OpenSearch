@@ -879,7 +879,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 // split recovery where after all child shards are added to replication tracker, bulk
                 // operations are replicated to all child primaries.
                 int computedShardId = OperationRouting.generateShardId(indexMetadata, item.request().id(),
-                    item.request().routing(), (shardId) -> true);
+                    item.request().routing(), true);
                 discardOperation = computedShardId != replica.shardId().id();
             }
 

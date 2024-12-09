@@ -16,6 +16,7 @@ import org.opensearch.action.admin.indices.stats.ShardStats;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.health.ClusterHealthStatus;
 import org.opensearch.cluster.metadata.IndexMetadata;
+import org.opensearch.cluster.metadata.ShardRange;
 import org.opensearch.common.Priority;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
@@ -27,9 +28,11 @@ import org.opensearch.search.SearchHits;
 import org.opensearch.test.BackgroundIndexer;
 import org.opensearch.test.OpenSearchIntegTestCase;
 
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.hamcrest.Matchers.*;
 import static org.opensearch.index.query.QueryBuilders.matchAllQuery;
@@ -48,7 +51,8 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
         assertAcked(response);
         ClusterState clusterState = client().admin().cluster().prepareState().get().getState();
         IndexMetadata indexMetadata = clusterState.metadata().index("test");
-        return new HashSet<>(indexMetadata.getChildShardIds(parentShardId));
+        ShardRange[] shards = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId);
+        return Arrays.stream(shards).map(ShardRange::getShardId).collect(Collectors.toSet());
     }
 
     private void waitForSplit(int numberOfSplits, Set<Integer> childShardIds, int parentShardId) throws Exception {
@@ -89,10 +93,12 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
     private void verifyAfterSplit(long totalIndexedDocs, Set<String> ids, int parentShardId, Set<Integer> childShardIds) throws InterruptedException {
         ClusterState clusterState = internalCluster().clusterManagerClient().admin().cluster().prepareState().get().getState();
         IndexMetadata indexMetadata = clusterState.metadata().index("test");
-        assertTrue(indexMetadata.isParentShard(parentShardId));
-        assertEquals(childShardIds, new HashSet<>(indexMetadata.getChildShardIds(parentShardId)));
+        assertNotNull(indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId));
+        ShardRange[] shards = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId);
+        Set<Integer> currentShardIds = Arrays.stream(shards).map(ShardRange::getShardId).collect(Collectors.toSet());
+        assertEquals(childShardIds, currentShardIds);
         Set<Integer> newServingChildShardIds = new HashSet<>();
-        for (int shardId : indexMetadata.getServingShardIds()) {
+        for (int shardId : currentShardIds) {
             assertTrue(parentShardId != shardId);
             if (childShardIds.contains(shardId)) newServingChildShardIds.add(shardId);
         }

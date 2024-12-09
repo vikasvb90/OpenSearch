@@ -135,9 +135,7 @@ public class TransportPitSegmentsAction extends TransportBroadcastByNodeAction<P
                             null,
                             null,
                             null,
-                            -1L,
-                            null,
-                            null
+                            -1L
                         )
                     );
                 }
@@ -230,9 +228,7 @@ public class TransportPitSegmentsAction extends TransportBroadcastByNodeAction<P
             RecoverySource recoverySource,
             UnassignedInfo unassignedInfo,
             AllocationId allocationId,
-            long expectedShardSize,
-            ShardId[] childShardIds,
-            ShardId splittingShardId
+            long expectedShardSize
         ) {
             super(
                 shardId,
@@ -244,8 +240,9 @@ public class TransportPitSegmentsAction extends TransportBroadcastByNodeAction<P
                 unassignedInfo,
                 allocationId,
                 expectedShardSize,
-                childShardIds,
-                splittingShardId
+                null,
+                null,
+                null
             );
             this.pitId = pitId;
         }

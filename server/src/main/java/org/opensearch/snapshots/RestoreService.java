@@ -690,7 +690,8 @@ public class RestoreService implements ClusterStateApplier {
                             );
                         }
                         // Make sure that the number of shards is the same. That's the only thing that we cannot change
-                        if (currentIndexMetadata.getNumberOfSeedShards() != snapshotIndexMetadata.getNumberOfSeedShards()) {
+                        if (currentIndexMetadata.getSplitShardsMetadata().getNumberOfRootShards() !=
+                            snapshotIndexMetadata.getSplitShardsMetadata().getNumberOfRootShards()) {
                             throw new SnapshotRestoreException(
                                 snapshot,
                                 "cannot restore index ["

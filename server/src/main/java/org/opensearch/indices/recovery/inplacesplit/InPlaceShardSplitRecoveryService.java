@@ -254,7 +254,7 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             if (shard.routingEntry().splitting()) {
                 return shard.shardId();
             } else if (shard.routingEntry().isSplitTarget()) {
-                return shard.routingEntry().getSplittingShardId();
+                return shard.routingEntry().getParentShardId();
             }
             return null;
         }

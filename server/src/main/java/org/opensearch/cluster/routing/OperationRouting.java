@@ -34,7 +34,6 @@ package org.opensearch.cluster.routing;
 
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.metadata.IndexMetadata;
-import org.opensearch.cluster.metadata.SplitMetadata;
 import org.opensearch.cluster.metadata.WeightedRoutingMetadata;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.routing.allocation.decider.AwarenessAllocationDecider;
@@ -449,7 +448,7 @@ public class OperationRouting {
 
     public ShardId shardWithRecoveringChild(ClusterState clusterState, String index, String id, String routing,
                                                Index shardIndex) {
-        int shardId = generateShardId(indexMetadata(clusterState, index), id, routing, (shard) -> true);
+        int shardId = generateShardId(indexMetadata(clusterState, index), id, routing, true);
         return new ShardId(shardIndex, shardId);
     }
 
@@ -459,11 +458,11 @@ public class OperationRouting {
     }
 
     public static int generateShardId(IndexMetadata indexMetadata, @Nullable String id, @Nullable String routing) {
-        return generateShardId(indexMetadata, id, routing, indexMetadata::isNonServingShard);
+        return generateShardId(indexMetadata, id, routing, false);
     }
 
     public static int generateShardId(IndexMetadata indexMetadata, @Nullable String id, @Nullable String routing,
-                                      Predicate<Integer> shouldIncludeChildShards) {
+                                      boolean includeInProgressChild) {
         final String effectiveRouting;
         final int partitionOffset;
 
@@ -481,27 +480,21 @@ public class OperationRouting {
             partitionOffset = 0;
         }
 
-        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, shouldIncludeChildShards);
+        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, includeInProgressChild);
     }
 
     private static int calculateScaledShardId(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset) {
-        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, indexMetadata::isNonServingShard);
+        return calculateShardIdOfChild(indexMetadata, effectiveRouting, partitionOffset, false);
     }
 
     private static int calculateShardIdOfChild(IndexMetadata indexMetadata, String effectiveRouting, int partitionOffset,
-                                               Predicate<Integer> canIncludeChildShardIds) {
+                                               boolean includeInProgressChild) {
         final int hash = Murmur3HashFunction.hash(effectiveRouting) + partitionOffset;
-        int shardId = Math.floorMod(hash, indexMetadata.getRoutingNumShards()) / indexMetadata.getRoutingFactor();
-
-        while (indexMetadata.isParentShard(shardId) && canIncludeChildShardIds.test(shardId)) {
-            final SplitMetadata splitMetadata = indexMetadata.getSplitMetadata(shardId);
-            int childShardIdx = Math.floorMod(hash, splitMetadata.getRoutingNumShards()) / splitMetadata.getRoutingFactor();
-            shardId = splitMetadata.getChildShardIdAtIndex(childShardIdx);
-        }
-
         // we don't use IMD#getNumberOfShards since the index might have been shrunk such that we need to use the size
         // of original index to hash documents
-        return shardId;
+        int rootShardId = Math.floorMod(hash, indexMetadata.getRoutingNumShards()) / indexMetadata.getRoutingFactor();
+
+        return indexMetadata.getSplitShardsMetadata().getShardIdOfHash(rootShardId, hash, includeInProgressChild);
     }
 
     private void checkPreferenceBasedRoutingAllowed(Preference preference, @Nullable WeightedRoutingMetadata weightedRoutingMetadata) {

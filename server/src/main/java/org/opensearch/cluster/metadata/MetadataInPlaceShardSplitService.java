@@ -131,14 +131,13 @@ public class MetadataInPlaceShardSplitService {
     ) {
         IndexMetadata curIndexMetadata = currentState.metadata().index(request.getIndex());
         ShardId sourceShardId = new ShardId(curIndexMetadata.getIndex(), request.getShardId());
-        if (curIndexMetadata.isParentShard(sourceShardId.id())) {
-            try {
-                currentState.getRoutingTable().shardRoutingTable(request.getIndex(), request.getShardId());
-                throw new IllegalArgumentException("Splitting of this shard is already in progress");
-            } catch (ShardNotFoundException ex) {
-                // Shard is already split.
-                throw new IllegalArgumentException("Shard is already split.");
-            }
+        if (curIndexMetadata.getSplitShardsMetadata().getInProgressSplitShardId() != SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS) {
+            int inProgressSplitShard = curIndexMetadata.getSplitShardsMetadata().getInProgressSplitShardId();
+            throw new IllegalArgumentException("Splitting of shard [" + inProgressSplitShard + "] is already in progress");
+        }
+
+        if (curIndexMetadata.getSplitShardsMetadata().isEmptyParentShard(request.getShardId())) {
+            throw new IllegalArgumentException("Shard [" + request.getShardId() + "] has already been split.");
         }
 
         Tuple<Boolean, String> shardSplitSupportedOnPlugins = pluginsService.isShardSplitAllowed(sourceShardId.getIndex());
@@ -150,14 +149,11 @@ public class MetadataInPlaceShardSplitService {
         RoutingTable.Builder routingTableBuilder = RoutingTable.builder(currentState.routingTable());
         Metadata.Builder metadataBuilder = Metadata.builder(currentState.metadata());
         IndexMetadata.Builder indexMetadataBuilder = IndexMetadata.builder(curIndexMetadata);
-        List<Integer> childShardIds = new ArrayList<>();
 
-        int maxUsedShardId = curIndexMetadata.getNumberOfServingShards() + curIndexMetadata.getNumOfNonServingShards() - 1;
-        for (int i = 1; i <= request.getSplitInto(); i++) {
-            childShardIds.add(maxUsedShardId + i);
-        }
+        SplitShardsMetadata.Builder splitMetadataBuilder = new SplitShardsMetadata.Builder(curIndexMetadata.getSplitShardsMetadata());
+        splitMetadataBuilder.splitShard(sourceShardId.id(), request.getSplitInto());
+        indexMetadataBuilder.splitShardsMetadata(splitMetadataBuilder.build());
 
-        indexMetadataBuilder.addChildShardsForSplittingShard(sourceShardId.id(), childShardIds);
         RoutingTable routingTable = routingTableBuilder.build();
         metadataBuilder.put(indexMetadataBuilder);
 

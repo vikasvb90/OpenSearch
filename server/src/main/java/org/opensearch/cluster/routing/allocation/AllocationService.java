@@ -615,8 +615,8 @@ public class AllocationService {
                     + " but was: "
                     + routingNodes.getByAllocationId(startedShard.shardId(), startedShard.allocationId().getId());
             if (startedShard.isSplitTarget()) {
-                inPlaceChildShards.computeIfAbsent(startedShard.getSplittingShardId(), k -> new ArrayList<>());
-                inPlaceChildShards.get(startedShard.getSplittingShardId()).add(startedShard);
+                inPlaceChildShards.computeIfAbsent(startedShard.getParentShardId(), k -> new ArrayList<>());
+                inPlaceChildShards.get(startedShard.getParentShardId()).add(startedShard);
             } else {
                 routingNodes.startShard(logger, startedShard, routingAllocation.changes());
             }

@@ -172,7 +172,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                     indexMetadataBuilder = updatePrimaryTerm(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
                 }
                 // Invoke metadata update of in-place split only for the parent shard.
-                if (updates.addedChildShards.isEmpty() == false) {
+                if (updates.addedChildShards.isEmpty() == false && updates.splitFailed == false) {
                     indexMetadataBuilder = updateMetadataForInPlaceSplitCompleted(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
                 }
                 if (updates.splitFailed) {
@@ -414,7 +414,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         if (indexMetadataBuilder == null) {
             indexMetadataBuilder = IndexMetadata.builder(oldIndexMetadata);
         }
-        return indexMetadataBuilder.removeParentToChildShardMetadata(parentShardId.id());
+        return indexMetadataBuilder.cancelSplit(parentShardId.id());
     }
 
     /**
@@ -444,7 +444,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         private boolean increaseTerm; // whether primary term should be increased
         // Child shard ids for this shard which is now split. To be added in in-sync, assign primary term of this shard
         // and update number of current shards.
-        private Map<ShardId, ShardRouting> addedChildShards = new HashMap<>();
+        private final Map<ShardId, ShardRouting> addedChildShards = new HashMap<>();
         private boolean isNewChildShard;
         private boolean splitFailed;
         private Set<String> addedAllocationIds = new HashSet<>(); // allocation ids that should be added to the in-sync set

@@ -664,11 +664,11 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                 Shard shard = indexService.getShardOrNull(shardId.id());
                 if (shard == null) {
                     if (shardRouting.isSplitTarget()) {
-                        Shard sourceShard = indexService.getShardOrNull(shardRouting.getSplittingShardId().id());
-                        assert sourceShard!= null : "Source shard not found for shard id " + shardRouting.getSplittingShardId();
-                        childShardRoutings.computeIfAbsent(shardRouting.getSplittingShardId(), k ->
+                        Shard sourceShard = indexService.getShardOrNull(shardRouting.getParentShardId().id());
+                        assert sourceShard!= null : "Source shard not found for shard id " + shardRouting.getParentShardId();
+                        childShardRoutings.computeIfAbsent(shardRouting.getParentShardId(), k ->
                             new Tuple<>(sourceShard.routingEntry(), new ArrayList<>()));
-                        childShardRoutings.get(shardRouting.getSplittingShardId()).v2().add(shardRouting);
+                        childShardRoutings.get(shardRouting.getParentShardId()).v2().add(shardRouting);
                     } else {
                         assert shardRouting.initializing() : shardRouting + " should have been removed by failMissingShards";
                         createShard(nodes, routingTable, shardRouting, state);
@@ -727,7 +727,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
             } catch (Exception e) {
                 threadPool.generic().execute(() -> {
                     routings.v2().forEach(routing ->
-                        failAndRemoveShard(routing, false, "failed to create child shards", e, state));
+                        failAndRemoveChildShards(routing, false, "failed to create child shards", e, state));
                     replicationListener.onFailure(null, new RecoveryFailedException(request, e.getCause()), true);
                 });
             }

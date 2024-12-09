@@ -408,7 +408,7 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
             true,
             context.getIndexShard().mapperService().hasNested(),
             addIndexSplitDirectory,
-            (shardId) -> true,
+            true,
             IndexWriterConfig.OpenMode.APPEND
         );
     }

@@ -229,7 +229,7 @@ public final class StoreRecovery {
 
         Tuple<Boolean, Directory> addIndexDirectoryTuple = new Tuple<>(true, statsDirectory);
         addIndices(indexRecoveryStats, indexSort, sources, maxSeqNo, maxSeqNo, maxUnsafeAutoIdTimestamp, indexMetadata,
-            shardId, split, hasNested, addIndexDirectoryTuple, indexMetadata::isNonServingShard,
+            shardId, split, hasNested, addIndexDirectoryTuple, false,
             IndexWriterConfig.OpenMode.CREATE);
     }
 
@@ -245,7 +245,7 @@ public final class StoreRecovery {
         boolean split,
         boolean hasNested,
         Tuple<Boolean, Directory> addIndexDirectoryTuple,
-        Predicate<Integer> shouldIncludeChildShards,
+        boolean includeInProgressChild,
         IndexWriterConfig.OpenMode openMode
     ) throws IOException {
         assert sources.length > 0;
@@ -269,7 +269,7 @@ public final class StoreRecovery {
             }
             indexRecoveryStats.setFileDetailsComplete();
             if (split) {
-                writer.deleteDocuments(new ShardSplittingQuery(indexMetadata, shardId, hasNested, shouldIncludeChildShards));
+                writer.deleteDocuments(new ShardSplittingQuery(indexMetadata, shardId, hasNested, includeInProgressChild));
             }
             /*
              * We set the maximum sequence number and the local checkpoint on the target to the maximum of the maximum sequence numbers on
