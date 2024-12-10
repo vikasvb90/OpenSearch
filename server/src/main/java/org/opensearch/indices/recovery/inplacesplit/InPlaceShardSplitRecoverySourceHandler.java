@@ -164,6 +164,9 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             initiateTracking();
 
             final long endingSeqNo = sourceShard.seqNoStats().getMaxSeqNo();
+            // Syncing here because sequence number can be greater than local checkpoint and operations may not yet be
+            // present in translog.
+            sourceShard.sync();
             final Translog.Snapshot phase2Snapshot;
             if (startingSeqNo > endingSeqNo) {
                 phase2Snapshot = new EmptySnapshot();

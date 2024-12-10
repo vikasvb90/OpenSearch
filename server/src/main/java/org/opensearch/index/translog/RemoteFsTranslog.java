@@ -538,18 +538,6 @@ public class RemoteFsTranslog extends Translog {
     }
 
     @Override
-    protected void copyTranslogToTarget(Translog translog) {
-        assert translog instanceof RemoteFsTranslog;
-        RemoteFsTranslog targetTranslog = (RemoteFsTranslog) translog;
-        translogTransferManager.copyTranslogToTarget(targetTranslog.translogTransferManager);
-    }
-
-    public Releasable acquireRemoteDeletionPermits() throws InterruptedException {
-        remoteGenerationDeletionPermits.acquire(REMOTE_DELETION_PERMITS);
-        return Releasables.releaseOnce(() -> remoteGenerationDeletionPermits.release(REMOTE_DELETION_PERMITS));
-    }
-
-    @Override
     public void trimUnreferencedReaders() throws IOException {
         // clean up local translog files and updates readers
         super.trimUnreferencedReaders();

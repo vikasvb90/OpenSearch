@@ -1072,15 +1072,10 @@ public abstract class TransportReplicationAction<
 
                 ShardRouting primary = null;
                 if (indexMetadata.getSplitShardsMetadata().isEmptyParentShard(request.shardId().id())) {
-                    if (state.version() < request.routedBasedOnClusterVersion()) {
-                        // This will get retried on coordinator. Entire request will be re-driven on respective child shards.
-                        // Since, we are throwing a custom exception, coordinator will re-drive it explicitly on child shards
-                        // even if it is also stale and yet to receive update from cluster manager.
-                        throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
-                    } else {
-                        finishAsFailed(new IndexNotFoundException(request.shardId().getIndex()));
-                        return;
-                    }
+                    // This will get retried on coordinator. Entire request will be re-driven on respective child shards.
+                    // Since, we are throwing a custom exception, coordinator will re-drive it explicitly on child shards
+                    // even if coordinator is also stale and yet to receive update from cluster manager.
+                    throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
                 } else {
                     IndexRoutingTable indexRoutingTable = state.getRoutingTable().index(request.shardId().getIndex());
                     IndexShardRoutingTable shardRoutingTable = indexRoutingTable.shard(request.shardId().id());

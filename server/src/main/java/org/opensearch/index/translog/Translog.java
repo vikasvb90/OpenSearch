@@ -739,6 +739,7 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
         try (ReleasableLock lock = readLock.acquire()) {
             ensureOpen();
             final long viewGen = getMinFileGeneration();
+            logger.info("Minimum translog with gen " + viewGen + " seq number " + current.getCheckpoint().minSeqNo);
             Closeable closeable = acquireTranslogGenFromDeletionPolicy(viewGen);
             return new GatedCloseable<>(viewGen, closeable::close);
         }
@@ -1831,12 +1832,6 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
     protected void setMinSeqNoToKeep(long seqNo) {}
 
     protected void onDelete() {}
-
-    protected void copyTranslogToTarget(Translog translog) {}
-
-    protected Releasable acquireRemoteDeletionPermits() throws InterruptedException {
-        return Releasables.releaseOnce(() -> {});
-    }
 
     /**
      * Drains ongoing syncs to the underlying store. It returns a releasable which can be closed to resume the syncs back.
