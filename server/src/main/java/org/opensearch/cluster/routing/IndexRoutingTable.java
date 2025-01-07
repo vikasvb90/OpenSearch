@@ -33,6 +33,7 @@
 package org.opensearch.cluster.routing;
 
 import org.apache.lucene.util.CollectionUtil;
+import org.opensearch.Version;
 import org.opensearch.cluster.AbstractDiffable;
 import org.opensearch.cluster.Diff;
 import org.opensearch.cluster.metadata.IndexMetadata;
@@ -88,12 +89,15 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
     // shards with state set to UNASSIGNED
     private final Map<Integer, IndexShardRoutingTable> shards;
 
+    private final Map<Integer, IndexShardRoutingTable> childReplicas;
+
     private final List<ShardRouting> allActiveShards;
 
-    IndexRoutingTable(Index index, final Map<Integer, IndexShardRoutingTable> shards) {
+    IndexRoutingTable(Index index, final Map<Integer, IndexShardRoutingTable> shards, Map<Integer, IndexShardRoutingTable> childReplicas) {
         this.index = index;
         this.shuffler = new RotationShardShuffler(Randomness.get().nextInt());
         this.shards = Collections.unmodifiableMap(shards);
+        this.childReplicas = Collections.unmodifiableMap(childReplicas);
         List<ShardRouting> allActiveShards = new ArrayList<>();
         for (IndexShardRoutingTable cursor : shards.values()) {
             for (ShardRouting shardRouting : cursor) {
@@ -247,6 +251,10 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         return shards.get(shardId);
     }
 
+    public IndexShardRoutingTable childReplicaShard(int shardId) {
+        return childReplicas.get(shardId);
+    }
+
     /**
      * Returns <code>true</code> if all shards are primary and active. Otherwise <code>false</code>.
      */
@@ -329,6 +337,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         if (!index.equals(that.index)) return false;
         if (!shards.equals(that.shards)) return false;
+        if (!childReplicas.equals(that.childReplicas)) return false;
 
         return true;
     }
@@ -337,6 +346,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
     public int hashCode() {
         int result = index.hashCode();
         result = 31 * result + shards.hashCode();
+        result = 31 * result + childReplicas.hashCode();
         return result;
     }
 
@@ -347,6 +357,12 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         int size = in.readVInt();
         for (int i = 0; i < size; i++) {
             builder.addIndexShard(IndexShardRoutingTable.Builder.readFromThin(in, index));
+        }
+        if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
+            int noOfChildReplicas = in.readVInt();
+            for (int i = 0; i < noOfChildReplicas; i++) {
+                builder.addChildReplicaShard(IndexShardRoutingTable.Builder.readFromThin(in, index));
+            }
         }
 
         return builder.build();
@@ -362,6 +378,12 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
         out.writeVInt(shards.size());
         for (IndexShardRoutingTable indexShard : this) {
             IndexShardRoutingTable.Builder.writeToThin(indexShard, out);
+        }
+        if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
+            out.writeVInt(childReplicas.size());
+            for (IndexShardRoutingTable indexShard : childReplicas.values()) {
+                IndexShardRoutingTable.Builder.writeToThin(indexShard, out);
+            }
         }
     }
 
@@ -379,6 +401,7 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
 
         private final Index index;
         private final Map<Integer, IndexShardRoutingTable> shards = new HashMap<>();
+        private final Map<Integer, IndexShardRoutingTable> childReplicas = new HashMap<>();
 
         public Builder(Index index) {
             this.index = index;
@@ -643,6 +666,11 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
             return this;
         }
 
+        public Builder addChildReplicaShard(IndexShardRoutingTable indexShard) {
+            childReplicas.put(indexShard.shardId().id(), indexShard);
+            return this;
+        }
+
         /**
          * Adds a new shard routing (makes a copy of it), with reference data used from the index shard routing table
          * if it needs to be created.
@@ -658,8 +686,20 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable> imple
             return this;
         }
 
+        public Builder addChildReplica(ShardRouting childReplica) {
+            assert childReplica.started() && childReplica.getParentShardId() != null && childReplica.primary() == false;
+            IndexShardRoutingTable childReplicaShard = childReplicas.get(childReplica.shardId().id());
+            if (childReplicaShard == null) {
+                childReplicaShard = new IndexShardRoutingTable.Builder(childReplica.shardId()).addShard(childReplica).build();
+            } else {
+                childReplicaShard = new IndexShardRoutingTable.Builder(childReplicaShard).addShard(childReplica).build();
+            }
+            childReplicas.put(childReplica.id(), childReplicaShard);
+            return this;
+        }
+
         public IndexRoutingTable build() {
-            return new IndexRoutingTable(index, shards);
+            return new IndexRoutingTable(index, shards, childReplicas);
         }
     }
 

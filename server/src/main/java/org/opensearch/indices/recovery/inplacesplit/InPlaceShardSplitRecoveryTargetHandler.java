@@ -21,6 +21,7 @@ import org.opensearch.action.LatchedActionListener;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.support.GroupedActionListener;
 import org.opensearch.cluster.node.DiscoveryNode;
+import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.common.CheckedRunnable;
 import org.opensearch.common.SetOnce;
 import org.opensearch.common.collect.Tuple;
@@ -54,6 +55,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -178,7 +180,7 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
      * processed only on one of the child shards and other child shards treat it as a NoOp where only local checkpoint
      * is advanced. In this case local checkpoint is also the global checkpoint since we are creating a new shard
      * and hence a new replication group. In scenario where one or more of the child shards are relocated before
-     * next flush gets triggered, translog replay of operations from snapshot taken from lucene in these peer
+     * next flush gets triggered, translog replay of operations from snapshot in these peer
      * recoveries will not have no-ops and therefore, peer recovery will fail while waiting for target shard to
      * catch up to global checkpoint. So, to make sure that operations till global checkpoint are available, we
      * will need to trigger a flush to create a new commit on all child shards.
@@ -207,73 +209,8 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
         }
     }
 
-//    public void blockOpsAndForceSegmentFileSync() {
-//        recoveryContexts.forEach(context -> {
-//            cancellableThreads.checkForCancel();
-//            CheckedRunnable<IOException> forceSegmentSync = () -> internalForceSegmentSync(context.getIndexShard());
-//            try {
-//                context.getIndexShard().blockOperationsAndExecute(forceSegmentSync);
-//            } catch (Exception ex) {
-//                throw new RuntimeException(ex);
-//            }
-//        });
-//    }
-
-//    public void internalForceSegmentSync(IndexShard childShard) {
-//        SegmentReplicationTarget segmentReplicationTarget = new SegmentReplicationTarget(
-//            childShard,
-//            sourceShard,
-//            childShard.getLatestReplicationCheckpoint(),
-//            segRepFactory.get(sourceShard),
-//            null
-//        );
-//
-//        CountDownLatch latch = new CountDownLatch(1);
-//        AtomicReference<Exception> replicationFailure = new AtomicReference<>();
-//        LatchedActionListener<Void> latchedActionListener = new LatchedActionListener<>(
-//            ActionListener.wrap(res -> childShard.resetToWriteableEngine(),
-//                replicationFailure::set), latch
-//        );
-//
-//        segmentReplicationTarget.startReplication(latchedActionListener);
-//        try {
-//            latch.await();
-//        } catch (InterruptedException e) {
-//            throw new RuntimeException(e);
-//        }
-//
-//        if (replicationFailure.get() != null) {
-//            throw new RuntimeException(replicationFailure.get());
-//        }
-//    }
-
-//    private static class RemoteReplicationSource extends RemoteStoreReplicationSource {
-//        public RemoteReplicationSource(IndexShard sourceShard) {
-//            super(sourceShard);
-//        }
-//
-//        @Override
-//        protected void syncFromRemote(
-//            List<StoreFileMetadata> filesToFetch,
-//            IndexShard targetShard,
-//            BiConsumer<String, Long> fileProgressTracker,
-//            ActionListener<GetSegmentFilesResponse> listener,
-//            List<String> toSyncSegmentFiles
-//        ) throws IOException {
-//
-//        }
-//    }
-
     @Override
     public void forceSegmentFileSync() {
-//        if (sourceShard.indexSettings().isSegRepEnabled() == false) {
-//            return;
-//        }
-//
-//        recoveryContexts.forEach(context -> {
-//            cancellableThreads.checkForCancel();
-//            internalForceSegmentSync(context.getIndexShard());
-//        });
     }
 
     @Override
@@ -290,7 +227,32 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
 
     @Override
     public void handoffPrimaryContext(ReplicationTracker.PrimaryContext primaryContext) {
-        recoveryTargets.values().forEach(recoveryTarget -> recoveryTarget.handoffPrimaryContext(primaryContext));
+        ShardRouting[] childShards = sourceShard.routingEntry().getRecoveringChildShards();
+
+        Map<Integer, Set<String>> shardIdToAllocationIds = new HashMap<>();
+        for (ShardRouting childShard : childShards) {
+            shardIdToAllocationIds.putIfAbsent(childShard.shardId().id(), new HashSet<>());
+            shardIdToAllocationIds.get(childShard.shardId().id()).add(childShard.allocationId().getId());
+        }
+
+        recoveryTargets.forEach((shardId, recoveryTarget) -> {
+            Set<String> childShardsAllocIds = shardIdToAllocationIds.get(shardId.id());
+            Map<String, ReplicationTracker.CheckpointState> checkpointStates = new HashMap<>();
+            for (String allocationId : childShardsAllocIds) {
+                if (primaryContext.getCheckpointStates().get(allocationId) == null) {
+                    throw new IllegalStateException("Allocation ID " + allocationId +
+                        " not found in synced checkpoint states of parent shard." + sourceShard.shardId());
+                }
+                checkpointStates.put(allocationId, primaryContext.getCheckpointStates().get(allocationId));
+            }
+            ReplicationTracker.PrimaryContext childPrimaryContext = new ReplicationTracker.PrimaryContext(
+                primaryContext.clusterStateVersion(),
+                checkpointStates,
+                primaryContext.getRoutingTable()
+            );
+
+            recoveryTarget.handoffPrimaryContext(childPrimaryContext);
+        });
     }
 
     @Override
@@ -394,7 +356,6 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
     private void split(long localCheckpoint, long maxSeqNo, long maxUnsafeAutoIdTimestamp, Directory childShardDirectory,
                        InPlaceShardRecoveryContext context) throws IOException {
         Tuple<Boolean, Directory> addIndexSplitDirectory = new Tuple<>(false, childShardDirectory);
-        System.out.println("Creating commits with max seq number: " + maxSeqNo);
 
         StoreRecovery.addIndices(
             context.getRecoveryState().getIndex(),

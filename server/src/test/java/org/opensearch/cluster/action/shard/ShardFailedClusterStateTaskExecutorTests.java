@@ -181,7 +181,9 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     failingTask.message,
                     failingTask.failure,
                     randomBoolean(),
-                    failingTask.childShardsFailedEvent
+                    null,
+                    null,
+                    null
                 )
             );
         }
@@ -221,6 +223,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                 "dummy",
                 null,
                 false,
+                null,
+                null,
                 null
             );
             ClusterState appliedState = executor.execute(clusterState, Collections.singletonList(failShardOnly)).resultingState;
@@ -236,6 +240,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                 "dummy",
                 null,
                 true,
+                null,
+                null,
                 null
             );
             ClusterState appliedState = executor.execute(clusterState, Collections.singletonList(failAndMarkAsStale)).resultingState;
@@ -297,7 +303,9 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     existingShard.message,
                     existingShard.failure,
                     randomBoolean(),
-                    existingShard.childShardsFailedEvent
+                    existingShard.splitFailed,
+                    existingShard.parentShardId,
+                    existingShard.parentAllocationId
                 )
             );
         }
@@ -312,6 +320,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     reason,
                     new CorruptIndexException("simulated", nonExistentIndexUUID),
                     randomBoolean(),
+                    null,
+                    null,
                     null
                 )
             )
@@ -403,6 +413,8 @@ public class ShardFailedClusterStateTaskExecutorTests extends OpenSearchAllocati
                     message,
                     new CorruptIndexException("simulated", indexUUID),
                     randomBoolean(),
+                    null,
+                    null,
                     null
                 )
             )

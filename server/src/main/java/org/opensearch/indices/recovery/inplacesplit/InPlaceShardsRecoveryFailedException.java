@@ -23,14 +23,8 @@ import java.util.List;
 @ExperimentalApi
 public class InPlaceShardsRecoveryFailedException extends ReplicationFailedException {
 
-    public InPlaceShardsRecoveryFailedException(ShardId sourceShardId, List<InPlaceShardRecoveryContext> recoveryContexts, Throwable cause) {
-        super("Source shard : " + sourceShardId.id() +
-            ", child shards: " + Arrays.toString(recoveryContexts.stream().map(context ->
-                        context.getIndexShard().shardId().id()).toArray())
-            + ", index: " + sourceShardId.getIndexName()
-            + ": In-place recovery of shards failed. ",
-            cause
-        );
+    public InPlaceShardsRecoveryFailedException(ShardId sourceShardId) {
+        super("Split of shard : " + sourceShardId + " failed.");
     }
 
 }

@@ -55,6 +55,16 @@ public interface RoutingChangesObserver {
     void shardStarted(ShardRouting initializingShard, ShardRouting startedShard);
 
     /**
+     * Called when a child replica is started.
+     */
+    void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childShard);
+
+    /**
+     * Called when a child shard fails.
+     */
+    void childShardFailed(ShardRouting parentShard, ShardRouting childShard);
+
+    /**
      * Called when relocation of a started shard is initiated.
      */
     void relocationStarted(ShardRouting startedShard, ShardRouting targetRelocatingShard);
@@ -124,6 +134,16 @@ public interface RoutingChangesObserver {
 
         @Override
         public void shardStarted(ShardRouting initializingShard, ShardRouting startedShard) {
+
+        }
+
+        @Override
+        public void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childReplica) {
+
+        }
+
+        @Override
+        public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
 
         }
 
@@ -260,6 +280,20 @@ public interface RoutingChangesObserver {
         public void relocationSourceRemoved(ShardRouting removedReplicaRelocationSource) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.relocationSourceRemoved(removedReplicaRelocationSource);
+            }
+        }
+
+        @Override
+        public void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childReplica) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.childReplicaStarted(initializingShard, parentShard, childReplica);
+            }
+        }
+
+        @Override
+        public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
+            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
+                routingChangesObserver.childShardFailed(parentShard, childShard);
             }
         }
 

@@ -58,7 +58,9 @@ import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.common.unit.ByteSizeValue;
+import org.opensearch.index.engine.Engine;
 import org.opensearch.index.engine.RecoveryEngineException;
+import org.opensearch.index.seqno.ReplicationTracker;
 import org.opensearch.index.seqno.RetentionLease;
 import org.opensearch.index.seqno.RetentionLeaseNotFoundException;
 import org.opensearch.index.seqno.RetentionLeases;
@@ -77,6 +79,7 @@ import org.opensearch.transport.Transports;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -121,6 +124,7 @@ public abstract class RecoverySourceHandler {
     protected final ListenableFuture<RecoveryResponse> future = new ListenableFuture<>();
     public static final String PEER_RECOVERY_NAME = "peer-recovery";
     private final SegmentFileTransferHandler transferHandler;
+    protected final IndexShard parentShard;
 
     protected RecoverySourceHandler(
         IndexShard shard,
@@ -131,7 +135,8 @@ public abstract class RecoverySourceHandler {
         int maxConcurrentFileChunks,
         int maxConcurrentOperations,
         boolean skipSegmentFilesTransfer,
-        CancellableThreads cancellableThreads
+        CancellableThreads cancellableThreads,
+        IndexShard parentShard
     ) {
         this.cancellableThreads = cancellableThreads;
         this.logger = Loggers.getLogger(RecoverySourceHandler.class, request.shardId(), "recover to " + request.targetNode().getName());
@@ -161,6 +166,7 @@ public abstract class RecoverySourceHandler {
             resources.addAll(getAdditionalResourcesToClose());
             IOUtils.close(resources);
         };
+        this.parentShard = parentShard;
     }
 
     public StartRecoveryRequest getRequest() {
@@ -191,6 +197,7 @@ public abstract class RecoverySourceHandler {
                 throw e;
             });
             final Consumer<Exception> onFailure = e -> {
+                e.printStackTrace();
                 assert Transports.assertNotTransportThread(this + "[onFailure]");
                 IOUtils.closeWhileHandlingException(resourcesReleasable, () -> future.onFailure(e));
             };
@@ -198,6 +205,13 @@ public abstract class RecoverySourceHandler {
         } catch (Exception e) {
             IOUtils.closeWhileHandlingException(resourcesReleasable, () -> future.onFailure(e));
         }
+    }
+
+    protected IndexShard replicationTrackingShard() {
+        if (shard.routingEntry().isSplitTarget() == false) {
+            return shard;
+        }
+        return parentShard;
     }
 
     public List<Closeable> getAdditionalResourcesToClose() {
@@ -405,7 +419,6 @@ public abstract class RecoverySourceHandler {
             final Store.MetadataSnapshot recoverySourceMetadata;
             try {
                 recoverySourceMetadata = store.getMetadata(snapshot);
-                logger.info("Metadata docs " + recoverySourceMetadata.getNumDocs());
             } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
                 shard.failShard("recovery", ex);
                 throw ex;
@@ -500,6 +513,12 @@ public abstract class RecoverySourceHandler {
                 if (skipCreateRetentionLeaseStep) {
                     sendFilesStep.whenComplete(r -> {
                         logger.debug("sendFilesStep completed");
+                        createRetentionLeaseStep.onResponse(null);
+                    }, listener::onFailure);
+                } else if (shard.routingEntry().isSplitTarget() == true) {
+                    sendFilesStep.whenComplete(r -> {
+                        logger.debug("sendFilesStep completed");
+                        addRetentionLeaseForChildReplica(startingSeqNo);
                         createRetentionLeaseStep.onResponse(null);
                     }, listener::onFailure);
                 } else {
@@ -618,6 +637,28 @@ public abstract class RecoverySourceHandler {
                 logger.trace("created retention lease with estimated checkpoint of [{}]", estimatedGlobalCheckpoint);
             }
         }, shardId + " establishing retention lease for [" + request.targetAllocationId() + "]", shard, cancellableThreads, logger);
+    }
+
+    private void addRetentionLeaseForChildReplica(long startingSeqNo) {
+        // Add a retention release on this child primary for the corresponding recovering child replica.
+        assert shard.routingEntry().primary() == true;
+        RetentionLeases retentionLeases = shard.getRetentionLeases();
+        RetentionLease retentionLease = new RetentionLease(
+            ReplicationTracker.getPeerRecoveryRetentionLeaseId(request.targetNode().getId()),
+            startingSeqNo,
+            shard.getThreadPool().absoluteTimeInMillis(),
+            ReplicationTracker.PEER_RECOVERY_RETENTION_LEASE_SOURCE
+        );
+        assert retentionLeases.equals(RetentionLeases.EMPTY) == false;
+        Collection<RetentionLease> curLeases = retentionLeases.leases();
+        Collection<RetentionLease> updatedLeases = new ArrayList<>(curLeases);
+        updatedLeases.add(retentionLease);
+
+        // Primary mode on replication tracker of child primary will also be false and hence,
+        // we need to update retention leases as replica.
+        shard.updateRetentionLeasesOnChildPrimary(new RetentionLeases(
+            retentionLeases.primaryTerm(), retentionLeases.version() + 1, updatedLeases
+        ));
     }
 
     boolean canSkipPhase1(Store.MetadataSnapshot source, Store.MetadataSnapshot target) {
@@ -742,7 +783,8 @@ public abstract class RecoverySourceHandler {
             maxSeqNoOfUpdatesOrDeletes,
             retentionLeases,
             mappingVersion,
-            sendListener
+            sendListener,
+            replicationTrackingShard() == parentShard
         );
     }
 
@@ -780,6 +822,7 @@ public abstract class RecoverySourceHandler {
     protected class OperationBatchSender extends MultiChunkTransfer<Translog.Snapshot, OperationChunkRequest> {
         protected final long startingSeqNo;
         protected final long endingSeqNo;
+        private long lastSeenSeqNo;
         protected final Translog.Snapshot snapshot;
         protected final long maxSeenAutoIdTimestamp;
         protected final long maxSeqNoOfUpdatesOrDeletes;
@@ -789,6 +832,7 @@ public abstract class RecoverySourceHandler {
         private final AtomicInteger skippedOps = new AtomicInteger();
         private final AtomicInteger sentOps = new AtomicInteger();
         private final AtomicLong targetLocalCheckpoint = new AtomicLong(SequenceNumbers.NO_OPS_PERFORMED);
+        private final boolean fillMissingSeqNos;
 
         protected OperationBatchSender(
             long startingSeqNo,
@@ -798,7 +842,8 @@ public abstract class RecoverySourceHandler {
             long maxSeqNoOfUpdatesOrDeletes,
             RetentionLeases retentionLeases,
             long mappingVersion,
-            ActionListener<Void> listener
+            ActionListener<Void> listener,
+            boolean fillMissingSeqNos
         ) {
             super(logger, threadPool.getThreadContext(), listener, maxConcurrentOperations, Collections.singletonList(snapshot));
             this.startingSeqNo = startingSeqNo;
@@ -808,6 +853,8 @@ public abstract class RecoverySourceHandler {
             this.maxSeqNoOfUpdatesOrDeletes = maxSeqNoOfUpdatesOrDeletes;
             this.retentionLeases = retentionLeases;
             this.mappingVersion = mappingVersion;
+            this.fillMissingSeqNos = fillMissingSeqNos;
+            this.lastSeenSeqNo = startingSeqNo - 1;
         }
 
         @Override
@@ -828,7 +875,9 @@ public abstract class RecoverySourceHandler {
                     skippedOps.incrementAndGet();
                     continue;
                 }
+                fillMissingSeqNos(operation, ops);
                 ops.add(operation);
+                lastSeenSeqNo = operation.seqNo();
                 batchSizeInBytes += operation.estimateSize();
                 sentOps.incrementAndGet();
 
@@ -838,15 +887,40 @@ public abstract class RecoverySourceHandler {
                 }
             }
             lastBatchCount = ops.size();
+            fillMissingSeqNos(operation, ops);
             return new OperationChunkRequest(ops, operation == null);
+        }
+
+        /**
+         * Needed in recovery of child replica where recovering replica may not find all consecutive operations on
+         * their primary child counterparts.
+         */
+        private void fillMissingSeqNos(Translog.Operation op, List<Translog.Operation> ops) {
+            if (fillMissingSeqNos == false) {
+                return;
+            }
+
+            if (op == null) {
+                for (long seqNo = lastSeenSeqNo + 1; seqNo <= endingSeqNo; seqNo++) {
+                    ops.add(new Translog.NoOp(seqNo, shard.getOperationPrimaryTerm(), Translog.NoOp.FILLING_GAPS));
+                }
+            } else {
+                final long expectedSeqNo = lastSeenSeqNo + 1;
+                if (op.seqNo() != expectedSeqNo) {
+                    for (long seqNo = expectedSeqNo; seqNo < op.seqNo(); seqNo++) {
+                        ops.add(new Translog.NoOp(seqNo, shard.getOperationPrimaryTerm(), Translog.NoOp.FILLING_GAPS));
+                    }
+                }
+            }
         }
 
         @Override
         protected void executeChunkRequest(OperationChunkRequest request, ActionListener<Void> listener) {
             cancellableThreads.checkForCancel();
+            int totalOperations = fillMissingSeqNos ? (int) (endingSeqNo - startingSeqNo + 1) : snapshot.totalOperations();
             recoveryTarget.indexTranslogOperations(
                 request.operations,
-                snapshot.totalOperations(),
+                totalOperations,
                 maxSeenAutoIdTimestamp,
                 maxSeqNoOfUpdatesOrDeletes,
                 retentionLeases,
@@ -875,9 +949,11 @@ public abstract class RecoverySourceHandler {
         }
         cancellableThreads.checkForCancel();
         StopWatch stopWatch = new StopWatch().start();
-        logger.info("finalizing recovery");
         markAllocationIdAsInSync(sendSnapshotResults);
+        finalizeRecovery(stopWatch, trimAboveSeqNo, listener);
+    }
 
+    protected void finalizeRecovery(StopWatch stopWatch, long trimAboveSeqNo, ActionListener<Void> listener) {
         final long globalCheckpoint = shard.getLastKnownGlobalCheckpoint(); // this global checkpoint is persisted in finalizeRecovery
         final StepListener<Void> finalizeListener = new StepListener<>();
         cancellableThreads.checkForCancel();
@@ -920,10 +996,11 @@ public abstract class RecoverySourceHandler {
          * the permit then the state of the shard will be relocated and this recovery will fail.
          */
         sendSnapshotResults.forEach(snapshotResult -> {
+            IndexShard primaryTracker = replicationTrackingShard();
             RunUnderPrimaryPermit.run(
-                () -> shard.markAllocationIdAsInSync(snapshotResult.targetAllocationId, snapshotResult.targetLocalCheckpoint),
-                shardId + " marking " + snapshotResult.targetAllocationId+ " as in sync",
-                shard,
+                () -> primaryTracker.markAllocationIdAsInSync(snapshotResult.targetAllocationId, snapshotResult.targetLocalCheckpoint),
+                primaryTracker.shardId() + " marking " + snapshotResult.targetAllocationId+ " as in sync",
+                primaryTracker,
                 cancellableThreads,
                 logger
             );
@@ -932,10 +1009,11 @@ public abstract class RecoverySourceHandler {
     }
 
     protected void updateGlobalCheckpointForShard(long globalCheckpoint) {
+        IndexShard primaryTracker = replicationTrackingShard();
         RunUnderPrimaryPermit.run(
-            () -> shard.updateGlobalCheckpointForShard(request.targetAllocationId(), globalCheckpoint),
-            shardId + " updating " + request.targetAllocationId() + "'s global checkpoint",
-            shard,
+            () -> primaryTracker.updateGlobalCheckpointForShard(request.targetAllocationId(), globalCheckpoint),
+            primaryTracker.shardId() + " updating " + request.targetAllocationId() + "'s global checkpoint",
+            primaryTracker,
             cancellableThreads,
             logger
         );

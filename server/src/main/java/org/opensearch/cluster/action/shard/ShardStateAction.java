@@ -255,9 +255,20 @@ public class ShardStateAction {
         @Nullable final Exception failure,
         ActionListener<Void> listener
     ) {
+        ShardRouting shardRouting = clusterService.state().getRoutingNodes().getByAllocationId(shardId, allocationId);
+        final FailedShardEntry failedShardEntry;
+        if (shardRouting == null) {
+            logger.debug("Remote shard [{}] not known to current node [{}] ", shardId, clusterService.localNode().getId());
+            failedShardEntry = new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale,
+                null, null, null);
+        } else {
+            failedShardEntry = new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale,
+                null, shardRouting.getParentShardId(), shardRouting.allocationId().getParentAllocationId());
+        }
+
         assert primaryTerm > 0L : "primary term should be strictly positive";
         remoteFailedShardsDeduplicator.executeOnce(
-            new FailedShardEntry(shardId, allocationId, primaryTerm, message, failure, markAsStale, null),
+            failedShardEntry,
             listener,
             (req, reqListener) -> sendShardAction(SHARD_FAILED_ACTION_NAME, clusterService.state(), req, reqListener)
         );
@@ -289,20 +300,6 @@ public class ShardStateAction {
         ActionListener<Void> listener,
         final ClusterState currentState
     ) {
-        localShardFailed(shardRouting, message, failure, listener, currentState, null);
-    }
-
-    /**
-     * Send a shard failed request to the cluster-manager node to update the cluster state when a shard on the local node failed.
-     */
-    public void localShardFailed(
-        final ShardRouting shardRouting,
-        final String message,
-        @Nullable final Exception failure,
-        ActionListener<Void> listener,
-        final ClusterState currentState,
-        final Boolean childShardsFailedEvent
-    ) {
         FailedShardEntry shardEntry = new FailedShardEntry(
             shardRouting.shardId(),
             shardRouting.allocationId().getId(),
@@ -310,7 +307,9 @@ public class ShardStateAction {
             message,
             failure,
             true,
-            childShardsFailedEvent
+            null,
+            shardRouting.getParentShardId(),
+            shardRouting.allocationId().getParentAllocationId()
         );
         sendShardAction(SHARD_FAILED_ACTION_NAME, currentState, shardEntry, listener);
     }
@@ -476,72 +475,89 @@ public class ShardStateAction {
                     logger.debug("{} ignoring shard failed task [{}] (unknown index {})", task.shardId, task, task.shardId.getIndex());
                     batchResultBuilder.success(task);
                 } else {
-                    // The primary term is 0 if the shard failed itself. It is > 0 if a write was done on a primary but was failed to be
-                    // replicated to the shard copy with the provided allocation id. In case where the shard failed itself, it's ok to just
-                    // remove the corresponding routing entry from the routing table. In case where a write could not be replicated,
-                    // however, it is important to ensure that the shard copy with the missing write is considered as stale from that point
-                    // on, which is implemented by removing the allocation id of the shard copy from the in-sync allocations set.
-                    // We check here that the primary to which the write happened was not already failed in an earlier cluster state update.
-                    // This prevents situations where a new primary has already been selected and replication failures from an old stale
-                    // primary unnecessarily fail currently active shards.
-                    if (task.primaryTerm > 0 && Boolean.TRUE.equals(task.childShardsFailedEvent) == false) {
-                        long currentPrimaryTerm = indexMetadata.primaryTerm(task.shardId.id());
-                        if (currentPrimaryTerm != task.primaryTerm) {
-                            assert currentPrimaryTerm > task.primaryTerm : "received a primary term with a higher term than in the "
-                                + "current cluster state (received ["
-                                + task.primaryTerm
-                                + "] but current is ["
-                                + currentPrimaryTerm
-                                + "])";
-                            logger.debug(
-                                "{} failing shard failed task [{}] (primary term {} does not match current term {})",
-                                task.shardId,
-                                task,
-                                task.primaryTerm,
-                                indexMetadata.primaryTerm(task.shardId.id())
-                            );
-                            batchResultBuilder.failure(
-                                task,
-                                new NoLongerPrimaryShardException(
-                                    task.shardId,
-                                    "primary term ["
-                                        + task.primaryTerm
-                                        + "] did not match current primary term ["
-                                        + currentPrimaryTerm
-                                        + "]"
-                                )
-                            );
+                    if (task.parentShardId != null) {
+                        ShardRouting parentShard = currentState.getRoutingNodes().getByAllocationId(task.parentShardId, task.parentAllocationId);
+                        if (parentShard == null || parentShard.splitting() == false) {
+                            batchResultBuilder.success(task);
                             continue;
                         }
-                    }
-
-                    ShardRouting matched = currentState.getRoutingTable().getByAllocationId(task.shardId, task.allocationId);
-                    if (matched == null && Boolean.TRUE.equals(task.childShardsFailedEvent) == false) {
-                        Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(task.shardId.id());
-                        // mark shard copies without routing entries that are in in-sync allocations set only as stale if the reason why
-                        // they were failed is because a write made it into the primary but not to this copy (which corresponds to
-                        // the check "primaryTerm > 0").
-                        if (task.primaryTerm > 0 && (inSyncAllocationIds != null || inSyncAllocationIds.contains(task.allocationId))) {
-                            logger.debug("{} marking shard {} as stale (shard failed task: [{}])", task.shardId, task.allocationId, task);
+                        if (Boolean.TRUE.equals(task.splitFailed)) {
                             tasksToBeApplied.add(task);
-                            staleShardsToBeApplied.add(new StaleShard(task.shardId, task.allocationId));
+                            logger.debug("{} failing split {} (shard failed task: [{}])", task.shardId, parentShard, task);
+                            for (ShardRouting childShard : parentShard.getRecoveringChildShards()) {
+                                failedShardsToBeApplied.add(new FailedShard(childShard, task.message, task.failure, task.markAsStale));
+                            }
                         } else {
-                            // tasks that correspond to non-existent shards are marked as successful
-                            logger.debug("{} ignoring shard failed task [{}] (shard does not exist anymore)", task.shardId, task);
-                            batchResultBuilder.success(task);
-                        }
-                    } else if (Boolean.TRUE.equals(task.childShardsFailedEvent)) {
-                        logger.debug("{} failing child shards {} (shard failed task: [{}])", task.shardId, matched, task);
-                        tasksToBeApplied.add(task);
-                        for (ShardRouting childShard : matched.getRecoveringChildShards()) {
-                            numberOfFailedChildShards++;
+                            ShardRouting childShard = currentState.getRoutingNodes().getByAllocationId(task.shardId, task.allocationId);
+                            if (childShard == null) {
+                                // We already cancelled split
+                                batchResultBuilder.success(task);
+                                continue;
+                            }
+                            tasksToBeApplied.add(task);
                             failedShardsToBeApplied.add(new FailedShard(childShard, task.message, task.failure, task.markAsStale));
                         }
                     } else {
-                        // failing a shard also possibly marks it as stale (see IndexMetadataUpdater)
-                        logger.debug("{} failing shard {} (shard failed task: [{}])", task.shardId, matched, task);
-                        tasksToBeApplied.add(task);
-                        failedShardsToBeApplied.add(new FailedShard(matched, task.message, task.failure, task.markAsStale));
+                        // The primary term is 0 if the shard failed itself. It is > 0 if a write was done on a primary but was failed to be
+                        // replicated to the shard copy with the provided allocation id. In case where the shard failed itself, it's ok to just
+                        // remove the corresponding routing entry from the routing table. In case where a write could not be replicated,
+                        // however, it is important to ensure that the shard copy with the missing write is considered as stale from that point
+                        // on, which is implemented by removing the allocation id of the shard copy from the in-sync allocations set.
+                        // We check here that the primary to which the write happened was not already failed in an earlier cluster state update.
+                        // This prevents situations where a new primary has already been selected and replication failures from an old stale
+                        // primary unnecessarily fail currently active shards.
+                        if (task.primaryTerm > 0) {
+                            long currentPrimaryTerm = indexMetadata.primaryTerm(task.shardId.id());
+                            if (currentPrimaryTerm != task.primaryTerm) {
+                                assert currentPrimaryTerm > task.primaryTerm : "received a primary term with a higher term than in the "
+                                    + "current cluster state (received ["
+                                    + task.primaryTerm
+                                    + "] but current is ["
+                                    + currentPrimaryTerm
+                                    + "])";
+                                logger.debug(
+                                    "{} failing shard failed task [{}] (primary term {} does not match current term {})",
+                                    task.shardId,
+                                    task,
+                                    task.primaryTerm,
+                                    indexMetadata.primaryTerm(task.shardId.id())
+                                );
+                                batchResultBuilder.failure(
+                                    task,
+                                    new NoLongerPrimaryShardException(
+                                        task.shardId,
+                                        "primary term ["
+                                            + task.primaryTerm
+                                            + "] did not match current primary term ["
+                                            + currentPrimaryTerm
+                                            + "]"
+                                    )
+                                );
+                                continue;
+                            }
+                        }
+
+                        ShardRouting matched = currentState.getRoutingTable().getByAllocationId(task.shardId, task.allocationId);
+                        if (matched == null) {
+                            Set<String> inSyncAllocationIds = indexMetadata.inSyncAllocationIds(task.shardId.id());
+                            // mark shard copies without routing entries that are in in-sync allocations set only as stale if the reason why
+                            // they were failed is because a write made it into the primary but not to this copy (which corresponds to
+                            // the check "primaryTerm > 0").
+                            if (task.primaryTerm > 0 && (inSyncAllocationIds != null || inSyncAllocationIds.contains(task.allocationId))) {
+                                logger.debug("{} marking shard {} as stale (shard failed task: [{}])", task.shardId, task.allocationId, task);
+                                tasksToBeApplied.add(task);
+                                staleShardsToBeApplied.add(new StaleShard(task.shardId, task.allocationId));
+                            } else {
+                                // tasks that correspond to non-existent shards are marked as successful
+                                logger.debug("{} ignoring shard failed task [{}] (shard does not exist anymore)", task.shardId, task);
+                                batchResultBuilder.success(task);
+                            }
+                        } else {
+                            // failing a shard also possibly marks it as stale (see IndexMetadataUpdater)
+                            logger.debug("{} failing shard {} (shard failed task: [{}])", task.shardId, matched, task);
+                            tasksToBeApplied.add(task);
+                            failedShardsToBeApplied.add(new FailedShard(matched, task.message, task.failure, task.markAsStale));
+                        }
                     }
                 }
             }
@@ -603,7 +619,11 @@ public class ShardStateAction {
         final boolean markAsStale;
 
         @Nullable
-        final Boolean childShardsFailedEvent;
+        final Boolean splitFailed;
+        @Nullable
+        final ShardId parentShardId;
+        @Nullable
+        final String parentAllocationId;
 
 
         FailedShardEntry(StreamInput in) throws IOException {
@@ -615,9 +635,13 @@ public class ShardStateAction {
             failure = in.readException();
             markAsStale = in.readBoolean();
             if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
-                childShardsFailedEvent = in.readOptionalBoolean();
+                splitFailed = in.readOptionalBoolean();
+                parentShardId = in.readOptionalWriteable(ShardId::new);
+                parentAllocationId = in.readOptionalString();
             } else {
-                childShardsFailedEvent = null;
+                splitFailed = null;
+                parentShardId = null;
+                parentAllocationId = null;
             }
         }
 
@@ -628,7 +652,9 @@ public class ShardStateAction {
             String message,
             @Nullable Exception failure,
             boolean markAsStale,
-            Boolean childShardsFailedEvent
+            final Boolean splitFailed,
+            final ShardId parentShardId,
+            final String parentAllocationId
         ) {
             this.shardId = shardId;
             this.allocationId = allocationId;
@@ -636,7 +662,9 @@ public class ShardStateAction {
             this.message = message;
             this.failure = failure;
             this.markAsStale = markAsStale;
-            this.childShardsFailedEvent = childShardsFailedEvent;
+            this.splitFailed = splitFailed;
+            this.parentShardId = parentShardId;
+            this.parentAllocationId = parentAllocationId;
         }
 
         public ShardId getShardId() {
@@ -657,12 +685,11 @@ public class ShardStateAction {
             out.writeException(failure);
             out.writeBoolean(markAsStale);
             if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
-                out.writeOptionalBoolean(childShardsFailedEvent);
+                out.writeOptionalBoolean(splitFailed);
+                out.writeOptionalWriteable(parentShardId);
+                out.writeOptionalString(parentAllocationId);
             } else {
-                if (childShardsFailedEvent != null) {
-                    // In-progress shard split is not allowed in a mixed cluster where node(s) with an unsupported split
-                    // version is present. Hence, we also don't want to allow a node with an unsupported version
-                    // to get this state while shard split is in-progress.
+                if (parentShardId != null) {
                     throw new IllegalStateException("In-place split not allowed on older versions.");
                 }
             }
@@ -679,7 +706,13 @@ public class ShardStateAction {
                 components.add("failure [" + ExceptionsHelper.detailedMessage(failure) + "]");
             }
             components.add("markAsStale [" + markAsStale + "]");
-            components.add("childShardsFailedEvent [" + Boolean.TRUE.equals(childShardsFailedEvent) + "]");
+            if (parentShardId != null) {
+                if (splitFailed != null) {
+                    components.add("splitFailed [" + splitFailed + "]");
+                }
+                components.add("parentShardId [" + parentShardId + "]");
+                components.add("parentAllocationId [" + parentAllocationId + "]");
+            }
             return String.join(", ", components);
         }
 
@@ -693,12 +726,15 @@ public class ShardStateAction {
                 && Objects.equals(this.allocationId, that.allocationId)
                 && primaryTerm == that.primaryTerm
                 && markAsStale == that.markAsStale
-                && childShardsFailedEvent == that.childShardsFailedEvent;
+                && splitFailed == that.splitFailed
+                && Objects.equals(this.parentShardId, that.parentShardId)
+                && Objects.equals(this.parentAllocationId, that.parentAllocationId);
         }
+
 
         @Override
         public int hashCode() {
-            return Objects.hash(shardId, allocationId, primaryTerm, markAsStale, childShardsFailedEvent);
+            return Objects.hash(shardId, allocationId, primaryTerm, markAsStale, splitFailed, parentShardId, parentAllocationId);
         }
     }
 
@@ -723,23 +759,27 @@ public class ShardStateAction {
             shardRouting.allocationId().getId(),
             primaryTerm,
             message,
-            null
+            null,
+            shardRouting.getParentShardId(),
+            shardRouting.allocationId().getParentAllocationId()
         );
         sendShardAction(SHARD_STARTED_ACTION_NAME, currentState, entry, listener);
     }
 
     public void childShardsStarted(
-        final ShardRouting sourceShardRouting,
+        final ShardRouting parentShardRouting,
         final long primaryTerm,
         final String message,
         final ActionListener<Void> listener
     ) {
         StartedShardEntry entry = new StartedShardEntry(
-            sourceShardRouting.shardId(),
-            sourceShardRouting.allocationId().getId(),
+            parentShardRouting.shardId(),
+            parentShardRouting.allocationId().getId(),
             primaryTerm,
             message,
-            true
+            true,
+            parentShardRouting.shardId(),
+            parentShardRouting.allocationId().getId()
         );
         sendShardAction(SHARD_STARTED_ACTION_NAME, clusterService.state(), entry, listener);
     }
@@ -812,7 +852,39 @@ public class ShardStateAction {
             Set<ShardRouting> seenShardRoutings = new HashSet<>(); // to prevent duplicates
             for (StartedShardEntry task : tasks) {
                 final ShardRouting matched = currentState.getRoutingTable().getByAllocationId(task.shardId, task.allocationId);
-                if (matched == null) {
+                if (task.parentShardId != null) {
+                    if (seenShardRoutings.contains(matched) == true) {
+                        logger.info("Ignoring child event for shard " + matched);
+                    } else {
+                        logger.info("Processing child event for shard " + matched);
+                    }
+                    ShardRouting parentShard = currentState.getRoutingTable().getByAllocationId(task.parentShardId, task.parentAllocationId);
+                    if (parentShard == null || parentShard.splitting() == false) {
+                        builder.success(task);
+                        continue;
+                    }
+//                    seenShardRoutings.add(matched);
+                    if (Boolean.TRUE.equals(task.allChildPrimariesStarted)) {
+                        logger.debug("{} starting child shards of {} (shard started task: [{}])", task.shardId, parentShard, task);
+                        tasksToBeApplied.add(task);
+                        for (ShardRouting childShard : parentShard.getRecoveringChildShards()) {
+                            assert childShard.primary() == true || childShard.started();
+                            if (childShard.primary() == true) {
+                                shardRoutingsToBeApplied.add(childShard);
+                            }
+                        }
+                    } else {
+                        logger.debug("{} starting replica child shard of {} (shard started task: [{}])", task.shardId, parentShard, task);
+                        ShardRouting childReplica = currentState.getRoutingNodes().getByAllocationId(task.shardId, task.allocationId);
+                        if (childReplica == null) {
+                            // This means we have cancelled ongoing split earlier.
+                            builder.success(task);
+                            continue;
+                        }
+                        tasksToBeApplied.add(task);
+                        shardRoutingsToBeApplied.add(childReplica);
+                    }
+                } else if (matched == null) {
                     // tasks that correspond to non-existent shards are marked as successful. The reason is that we resend shard started
                     // events on every cluster state publishing that does not contain the shard as started yet. This means that old stale
                     // requests might still be in flight even after the shard has already been started or failed on the cluster-manager. We
@@ -843,7 +915,7 @@ public class ShardStateAction {
                             continue;
                         }
                     }
-                    if (matched.initializing() == false && Boolean.FALSE.equals(task.childShardsStartedEvent)) {
+                    if (matched.initializing() == false) {
                         assert matched.active() : "expected active shard routing for task " + task + " but found " + matched;
                         // same as above, this might have been a stale in-flight request, so we just ignore.
                         logger.debug(
@@ -856,7 +928,7 @@ public class ShardStateAction {
                     } else {
                         // remove duplicate actions as allocation service expects a clean list without duplicates
                         if (seenShardRoutings.contains(matched)) {
-                            logger.trace(
+                            logger.info(
                                 "{} ignoring shard started task [{}] (already scheduled to start {})",
                                 task.shardId,
                                 task,
@@ -865,15 +937,8 @@ public class ShardStateAction {
                             tasksToBeApplied.add(task);
                         } else {
                             tasksToBeApplied.add(task);
-                            if (Boolean.TRUE.equals(task.childShardsStartedEvent)) {
-                                logger.debug("{} starting child shards of {} (shard started task: [{}])", task.shardId, matched, task);
-                                // matched shard is source shard in this case.
-                                assert matched.splitting();
-                                shardRoutingsToBeApplied.addAll(Arrays.asList(matched.getRecoveringChildShards()));
-                            } else {
-                                logger.debug("{} starting shard {} (shard started task: [{}])", task.shardId, matched, task);
-                                shardRoutingsToBeApplied.add(matched);
-                            }
+                            logger.debug("{} starting shard {} (shard started task: [{}])", task.shardId, matched, task);
+                            shardRoutingsToBeApplied.add(matched);
                             seenShardRoutings.add(matched);
                         }
                     }
@@ -926,7 +991,12 @@ public class ShardStateAction {
         final String message;
 
         @Nullable
-        final Boolean childShardsStartedEvent;
+        final Boolean allChildPrimariesStarted;
+        @Nullable
+        final ShardId parentShardId;
+        @Nullable
+        final String parentAllocationId;
+
 
         StartedShardEntry(StreamInput in) throws IOException {
             super(in);
@@ -935,9 +1005,13 @@ public class ShardStateAction {
             primaryTerm = in.readVLong();
             this.message = in.readString();
             if (in.getVersion().onOrAfter(Version.V_3_0_0)) {
-                childShardsStartedEvent = in.readOptionalBoolean();
+                allChildPrimariesStarted = in.readOptionalBoolean();
+                parentShardId = in.readOptionalWriteable(ShardId::new);
+                parentAllocationId = in.readOptionalString();
             } else {
-                childShardsStartedEvent = null;
+                allChildPrimariesStarted = null;
+                parentShardId = null;
+                parentAllocationId = null;
             }
         }
 
@@ -946,13 +1020,17 @@ public class ShardStateAction {
             final String allocationId,
             final long primaryTerm,
             final String message,
-            Boolean childShardsStartedEvent
+            final Boolean allChildPrimariesStarted,
+            final ShardId parentShardId,
+            final String parentAllocationId
         ) {
             this.shardId = shardId;
             this.allocationId = allocationId;
             this.primaryTerm = primaryTerm;
             this.message = message;
-            this.childShardsStartedEvent = childShardsStartedEvent;
+            this.allChildPrimariesStarted = allChildPrimariesStarted;
+            this.parentShardId = parentShardId;
+            this.parentAllocationId = parentAllocationId;
         }
 
         @Override
@@ -963,12 +1041,11 @@ public class ShardStateAction {
             out.writeVLong(primaryTerm);
             out.writeString(message);
             if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
-                out.writeOptionalBoolean(childShardsStartedEvent);
+                out.writeOptionalBoolean(allChildPrimariesStarted);
+                out.writeOptionalWriteable(parentShardId);
+                out.writeOptionalString(parentAllocationId);
             } else {
-                if (childShardsStartedEvent != null) {
-                    // In-progress shard split is not allowed in a mixed cluster where node(s) with an unsupported split
-                    // version is present. Hence, we also don't want to allow a node with an unsupported version
-                    // to get this state while shard split is in-progress.
+                if (parentShardId != null) {
                     throw new IllegalStateException("In-place split not allowed on older versions.");
                 }
             }
@@ -978,12 +1055,15 @@ public class ShardStateAction {
         public String toString() {
             return String.format(
                 Locale.ROOT,
-                "StartedShardEntry{shardId [%s], allocationId [%s], primary term [%d], " + "message [%s], Child shards started event [%s]}",
+                "StartedShardEntry{shardId [%s], allocationId [%s], primary term [%d], "
+                    + "message [%s], allChildPrimariesStarted [%s], parentShardId [%s], parentAllocationId [%s]}",
                 shardId,
                 allocationId,
                 primaryTerm,
                 message,
-                Boolean.TRUE.equals(childShardsStartedEvent)
+                allChildPrimariesStarted,
+                parentShardId,
+                parentAllocationId
             );
         }
     }

@@ -960,7 +960,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             // all tracked shard copies have a corresponding peer-recovery retention lease
             for (final ShardRouting shardRouting : routingTable.assignedShards()) {
                 final CheckpointState cps = checkpoints.get(shardRouting.allocationId().getId());
-                if (cps.tracked && cps.replicated) {
+                if (cps.tracked && cps.replicated && shardRouting.getParentShardId() == null) {
                     assert retentionLeases.contains(getPeerRecoveryRetentionLeaseId(shardRouting))
                         : "no retention lease for tracked shard [" + shardRouting + "] in " + retentionLeases;
                     assert PEER_RECOVERY_RETENTION_LEASE_SOURCE.equals(
@@ -1233,10 +1233,10 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         return this.latestReplicationCheckpoint;
     }
 
-    private boolean isPrimaryRelocation(String allocationId) {
+    private boolean isPrimaryRelocationOrChild(String allocationId) {
         Optional<ShardRouting> shardRouting = routingTable.shards()
             .stream()
-            .filter(routing -> routing.allocationId().getId().equals(allocationId))
+            .filter(routing -> routing.allocationId().getId().equals(allocationId) || routing.isSplitTarget())
             .findAny();
         return shardRouting.isPresent() && shardRouting.get().primary();
     }
@@ -1250,7 +1250,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 // it is possible for a shard to be in-sync but not yet removed from the checkpoints collection after a failover event.
                 if (cps.inSync
                     && replicationGroup.getUnavailableInSyncShards().contains(allocationId) == false
-                    && isPrimaryRelocation(allocationId) == false
+                    && isPrimaryRelocationOrChild(allocationId) == false
                     && latestReplicationCheckpoint.isAheadOf(cps.visibleReplicationCheckpoint)) {
                     cps.checkpointTimers.computeIfAbsent(latestReplicationCheckpoint, ignored -> new SegmentReplicationLagTimer());
                     logger.trace(
@@ -1282,7 +1282,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                 final CheckpointState cps = e.getValue();
                 if (cps.inSync
                     && replicationGroup.getUnavailableInSyncShards().contains(allocationId) == false
-                    && isPrimaryRelocation(e.getKey()) == false
+                    && isPrimaryRelocationOrChild(e.getKey()) == false
                     && latestReplicationCheckpoint.isAheadOf(cps.visibleReplicationCheckpoint)
                     && cps.checkpointTimers.containsKey(latestReplicationCheckpoint)) {
                     cps.checkpointTimers.get(latestReplicationCheckpoint).start();
@@ -1307,7 +1307,7 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
                     entry -> entry.getKey().equals(this.shardAllocationId) == false
                         && entry.getValue().inSync
                         && replicationGroup.getUnavailableInSyncShards().contains(entry.getKey()) == false
-                        && isPrimaryRelocation(entry.getKey()) == false
+                        && isPrimaryRelocationOrChild(entry.getKey()) == false
                 )
                 .map(entry -> buildShardStats(entry.getKey(), entry.getValue()))
                 .collect(Collectors.toUnmodifiableSet());
@@ -1625,12 +1625,14 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
             + getGlobalCheckpoint()
             + " or it's not replicated";
         if (cps.replicated && cps.localCheckpoint < getGlobalCheckpoint()) {
+            logger.info("Waiting for sync as local checkpoint " + cps.localCheckpoint + " is less than global checkpoint " + getGlobalCheckpoint());
             pendingInSync.add(allocationId);
             try {
                 while (true) {
                     if (pendingInSync.contains(allocationId)) {
                         waitForLocalCheckpointToAdvance();
                     } else {
+                        logger.info("Wait over for sync as local checkpoint " + cps.localCheckpoint + " is less than global checkpoint " + getGlobalCheckpoint());
                         break;
                     }
                 }
@@ -1679,9 +1681,6 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         assert invariant();
         assert primaryMode;
         assert handoffInProgress == false;
-        if (shardId.id() > 2) {
-            System.out.println();
-        }
         CheckpointState cps = checkpoints.get(allocationId);
         if (cps == null) {
             // can happen if replica was removed from cluster but replication process is unaware of it yet
@@ -1838,8 +1837,9 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
         if (contextRoutingTable.primaryShard().splitting()) {
             ShardRouting[] allChildShardRoutings = contextRoutingTable.primaryShard().getRecoveringChildShards();
             for (ShardRouting childRouting : allChildShardRoutings) {
-                // moveToStarted doesn't mutate original routing. So, it's safe to do this.
-                childRouting = childRouting.moveToStarted();
+                if (childRouting.primary()) {
+                    childRouting = childRouting.moveToStarted();
+                }
                 if (childRouting.shardId().equals(shardId)) {
                     if (childRoutingTable == null) {
                          childRoutingTable = new IndexShardRoutingTable.Builder(shardId);

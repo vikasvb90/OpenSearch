@@ -13,7 +13,9 @@ import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.index.IndexCommit;
 import org.opensearch.action.StepListener;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.SetOnce;
+import org.opensearch.common.StopWatch;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.concurrent.GatedCloseable;
 import org.opensearch.common.lease.Releasable;
@@ -24,10 +26,11 @@ import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.engine.Engine;
+import org.opensearch.index.seqno.ReplicationTracker;
+import org.opensearch.index.seqno.RetentionLease;
 import org.opensearch.index.seqno.RetentionLeases;
 import org.opensearch.index.seqno.SequenceNumbers;
 import org.opensearch.index.shard.IndexShard;
-import org.opensearch.index.store.RemoteSegmentStoreDirectory;
 import org.opensearch.index.store.Store;
 import org.opensearch.index.store.StoreFileMetadata;
 import org.opensearch.index.store.remote.metadata.RemoteSegmentMetadata;
@@ -46,10 +49,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
@@ -59,10 +62,14 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     private final InPlaceShardSplitRecoveryTargetHandler recoveryTarget;
     private final IndexShard sourceShard;
     private final RecoverySourceHandler delegatingRecoveryHandler;
-    private final List<ShardId> shardIds;
     private final Set<String> childShardsAllocationIds;
     private final SetOnce<SplitCommitMetadata> splitCommitMetadata = new SetOnce<>();
     private final Logger logger;
+    private final InPlaceShardSplitRecoveryListener replicationListener;
+    private final IndexMetadata indexMetadata;
+    private volatile boolean inSync = false;
+    private final Consumer<ShardId> onSync;
+    private volatile Runnable finalizer;
 
     public InPlaceShardSplitRecoverySourceHandler(
         IndexShard sourceShard,
@@ -74,21 +81,27 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         int maxConcurrentOperations,
         CancellableThreads cancellableThreads,
         List<InPlaceShardRecoveryContext> recoveryContexts,
-        List<ShardId> shardIds,
-        Set<String> childShardsAllocationIds
+        Set<String> childShardsAllocationIds,
+        InPlaceShardSplitRecoveryListener replicationListener,
+        IndexMetadata indexMetadata,
+        Consumer<ShardId> onSync
     ) {
         super(sourceShard, recoveryTarget,
             sourceShard.getThreadPool(), request, fileChunkSizeInBytes, maxConcurrentFileChunks,
-            maxConcurrentOperations, true, cancellableThreads);
+            maxConcurrentOperations, true, cancellableThreads, sourceShard);
+        List<ShardId> childShardIds = new ArrayList<>();
+        recoveryContexts.forEach(context -> childShardIds.add(context.getIndexShard().shardId()));
         this.logger = Loggers.getLogger(InPlaceShardSplitRecoverySourceHandler.class, request.shardId(),
-            "splitting to " + shardIds);
+            "splitting to " + childShardIds);
         this.resources.add(recoveryTarget);
         this.recoveryContexts = recoveryContexts;
         this.sourceShard = sourceShard;
         this.delegatingRecoveryHandler = delegatingRecoveryHandler;
-        this.shardIds = shardIds;
         this.childShardsAllocationIds = childShardsAllocationIds;
         this.recoveryTarget = recoveryTarget;
+        this.replicationListener = replicationListener;
+        this.indexMetadata = indexMetadata;
+        this.onSync = onSync;
 
         recoveryTarget.initStoreAcquirer((requestStore) -> {
             Releasable releasable = acquireStore(requestStore);
@@ -159,14 +172,18 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         prepareEngine(sendFileStep, prepareEngineStep, RecoveryState.Translog.UNKNOWN, onFailure);
 
         prepareEngineStep.whenComplete(prepareEngineTime -> {
+            addRetentionLeases(startingSeqNo);
             logger.info("prepareEngineStep completed");
             assert Transports.assertNotTransportThread(this + "[phase2]");
             initiateTracking();
-
             final long endingSeqNo = sourceShard.seqNoStats().getMaxSeqNo();
             // Syncing here because sequence number can be greater than local checkpoint and operations may not yet be
             // present in translog.
             sourceShard.sync();
+            // Flush because one or more operations in the provided range may still be pending to be indexed into lucene
+            // and therefore, may not be available yet in translog. This is a best effort to ensure all operations within
+            // this range are indexed and therefore, available in translog.
+            sourceShard.flush(new FlushRequest().waitIfOngoing(true).force(true));
             final Translog.Snapshot phase2Snapshot;
             if (startingSeqNo > endingSeqNo) {
                 phase2Snapshot = new EmptySnapshot();
@@ -185,7 +202,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
                 phase2Snapshot,
                 sourceShard.getMaxSeenAutoIdTimestamp(),
                 sourceShard.getMaxSeqNoOfUpdatesOrDeletes(),
-                sourceShard.getRetentionLeases(),
+                RetentionLeases.EMPTY,
                 mappingVersionOnPrimary,
                 sendSnapshotStep
             );
@@ -198,6 +215,21 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             cleanUpMaybeRemoteOnFinalize();
         }, onFailure);
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStepWithEmptyResult(), prepareEngineStep, finalizeStep, onFailure);
+    }
+
+    private void addRetentionLeases(long startingSeqNo) {
+        recoveryContexts.forEach(context -> {
+            RetentionLease primaryRentetionLease = new RetentionLease(
+                ReplicationTracker.getPeerRecoveryRetentionLeaseId(shard.routingEntry()),
+                startingSeqNo,
+                shard.getThreadPool().absoluteTimeInMillis(),
+                ReplicationTracker.PEER_RECOVERY_RETENTION_LEASE_SOURCE
+            );
+            Collection<RetentionLease> leases = new ArrayList<>();
+            leases.add(primaryRentetionLease);
+            context.getIndexShard().updateRetentionLeasesOnChildPrimary(new RetentionLeases(
+                sourceShard.getOperationPrimaryTerm(), 1, leases));
+        });
     }
 
     private GatedCloseable<IndexCommit> acquireCommitAndFetchMetadata(GatedCloseable<Long> translogRetentionLock) throws IOException {
@@ -318,6 +350,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 
     @Override
     protected void relocateShard(Runnable forceSegRepRunnable) throws InterruptedException {
+        // Relocation is splitting in the current context where parent shard will cease to exist.
         shard.relocated(childShardsAllocationIds, recoveryTarget::handoffPrimaryContext, forceSegRepRunnable);
         recoveryTarget.flushOnAllChildShards();
     }
@@ -413,17 +446,25 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 
     protected class AllShardsOperationBatchSender extends OperationBatchSender {
         private final Map<String, AtomicLong> targetLocalCheckpoints = new HashMap<>();
+        private final Closeable onClose;
 
         protected AllShardsOperationBatchSender(
             long startingSeqNo, long endingSeqNo, Translog.Snapshot snapshot,
             long maxSeenAutoIdTimestamp, long maxSeqNoOfUpdatesOrDeletes,
             RetentionLeases retentionLeases, long mappingVersion, ActionListener<Void> listener) {
             super(startingSeqNo, endingSeqNo, snapshot, maxSeenAutoIdTimestamp,
-                maxSeqNoOfUpdatesOrDeletes, retentionLeases, mappingVersion, listener);
+                maxSeqNoOfUpdatesOrDeletes, retentionLeases, mappingVersion, listener, false);
 
             childShardsAllocationIds.forEach(childShardsAllocationId -> {
                 targetLocalCheckpoints.put(childShardsAllocationId, new AtomicLong(SequenceNumbers.NO_OPS_PERFORMED));
             });
+
+            AtomicInteger closeCounter = new AtomicInteger(childShardsAllocationIds.size());
+            onClose = () -> {
+                if (closeCounter.decrementAndGet() == 0) {
+                    snapshot.close();
+                }
+            };
         }
 
         @Override
@@ -445,6 +486,35 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
                 })
             );
         }
+
+        @Override
+        public void close() throws IOException {
+            onClose.close();
+        }
+    }
+
+    public boolean isRecoveryStateInSync() {
+        return inSync;
+    }
+
+    protected void finalizeRecovery(StopWatch stopWatch, long trimAboveSeqNo, ActionListener<Void> listener) {
+        if (indexMetadata.getNumberOfReplicas() == 0) {
+            super.finalizeRecovery(stopWatch, trimAboveSeqNo, listener);
+            return;
+        }
+        Set<String> inSyncAllocationIds = sourceShard.getReplicationGroup().getInSyncAllocationIds();
+        recoveryContexts.forEach(context -> {
+            assert inSyncAllocationIds.contains(context.getIndexShard().routingEntry().allocationId().getId());
+        });
+
+        finalizer = () -> super.finalizeRecovery(new StopWatch().start(), trimAboveSeqNo, listener);
+        inSync = true;
+        onSync.accept(sourceShard.shardId());
+    }
+
+    public void performHandoff() {
+        assert finalizer != null;
+        finalizer.run();
     }
 
     private void cleanUpMaybeRemoteOnFinalize() {

@@ -76,6 +76,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -1151,6 +1152,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             builder.aliases.putAll(aliases.apply(part.aliases));
             builder.customMetadata.putAll(customData.apply(part.customData));
             builder.inSyncAllocationIds.putAll(inSyncAllocationIds.apply(part.inSyncAllocationIds));
+
             builder.rolloverInfos.putAll(rolloverInfos.apply(part.rolloverInfos));
             builder.system(part.isSystem);
             builder.splitShardsMetadata(splitMetadata.apply(part.splitShardsMetadata));
@@ -1353,20 +1355,27 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             return settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1);
         }
 
-        public Builder updateMetadataForNewChildShards(Map<Integer, String> newAllocationIds, int sourceShardId) {
+        public Builder updateMetadataForNewChildShards(Map<Integer, String> newChildAllocationIds, int sourceShardId) {
 
             // Now update primary terms against child shard ids
-            int numOfFinalPrimaryTerms = this.primaryTerms.length + newAllocationIds.size();
+            int numOfFinalPrimaryTerms = this.primaryTerms.length + newChildAllocationIds.size();
             long []finalPrimaryTerms = Arrays.copyOf(this.primaryTerms, numOfFinalPrimaryTerms);
             long parentPrimaryTerm = this.primaryTerms[sourceShardId];
             Arrays.fill(finalPrimaryTerms, this.primaryTerms.length, numOfFinalPrimaryTerms, parentPrimaryTerm);
+            finalPrimaryTerms[sourceShardId] = -1;
             this.primaryTerms = finalPrimaryTerms;
 
-            // Add in-sync allocations of child shards
-            newAllocationIds.forEach((shardId, newAllocationId) -> this.inSyncAllocationIds.put(
-                shardId, Sets.newHashSet(newAllocationId)));
+            // Add in-sync allocations of primary child shards
+            newChildAllocationIds.forEach((shardId, newAllocationId) -> {
+                Collection<String> curAllocIds = this.inSyncAllocationIds.get(shardId);
+                Set<String> shardAllocIds = curAllocIds == null ? new HashSet<>() : new HashSet<>(curAllocIds);
+                shardAllocIds.add(newAllocationId);
+                putInSyncAllocationIds(shardId, shardAllocIds);
+            });
+            this.inSyncAllocationIds.remove(sourceShardId);
+
             SplitShardsMetadata.Builder splitShardsMetadata = new SplitShardsMetadata.Builder(this.splitShardsMetadata);
-            splitShardsMetadata.updateSplitMetadataForChildShards(sourceShardId, newAllocationIds.keySet());
+            splitShardsMetadata.updateSplitMetadataForChildShards(sourceShardId, newChildAllocationIds.keySet());
 
             this.splitShardsMetadata = splitShardsMetadata.build();
             numberOfShards(this.splitShardsMetadata.getNumberOfShards());
@@ -1376,6 +1385,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         }
 
         public Builder cancelSplit(int sourceShardId) {
+            for (ShardRange child : splitShardsMetadata.getChildShardsOfParent(sourceShardId)) {
+                inSyncAllocationIds.remove(child.getShardId());
+            }
             SplitShardsMetadata.Builder splitShardsMetadata = new SplitShardsMetadata.Builder(this.splitShardsMetadata);
             splitShardsMetadata.cancelSplit(sourceShardId);
             this.splitShardsMetadata = splitShardsMetadata.build();
@@ -1602,8 +1614,16 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             for (int i = 0; i < numberOfShards; i++) {
                 if (inSyncAllocationIds.containsKey(i)) {
                     filledInSyncAllocationIds.put(i, Collections.unmodifiableSet(new HashSet<>(inSyncAllocationIds.get(i))));
-                } else {
+                } else if (splitShardsMetadata.isEmptyParentShard(i) == false) {
                     filledInSyncAllocationIds.put(i, Collections.emptySet());
+                }
+
+                if (splitShardsMetadata.isSplitOfShardInProgress(i) == true) {
+                    for (ShardRange child : splitShardsMetadata.getChildShardsOfParent(i)) {
+                        if (inSyncAllocationIds.containsKey(child.getShardId())) {
+                            filledInSyncAllocationIds.put(child.getShardId(), inSyncAllocationIds.get(child.getShardId()));
+                        }
+                    }
                 }
             }
             final Map<String, String> requireMap = INDEX_ROUTING_REQUIRE_GROUP_SETTING.getAsMap(settings);

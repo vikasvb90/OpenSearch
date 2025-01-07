@@ -2114,7 +2114,8 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                     new NodeMappingRefreshAction(transportService, metadataMappingService),
                     repositoriesService,
                     mock(SearchService.class),
-                    new PeerRecoverySourceService(transportService, indicesService, recoverySettings),
+                    new PeerRecoverySourceService(transportService, indicesService, recoverySettings,
+                        new InPlaceShardSplitRecoveryService(indicesService, recoverySettings)),
                     snapshotShardsService,
                     new PrimaryReplicaSyncer(
                         transportService,

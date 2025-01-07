@@ -34,7 +34,6 @@ import org.opensearch.transport.Transports;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -57,28 +56,51 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
         boolean skipSegmentFilesTransfer,
         CancellableThreads cancellableThreads
     ) {
+        this(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations,
+            skipSegmentFilesTransfer, cancellableThreads, null);
+    }
+
+    public LocalStorePeerRecoverySourceHandler(
+        IndexShard shard,
+        RecoveryTargetHandler recoveryTarget,
+        ThreadPool threadPool,
+        StartRecoveryRequest request,
+        int fileChunkSizeInBytes,
+        int maxConcurrentFileChunks,
+        int maxConcurrentOperations,
+        boolean skipSegmentFilesTransfer,
+        CancellableThreads cancellableThreads,
+        IndexShard parentShard
+    ) {
         super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations,
-            skipSegmentFilesTransfer, cancellableThreads);
+            skipSegmentFilesTransfer, cancellableThreads, parentShard);
     }
 
     @Override
     protected void innerRecoveryToTarget(ActionListener<RecoveryResponse> listener, Consumer<Exception> onFailure) throws IOException {
         final SetOnce<RetentionLease> retentionLeaseRef = new SetOnce<>();
 
-        RunUnderPrimaryPermit.run(() -> {
-            final IndexShardRoutingTable routingTable = shard.getReplicationGroup().getRoutingTable();
-            ShardRouting targetShardRouting = routingTable.getByAllocationId(request.targetAllocationId());
-            if (targetShardRouting == null) {
-                logger.debug(
-                    "delaying recovery of {} as it is not listed as assigned to target node {}",
-                    request.shardId(),
-                    request.targetNode()
-                );
-                throw new DelayRecoveryException("source node does not have the shard listed in its state as allocated on the node");
-            }
-            assert targetShardRouting.initializing() : "expected recovery target to be initializing but was " + targetShardRouting;
-            retentionLeaseRef.set(shard.getRetentionLeases().get(ReplicationTracker.getPeerRecoveryRetentionLeaseId(targetShardRouting)));
-        }, shardId + " validating recovery target [" + request.targetAllocationId() + "] registered ", shard, cancellableThreads, logger);
+        // We neither add retention lease on child primary nor it is available. This is because we never resume
+        // peer recovery and always start again from the beginning in case of failure.
+        if (shard.routingEntry().isSplitTarget() == false) {
+            RunUnderPrimaryPermit.run(() -> {
+                final IndexShardRoutingTable routingTable = shard.getReplicationGroup().getRoutingTable();
+                ShardRouting targetShardRouting = routingTable.getByAllocationId(request.targetAllocationId());
+                if (targetShardRouting == null) {
+                    logger.debug(
+                        "delaying recovery of {} as it is not listed as assigned to target node {}",
+                        request.shardId(),
+                        request.targetNode()
+                    );
+                    throw new DelayRecoveryException("source node does not have the shard listed in its state as allocated on the node");
+                }
+                assert targetShardRouting.initializing() : "expected recovery target to be initializing but was " + targetShardRouting;
+                retentionLeaseRef.set(shard.getRetentionLeases().get(ReplicationTracker.getPeerRecoveryRetentionLeaseId(targetShardRouting)));
+            }, shardId + " validating recovery target [" + request.targetAllocationId() + "] registered ", shard, cancellableThreads, logger);
+        } else {
+            assert parentShard != null;
+        }
+
         final Closeable retentionLock = acquireRetentionLock();
         resources.add(retentionLock);
         final long startingSeqNo;
@@ -145,26 +167,31 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
                 onSendFileStepComplete(sendFileStep, wrappedSafeCommit, releaseStore);
 
                 final StepListener<ReplicationResponse> deleteRetentionLeaseStep = new StepListener<>();
-                RunUnderPrimaryPermit.run(() -> {
-                    try {
-                        // If the target previously had a copy of this shard then a file-based recovery might move its global
-                        // checkpoint backwards. We must therefore remove any existing retention lease so that we can create a
-                        // new one later on in the recovery.
-                        shard.removePeerRecoveryRetentionLease(
-                            request.targetNode().getId(),
-                            new ThreadedActionListener<>(
-                                logger,
-                                shard.getThreadPool(),
-                                ThreadPool.Names.GENERIC,
-                                deleteRetentionLeaseStep,
-                                false
-                            )
-                        );
-                    } catch (RetentionLeaseNotFoundException e) {
-                        logger.debug("no peer-recovery retention lease for " + request.targetAllocationId());
-                        deleteRetentionLeaseStep.onResponse(null);
-                    }
-                }, shardId + " removing retention lease for [" + request.targetAllocationId() + "]", shard, cancellableThreads, logger);
+                if (shard.routingEntry().isSplitTarget() == true) {
+                    // For the same reason above, we don't have any retention lease for a child primary to delete.
+                    deleteRetentionLeaseStep.onResponse(null);
+                } else {
+                    RunUnderPrimaryPermit.run(() -> {
+                        try {
+                            // If the target previously had a copy of this shard then a file-based recovery might move its global
+                            // checkpoint backwards. We must therefore remove any existing retention lease so that we can create a
+                            // new one later on in the recovery.
+                            shard.removePeerRecoveryRetentionLease(
+                                request.targetNode().getId(),
+                                new ThreadedActionListener<>(
+                                    logger,
+                                    shard.getThreadPool(),
+                                    ThreadPool.Names.GENERIC,
+                                    deleteRetentionLeaseStep,
+                                    false
+                                )
+                            );
+                        } catch (RetentionLeaseNotFoundException e) {
+                            logger.debug("no peer-recovery retention lease for " + request.targetAllocationId());
+                            deleteRetentionLeaseStep.onResponse(null);
+                        }
+                    }, shardId + " removing retention lease for [" + request.targetAllocationId() + "]", shard, cancellableThreads, logger);
+                }
 
                 deleteRetentionLeaseStep.whenComplete(ignored -> {
                     logger.debug("deleteRetentionLeaseStep completed");
@@ -194,13 +221,15 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
              * make sure to do this before sampling the max sequence number in the next step, to ensure that we send
              * all documents up to maxSeqNo in phase2.
              */
+            IndexShard primaryTracker = replicationTrackingShard();
             RunUnderPrimaryPermit.run(
-                () -> shard.initiateTracking(request.targetAllocationId()),
-                shardId + " initiating tracking of " + request.targetAllocationId(),
-                shard,
+                () -> primaryTracker.initiateTracking(request.targetAllocationId()),
+                primaryTracker.shardId() + " initiating tracking of " + request.targetAllocationId(),
+                primaryTracker,
                 cancellableThreads,
                 logger
             );
+            Thread.sleep(1000);
 
             final long endingSeqNo = shard.seqNoStats().getMaxSeqNo();
             if (logger.isTraceEnabled()) {
@@ -216,6 +245,7 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
             final long maxSeqNoOfUpdatesOrDeletes = shard.getMaxSeqNoOfUpdatesOrDeletes();
             final RetentionLeases retentionLeases = shard.getRetentionLeases();
             final long mappingVersionOnPrimary = shard.indexSettings().getIndexMetadata().getMappingVersion();
+            logger.info("Phase 1 completed till seq no. " + (startingSeqNo - 1) + " phase2 starting from seq no " + startingSeqNo + " and ending seq no " + endingSeqNo);
             phase2(
                 startingSeqNo,
                 endingSeqNo,

@@ -35,18 +35,12 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
     private static final String KEY_MAX_SHARD_ID = "max_shard_id";
     private static final String KEY_IN_PROGRESS_SPLIT_SHARD_ID = "in_progress_split_shard_id";
 
-
-
     // Root shard id to flat list of all child shards under root.
     private final ShardRange[][] rootShardsToAllChildren;
-    // Mapping of a parent shard ID to children. This is a temporary map since a shard id of parent is reused
-    // in one of its children and triggering a split of a child which is using the shard id of parent can replace
-    // child shards of its parent with its own child shards.
+    // Mapping of a parent shard ID to children.
     private final Map<Integer, ShardRange[]> parentToChildShards;
     private final int maxShardId;
     private final int inProgressSplitShardId;
-
-
 
     private SplitShardsMetadata(ShardRange[][] rootShardsToAllChildren, Map<Integer, ShardRange[]> parentToChildShards,
                                 int inProgressSplitShardId, int maxShardId) {
@@ -88,7 +82,6 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             }
             return rootShardId;
         }
-
 
         ShardRange[] existingChildShards = rootShardsToAllChildren[rootShardId];
         ShardRange shardRange = binarySearchShards(existingChildShards, hash);
@@ -317,7 +310,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             return new Tuple<>(shardId, new ShardRange(shardId, Integer.MIN_VALUE, Integer.MAX_VALUE));
         }
 
-        return null;
+        throw new IllegalArgumentException("Shard ID doesn't exist in the current list of shard ranges");
     }
 
     public int getInProgressSplitShardId() {

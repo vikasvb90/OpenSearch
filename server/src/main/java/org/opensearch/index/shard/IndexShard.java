@@ -1675,7 +1675,8 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     public GatedCloseable<IndexCommit> acquireSafeIndexCommit() throws EngineException {
         final IndexShardState state = this.state; // one time volatile read
         // we allow snapshot on closed index shard, since we want to do one after we close the shard and before we close the engine
-        if (state == IndexShardState.STARTED || state == IndexShardState.CLOSED) {
+        // We already asserted earlier that source child shard is in synced state for us to be able to acquire a commit.
+        if (state == IndexShardState.STARTED || state == IndexShardState.CLOSED || routingEntry().isSplitTarget()) {
             return getEngine().acquireSafeIndexCommit();
         } else {
             throw new IllegalIndexShardStateException(shardId, state, "snapshot is not allowed");
@@ -2378,6 +2379,10 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             default:
                 throw new IllegalStateException("No operation defined for [" + operation + "]");
         }
+        if (shardRouting.isSplitTarget() && shardRouting.primary()) {
+//            logger.info("Applied seq no. " + operation.seqNo() + " on child shard replica " + shardId.id()
+//                + ". Local checkpoint now " + getLocalCheckpoint());
+        }
         return result;
     }
 
@@ -2399,7 +2404,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         int computedShardId = OperationRouting.generateShardId(indexSettings().getIndexMetadata(),
             index.id(), index.routing(), true);
         if (computedShardId != shardId().id()) {
-            return new Translog.NoOp(index.seqNo(), index.primaryTerm(), "op belongs to another child shard");
+            return new Translog.NoOp(index.seqNo(), index.primaryTerm(), Translog.NoOp.FILLING_GAPS);
         }
 
         return operation;
@@ -3294,6 +3299,19 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      * @param retentionLeases the retention leases
      */
     public void updateRetentionLeasesOnReplica(final RetentionLeases retentionLeases) {
+        assert assertReplicationTarget();
+        verifyNotClosed();
+        if (shardRouting.isSplitTarget() == false) {
+            replicationTracker.updateRetentionLeasesOnReplica(retentionLeases);
+        }
+    }
+
+    /**
+     * Updates retention leases on a child primary.
+     *
+     * @param retentionLeases the retention leases
+     */
+    public void updateRetentionLeasesOnChildPrimary(final RetentionLeases retentionLeases) {
         assert assertReplicationTarget();
         verifyNotClosed();
         replicationTracker.updateRetentionLeasesOnReplica(retentionLeases);

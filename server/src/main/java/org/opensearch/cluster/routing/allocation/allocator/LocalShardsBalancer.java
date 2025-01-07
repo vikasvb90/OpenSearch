@@ -13,6 +13,7 @@ import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.IntroSorter;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.metadata.SplitShardsMetadata;
 import org.opensearch.cluster.routing.RoutingNode;
 import org.opensearch.cluster.routing.RoutingNodes;
 import org.opensearch.cluster.routing.RoutingPool;
@@ -612,23 +613,6 @@ public class LocalShardsBalancer extends ShardsBalancer {
                 if (targetNode != null) {
                     checkAndAddInEligibleTargetNode(targetNode.getRoutingNode());
                 }
-            } else if (moveDecision.isDecisionTaken() && moveDecision.canSplit()) {
-                final BalancedShardsAllocator.ModelNode sourceNode = nodes.get(shardRouting.currentNodeId());
-                sourceNode.removeShard(shardRouting);
-                IndexMetadata indexMetadata = metadata.getIndexSafe(shardRouting.index());
-                Tuple<ShardRouting, List<ShardRouting>> splittingShards = routingNodes.splitShard(
-                    shardRouting,
-                    indexMetadata,
-                    allocation.clusterInfo().getShardSize(shardRouting, ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE),
-                    allocation.changes()
-                );
-                splittingShards.v2().forEach(sourceNode::addShard);
-                if (logger.isTraceEnabled()) {
-                    logger.trace("Splitting shard [{}]", shardRouting);
-                }
-
-                // Verifying if this node can be considered ineligible for further iterations
-                checkAndAddInEligibleTargetNode(sourceNode.getRoutingNode());
             } else if (moveDecision.isDecisionTaken() && moveDecision.canRemain() == false) {
                 logger.trace("[{}][{}] can't move", shardRouting.index(), shardRouting.id());
             }
@@ -914,6 +898,119 @@ public class LocalShardsBalancer extends ShardsBalancer {
             secondaryLength = 0;
         } while (primaryLength > 0);
         // clear everything we have either added it or moved to ignoreUnassigned
+    }
+
+    @Override
+    public void assignChildShardsOfSplittingShards() {
+        List<ShardRouting> splittingShards = routingNodes.splitting();
+        if (splittingShards.isEmpty()) {
+            return;
+        }
+
+        List<SplittingShardAssignmentInfo> splittingShardAssignmentInfos = new ArrayList<>();
+        for (ShardRouting splittingShard : splittingShards) {
+            IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(splittingShard.index());
+            SplitShardsMetadata splitShardsMetadata = indexMetadata.getSplitShardsMetadata();
+            boolean inProgress = splitShardsMetadata.isSplitOfShardInProgress(splittingShard.shardId().id())
+                && allocation.changes().isSplitOfShardFailed(splittingShard) == false;
+            ShardRouting assignedPrimaryParent = routingNodes.activePrimary(splittingShard.shardId());
+            if (inProgress && assignedPrimaryParent != null) {
+                List<ShardRouting> primaryChildShards = new ArrayList<>();
+                List<ShardRouting> replicaChildShards = new ArrayList<>();
+
+                for (ShardRouting childShard : splittingShard.getRecoveringChildShards()) {
+                    if (childShard.primary()) {
+                        primaryChildShards.add(childShard);
+                    } else {
+                        replicaChildShards.add(childShard);
+                    }
+                }
+                SplittingShardAssignmentInfo splittingShardAssignmentInfo = new SplittingShardAssignmentInfo(
+                    indexMetadata.getIndexUUID(), assignedPrimaryParent, splittingShard, primaryChildShards,
+                    replicaChildShards);
+                splittingShardAssignmentInfos.add(splittingShardAssignmentInfo);
+            }
+        }
+
+        Collections.shuffle(splittingShardAssignmentInfos);
+        //TODO: build retry and cancel split to come out of failed shard
+
+        for (SplittingShardAssignmentInfo splittingShardAssignmentInfo : splittingShardAssignmentInfos) {
+
+            RoutingNode parentShardNode = routingNodes.node(splittingShardAssignmentInfo.assignedPrimaryParent.currentNodeId());
+            ShardRouting primaryChild;
+            BalancedShardsAllocator.ModelNode parentModelNode = nodes.get(splittingShardAssignmentInfo.assignedPrimaryParent.currentNodeId());
+            Map<ShardRouting, String> assignedRoutingNodes = new HashMap<>();
+            for (int addIdx = 0; addIdx < splittingShardAssignmentInfo.primaryChildShards.size(); addIdx++) {
+                primaryChild = splittingShardAssignmentInfo.primaryChildShards.get(addIdx);
+                Decision currentDecision = allocation.deciders().canAllocate(primaryChild, parentShardNode, allocation);
+                if (currentDecision.type() == Decision.Type.NO) {
+                    break;
+                }
+                parentModelNode.addShard(primaryChild);
+                assignedRoutingNodes.put(primaryChild, parentModelNode.getNodeId());
+            }
+
+            if (assignedRoutingNodes.size() != splittingShardAssignmentInfo.primaryChildShards.size()) {
+                assignedRoutingNodes.keySet().forEach(routing -> {
+                    BalancedShardsAllocator.ModelNode node = nodes.get(assignedRoutingNodes.get(routing));
+                    node.removeShard(routing);
+                });
+                continue;
+            }
+
+            for (ShardRouting replicaChild : splittingShardAssignmentInfo.replicaChildShards) {
+                final AllocateUnassignedDecision allocationDecision = decideAllocateUnassigned(replicaChild);
+                if (allocationDecision.getAllocationDecision() != AllocationDecision.YES) {
+                    break;
+                }
+                String assignedNodeId = allocationDecision.getTargetNode().getId();
+                assignedRoutingNodes.put(replicaChild, nodes.get(assignedNodeId).getNodeId());
+                nodes.get(assignedNodeId).addShard(replicaChild);
+            }
+
+            if (assignedRoutingNodes.size() != splittingShardAssignmentInfo.primaryChildShards.size() +
+                splittingShardAssignmentInfo.replicaChildShards.size()) {
+                assignedRoutingNodes.keySet().forEach(routing -> {
+                    BalancedShardsAllocator.ModelNode node = nodes.get(assignedRoutingNodes.get(routing));
+                    node.removeShard(routing);
+                });
+                continue;
+            }
+
+            if (logger.isTraceEnabled()) {
+                logger.trace("Splitting shard [{}]", splittingShardAssignmentInfo.assignedPrimaryParent.shardId());
+            }
+
+            routingNodes.assignChildShards(
+                splittingShardAssignmentInfo.assignedPrimaryParent,
+                splittingShardAssignmentInfo.splittingPrimaryParent,
+                allocation.changes(),
+                assignedRoutingNodes
+            );
+        }
+
+    }
+
+    private static class SplittingShardAssignmentInfo {
+        final String indexUUID;
+        final ShardRouting assignedPrimaryParent;
+        final ShardRouting splittingPrimaryParent;
+        final List<ShardRouting> primaryChildShards;
+        final List<ShardRouting> replicaChildShards;
+
+        public SplittingShardAssignmentInfo(
+            String indexUUID,
+            ShardRouting assignedPrimaryParent,
+            ShardRouting splittingPrimaryParent,
+            List<ShardRouting> primaryChildShards,
+            List<ShardRouting> replicaChildShards) {
+            this.indexUUID = indexUUID;
+            this.assignedPrimaryParent = assignedPrimaryParent;
+            this.splittingPrimaryParent = splittingPrimaryParent;
+            this.primaryChildShards = primaryChildShards;
+            this.replicaChildShards = replicaChildShards;
+        }
     }
 
     /**

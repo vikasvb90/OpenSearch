@@ -192,10 +192,10 @@ public class AllocationId implements ToXContentObject, Writeable {
      * Creates a new allocation id for a shard that is undergoing split, populating
      * the transient holder for splitChildAllocationIds.
      */
-    public static AllocationId newSplit(AllocationId allocationId, int childShardsSize) {
+    public static AllocationId newSplit(AllocationId allocationId, int numberOfChildShards) {
         assert allocationId.getSplitChildAllocationIds() == null && allocationId.getParentAllocationId() == null;
         List<String> splitChildAllocationIds = new ArrayList<>();
-        for (int c = 0; c < childShardsSize; c++) {
+        for (int c = 0; c < numberOfChildShards; c++) {
             splitChildAllocationIds.add(UUIDs.randomBase64UUID());
         }
         return new AllocationId(allocationId.getId(), null, splitChildAllocationIds, null);

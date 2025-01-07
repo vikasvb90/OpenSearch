@@ -577,7 +577,7 @@ public abstract class TransportWriteAction<
             // If a write action fails due to the closure of the primary shard
             // then the replicas should not be marked as failed since they are
             // still up-to-date with the (now closed) primary shard
-            if (exception instanceof PrimaryShardClosedException == false && replica.isSplitTarget() == false) {
+            if (exception instanceof PrimaryShardClosedException == false) {
                 shardStateAction.remoteShardFailed(
                     replica.shardId(),
                     replica.allocationId().getId(),

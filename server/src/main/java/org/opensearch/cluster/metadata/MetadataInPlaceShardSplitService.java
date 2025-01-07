@@ -157,6 +157,7 @@ public class MetadataInPlaceShardSplitService {
         RoutingTable routingTable = routingTableBuilder.build();
         metadataBuilder.put(indexMetadataBuilder);
 
+
         ClusterState updatedState = ClusterState.builder(currentState).metadata(metadataBuilder).routingTable(routingTable).build();
         return rerouteRoutingTable.apply(updatedState, "shard [" + request.getShardId() + "] of index [" + request.getIndex() + "] split");
     }

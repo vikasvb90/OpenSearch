@@ -171,6 +171,24 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
         return shard;
     }
 
+    /**
+     * All child replica shards for the provided {@link ShardId}
+     * @return All the child replica shard routing entries for the given index and shard id
+     * @throws IndexNotFoundException if provided index does not exist
+     * @throws ShardNotFoundException if provided shard id is unknown
+     */
+    public IndexShardRoutingTable childReplicaShardRoutingTable(ShardId shardId) {
+        IndexRoutingTable indexRouting = index(shardId.getIndexName());
+        if (indexRouting == null || indexRouting.getIndex().equals(shardId.getIndex()) == false) {
+            throw new IndexNotFoundException(shardId.getIndex());
+        }
+        IndexShardRoutingTable shard = indexRouting.childReplicaShard(shardId.id());
+        if (shard == null) {
+            throw new ShardNotFoundException(shardId);
+        }
+        return shard;
+    }
+
     @Nullable
     public ShardRouting getByAllocationId(ShardId shardId, String allocationId) {
         final IndexRoutingTable indexRoutingTable = index(shardId.getIndexName());
@@ -491,7 +509,11 @@ public class RoutingTable implements Iterable<IndexRoutingTable>, Diffable<Routi
                 indexBuilder = new IndexRoutingTable.Builder(index);
                 indexRoutingTableBuilders.put(index.getName(), indexBuilder);
             }
-            indexBuilder.addShard(shardRoutingEntry);
+            if (shardRoutingEntry.isStartedChildReplica()) {
+                indexBuilder.addChildReplica(shardRoutingEntry);
+            } else {
+                indexBuilder.addShard(shardRoutingEntry);
+            }
         }
 
         /**

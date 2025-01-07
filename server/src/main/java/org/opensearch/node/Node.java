@@ -1257,8 +1257,11 @@ public class Node implements Closeable {
                 b.bind(Discovery.class).toInstance(discoveryModule.getDiscovery());
                 {
                     processRecoverySettings(settingsModule.getClusterSettings(), recoverySettings);
+                    InPlaceShardSplitRecoveryService splitRecoveryService = newInPlaceShardSplitRecoveryService(
+                        indicesService, recoverySettings);
+                    b.bind(InPlaceShardSplitRecoveryService.class).toInstance(splitRecoveryService);
                     b.bind(PeerRecoverySourceService.class)
-                        .toInstance(new PeerRecoverySourceService(transportService, indicesService, recoverySettings));
+                        .toInstance(new PeerRecoverySourceService(transportService, indicesService, recoverySettings, splitRecoveryService));
                     b.bind(PeerRecoveryTargetService.class)
                         .toInstance(new PeerRecoveryTargetService(threadPool, transportService, recoverySettings, clusterService));
                     b.bind(SegmentReplicationTargetService.class)
@@ -1274,8 +1277,7 @@ public class Node implements Closeable {
                         );
                     b.bind(SegmentReplicationSourceService.class)
                         .toInstance(new SegmentReplicationSourceService(indicesService, transportService, recoverySettings));
-                    b.bind(InPlaceShardSplitRecoveryService.class)
-                        .toInstance(newInPlaceShardSplitRecoveryService(indicesService, recoverySettings));
+
                 }
                 b.bind(HttpServerTransport.class).toInstance(httpServerTransport);
                 pluginComponents.stream().forEach(p -> b.bind((Class) p.getClass()).toInstance(p));

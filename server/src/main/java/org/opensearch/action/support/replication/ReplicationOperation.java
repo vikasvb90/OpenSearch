@@ -169,9 +169,6 @@ public class ReplicationOperation<
         if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
             logger.info("Handling primary result for id: " + id);
         }
-        if (request.shardId.id() == 3) {
-            System.out.println();
-        }
         if (replicaRequest != null) {
             if (logger.isTraceEnabled()) {
                 logger.trace("[{}] op [{}] completed on primary for request [{}]", primary.routingEntry().shardId(), opType, request);
@@ -391,12 +388,6 @@ public class ReplicationOperation<
 
     private void updateCheckPoints(ShardRouting shard, LongSupplier localCheckpointSupplier, LongSupplier globalCheckpointSupplier) {
         try {
-            if (TransportShardBulkAction.debugRequest.get() == true) {
-                logger.info("Updating checkpoint for shard " + shard.shardId().id()
-                    + " on primary shard allocation " + primary.routingEntry().allocationId().getId()
-                    + " for replica shard allocation " + shard.allocationId().getId()
-                    + " with checkpoint " + localCheckpointSupplier.getAsLong());
-            }
             primary.updateLocalCheckpointForShard(shard.allocationId().getId(), localCheckpointSupplier.getAsLong());
             primary.updateGlobalCheckpointForShard(shard.allocationId().getId(), globalCheckpointSupplier.getAsLong());
         } catch (final AlreadyClosedException e) {

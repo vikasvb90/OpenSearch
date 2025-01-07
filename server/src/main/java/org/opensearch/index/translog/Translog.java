@@ -45,7 +45,6 @@ import org.opensearch.common.lease.Releasables;
 import org.opensearch.common.lucene.uid.Versions;
 import org.opensearch.common.util.BigArrays;
 import org.opensearch.common.util.concurrent.ReleasableLock;
-import org.opensearch.common.util.concurrent.RunOnce;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.common.Strings;
 import org.opensearch.core.common.bytes.BytesArray;
@@ -75,11 +74,13 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -398,6 +399,18 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
                 assert readers.stream().map(TranslogReader::getGeneration).min(Long::compareTo).get().equals(readers.get(0).getGeneration())
                     : "the first translog isn't the one with the minimum generation:" + readers;
                 return readers.get(0).getGeneration();
+            }
+        }
+    }
+
+    public long getMinSequenceNo() {
+        try (ReleasableLock ignored = readLock.acquire()) {
+            if (readers.isEmpty()) {
+                return current.getCheckpoint().minSeqNo;
+            } else {
+                assert readers.stream().map(TranslogReader::getGeneration).min(Long::compareTo).get().equals(readers.get(0).getGeneration())
+                    : "the first translog isn't the one with the minimum generation:" + readers;
+                return readers.get(0).getMinSeqNo();
             }
         }
     }
@@ -736,10 +749,9 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
      * Returns min generation reference.
      */
     public GatedCloseable<Long> acquireRetentionLockWithMinGen() {
-        try (ReleasableLock lock = readLock.acquire()) {
+        try (ReleasableLock ignore = readLock.acquire()) {
             ensureOpen();
             final long viewGen = getMinFileGeneration();
-            logger.info("Minimum translog with gen " + viewGen + " seq number " + current.getCheckpoint().minSeqNo);
             Closeable closeable = acquireTranslogGenFromDeletionPolicy(viewGen);
             return new GatedCloseable<>(viewGen, closeable::close);
         }
@@ -795,7 +807,6 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
      */
     public void trimOperations(long belowTerm, long aboveSeqNo) throws IOException {
         assert aboveSeqNo >= SequenceNumbers.NO_OPS_PERFORMED : "aboveSeqNo has to a valid sequence number";
-
         try (ReleasableLock lock = writeLock.acquire()) {
             ensureOpen();
             if (current.getPrimaryTerm() < belowTerm) {
@@ -1508,6 +1519,7 @@ public abstract class Translog extends AbstractIndexShardComponent implements In
      * @opensearch.internal
      */
     public static class NoOp implements Operation {
+        public static final String FILLING_GAPS = "filling gaps";
 
         private final long seqNo;
         private final long primaryTerm;

@@ -1143,7 +1143,8 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
             request,
             recoverySettings,
             false,
-            new CancellableThreads()
+            new CancellableThreads(),
+            null
         );
         primary.updateShardState(
             primary.routingEntry(),

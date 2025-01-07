@@ -24,7 +24,8 @@ public class RecoverySourceHandlerFactory {
         StartRecoveryRequest request,
         RecoverySettings recoverySettings,
         boolean skipSegmentFilesTransfer,
-        CancellableThreads cancellableThreads
+        CancellableThreads cancellableThreads,
+        IndexShard parentShard
     ) {
         boolean isReplicaRecoveryWithRemoteTranslog = request.isPrimaryRelocation() == false && shard.isRemoteTranslogEnabled();
         if (isReplicaRecoveryWithRemoteTranslog) {
@@ -37,7 +38,8 @@ public class RecoverySourceHandlerFactory {
                 recoverySettings.getMaxConcurrentFileChunks(),
                 recoverySettings.getMaxConcurrentOperations(),
                 skipSegmentFilesTransfer,
-                cancellableThreads
+                cancellableThreads,
+                parentShard
             );
         } else {
             return new LocalStorePeerRecoverySourceHandler(
@@ -49,7 +51,8 @@ public class RecoverySourceHandlerFactory {
                 recoverySettings.getMaxConcurrentFileChunks(),
                 recoverySettings.getMaxConcurrentOperations(),
                 skipSegmentFilesTransfer,
-                cancellableThreads
+                cancellableThreads,
+                parentShard
             );
         }
     }

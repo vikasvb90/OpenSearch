@@ -919,9 +919,14 @@ public class InternalEngine extends Engine {
                     }
 
                     assert index.seqNo() >= 0 : "ops should have an assigned seq no.; origin: " + index.origin();
-
                     if (plan.indexIntoLucene || plan.addStaleOpToLucene) {
                         indexResult = indexIntoLucene(index, plan);
+//                        if (shardId.id() == 0 && index.origin() == Operation.Origin.PRIMARY) {
+//                            logger.info("Sending operation seq " + index.seqNo());
+//                        }
+//                        if (shardId.id() == 0 && index.origin() == Operation.Origin.PRIMARY) {
+//                            logger.info("Indexing operation seq " + index.seqNo() + " into lucene: " + plan.indexIntoLucene + " index result " + indexResult.getResultType());
+//                        }
                     } else {
                         indexResult = new IndexResult(
                             plan.versionForIndexing,
@@ -936,6 +941,9 @@ public class InternalEngine extends Engine {
                     final Translog.Location location;
                     if (indexResult.getResultType() == Result.Type.SUCCESS) {
                         location = translogManager.add(new Translog.Index(index, indexResult));
+//                        if (shardId.id() == 0 && index.origin() == Operation.Origin.PRIMARY) {
+//                            logger.info("Adding operation seq " + index.seqNo() + " to translog generation " + location.generation);
+//                        }
                     } else if (indexResult.getSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO) {
                         // if we have document failure, record it as a no-op in the translog and Lucene with the generated seq_no
                         final NoOp noOp = new NoOp(
@@ -999,7 +1007,6 @@ public class InternalEngine extends Engine {
         // a delete state and return false for the created flag in favor of code simplicity
         final long maxSeqNoOfUpdatesOrDeletes = getMaxSeqNoOfUpdatesOrDeletes();
         if (hasBeenProcessedBefore(index)) {
-            logger.info("Has been processed before");
             // the operation seq# was processed and thus the same operation was already put into lucene
             // this can happen during recovery where older operations are sent from the translog that are already
             // part of the lucene commit (either from a peer recovery or a local translog)
@@ -1735,9 +1742,6 @@ public class InternalEngine extends Engine {
                 }
             }
             localCheckpointTracker.markSeqNoAsProcessed(noOpResult.getSeqNo());
-            if (seqNo == 490 && shardId.id() > 2) {
-                logger.info("Marking as no op in internal engine ");
-            }
             if (noOpResult.getTranslogLocation() == null) {
                 // the op is coming from the translog (and is hence persisted already) or it does not have a sequence number
                 assert noOp.origin().isFromTranslog() || noOpResult.getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO;

@@ -106,7 +106,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     @Override
     public void shardFailed(ShardRouting failedShard, UnassignedInfo unassignedInfo) {
-        if (failedShard.active() && failedShard.primary() && failedShard.isSplitTarget() == false) {
+        if (failedShard.active() && failedShard.primary() && failedShard.getParentShardId() != null) {
             Updates updates = changes(failedShard.shardId());
             if (updates.firstFailedPrimary == null) {
                 // more than one primary can be failed (because of batching, primary can be failed, replica promoted and then failed...)
@@ -132,10 +132,32 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         removeAllocationId(removedSplitSource);
         Updates updates = changes(removedSplitSource.shardId());
         for (ShardRouting childShard : removedSplitSource.getRecoveringChildShards()) {
-            updates.addedChildShards.put(childShard.shardId(), childShard);
-            Updates childUpdates = changes(childShard.shardId());
-            childUpdates.isNewChildShard = true;
+            if (childShard.primary()) {
+                updates.addedPrimaryChildShards.put(childShard.shardId(), childShard);
+                Updates childUpdates = changes(childShard.shardId());
+                childUpdates.isNewPrimaryChild = true;
+            }
         }
+    }
+
+    @Override
+    public void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childReplica) {
+        assert childReplica.allocationId().getParentAllocationId().equals(parentShard.allocationId().getId());
+        assert childReplica.allocationId().equals(initializingShard.allocationId());
+        Updates updates = changes(parentShard.shardId());
+        updates.addedAllocationIds.add(childReplica.allocationId().getId());
+        Updates childUpdates = changes(childReplica.shardId());
+        childUpdates.addedAllocationIds.add(childReplica.allocationId().getId());
+        childUpdates.isNewReplicaChild = true;
+    }
+
+    @Override
+    public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
+        assert childShard.allocationId().getParentAllocationId().equals(parentShard.allocationId().getId());
+        assert childShard.allocationId().equals(childShard.allocationId());
+        Updates updates = changes(parentShard.shardId());
+        updates.removedAllocationIds.add(childShard.allocationId().getId());
+        updates.splitFailed = true;
     }
 
     @Override
@@ -167,13 +189,13 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 ShardId shardId = shardEntry.getKey();
                 Updates updates = shardEntry.getValue();
                 // Avoid updating primary term and in-sync allocations for parent and child shards here.
-                if (updates.isNewChildShard == false && updates.addedChildShards.isEmpty() == true) {
+                if (updates.isNewPrimaryChild == false && updates.addedPrimaryChildShards.isEmpty() == true) {
                     indexMetadataBuilder = updateInSyncAllocations(newRoutingTable, oldIndexMetadata, indexMetadataBuilder, shardId, updates);
                     indexMetadataBuilder = updatePrimaryTerm(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
                 }
                 // Invoke metadata update of in-place split only for the parent shard.
-                if (updates.addedChildShards.isEmpty() == false && updates.splitFailed == false) {
-                    indexMetadataBuilder = updateMetadataForInPlaceSplitCompleted(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
+                if (updates.addedPrimaryChildShards.isEmpty() == false && updates.splitFailed == false) {
+                    indexMetadataBuilder = updateMetadataForCompletedInPlaceSplit(oldIndexMetadata, indexMetadataBuilder, shardId, updates);
                 }
                 if (updates.splitFailed) {
                     updateMetadataForInPlaceSplitFailed(oldIndexMetadata, indexMetadataBuilder, shardId);
@@ -242,6 +264,16 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 // forcing a stale primary resets the in-sync allocations to the singleton set with the stale id
                 indexMetadataBuilder.putInSyncAllocationIds(shardId.id(), Collections.singleton(allocationId));
             }
+        } else if (updates.isNewReplicaChild) {
+            if (oldInSyncAllocationIds == null) {
+                oldInSyncAllocationIds = new HashSet<>();
+            }
+            if (indexMetadataBuilder == null) {
+                indexMetadataBuilder = IndexMetadata.builder(oldIndexMetadata);
+            }
+            Set<String> inSyncAllocationIds = new HashSet<>(oldInSyncAllocationIds);
+            inSyncAllocationIds.addAll(updates.addedAllocationIds);
+            indexMetadataBuilder.putInSyncAllocationIds(shardId.id(), inSyncAllocationIds);
         } else {
             // standard path for updating in-sync ids
             Set<String> inSyncAllocationIds = new HashSet<>(oldInSyncAllocationIds);
@@ -269,6 +301,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
                 List<ShardRouting> assignedShards = newShardRoutingTable.assignedShards()
                     .stream()
                     .filter(s -> s.isRelocationTarget() == false)
+                    .filter(s -> s.getParentShardId() == null)
                     .collect(Collectors.toList());
                 assert assignedShards.size() <= maxActiveShards : "cannot have more assigned shards "
                     + assignedShards
@@ -382,13 +415,13 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
     /**
      * Adds primary terms of child shards and updates number of shards.
      */
-    private IndexMetadata.Builder updateMetadataForInPlaceSplitCompleted(
+    private IndexMetadata.Builder updateMetadataForCompletedInPlaceSplit(
         IndexMetadata oldIndexMetadata,
         IndexMetadata.Builder indexMetadataBuilder,
         ShardId parentShardId,
         Updates updates
     ) {
-        if (updates.addedChildShards.isEmpty()) {
+        if (updates.addedPrimaryChildShards.isEmpty()) {
             return indexMetadataBuilder;
         }
 
@@ -396,8 +429,9 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             indexMetadataBuilder = IndexMetadata.builder(oldIndexMetadata);
         }
 
+        // We will only have allocation IDs of primary child shards in this map.
         Map<Integer, String> shardIdToAllocationId = new HashMap<>();
-        updates.addedChildShards.forEach((shardId, shardRouting) -> {
+        updates.addedPrimaryChildShards.forEach((shardId, shardRouting) -> {
             shardIdToAllocationId.put(shardId.id(), shardRouting.allocationId().getId());
         });
 
@@ -428,7 +462,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
      * Remove allocation id of this shard from the set of in-sync shard copies
      */
     void removeAllocationId(ShardRouting shardRouting) {
-        if (shardRouting.active()) {
+        if (shardRouting.active() && shardRouting.getParentShardId() == null) {
             changes(shardRouting.shardId()).removedAllocationIds.add(shardRouting.allocationId().getId());
         }
     }
@@ -444,8 +478,9 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         private boolean increaseTerm; // whether primary term should be increased
         // Child shard ids for this shard which is now split. To be added in in-sync, assign primary term of this shard
         // and update number of current shards.
-        private final Map<ShardId, ShardRouting> addedChildShards = new HashMap<>();
-        private boolean isNewChildShard;
+        private final Map<ShardId, ShardRouting> addedPrimaryChildShards = new HashMap<>();
+        private boolean isNewPrimaryChild; // Updated against a new primary child shard. Used to skip child shards in applyChanges.
+        private boolean isNewReplicaChild;
         private boolean splitFailed;
         private Set<String> addedAllocationIds = new HashSet<>(); // allocation ids that should be added to the in-sync set
         private Set<String> removedAllocationIds = new HashSet<>(); // allocation ids that should be removed from the in-sync set

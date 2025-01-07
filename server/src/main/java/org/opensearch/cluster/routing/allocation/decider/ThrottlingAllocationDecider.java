@@ -43,12 +43,12 @@ import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
+import org.opensearch.core.index.shard.ShardId;
 
 import java.util.Locale;
 import java.util.function.BiFunction;
 
-import static org.opensearch.cluster.routing.allocation.decider.Decision.THROTTLE;
-import static org.opensearch.cluster.routing.allocation.decider.Decision.YES;
+import static org.opensearch.cluster.routing.allocation.decider.Decision.*;
 
 /**
  * {@link ThrottlingAllocationDecider} controls the recovery process per node in
@@ -194,7 +194,7 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
             // Peer recovery
             assert initializingShard(shardRouting, node.nodeId()).recoverySource().getType() == RecoverySource.Type.PEER;
 
-            if (shardRouting.unassignedReasonIndexCreated()) {
+            if (shardRouting.unassignedReasonIndexCreated() || shardRouting.unassignedReasonChildShardCreated()) {
                 return allocateInitialShardCopies(shardRouting, node, allocation);
             } else {
                 return allocateNonInitialShardCopies(shardRouting, node, allocation);
@@ -203,8 +203,14 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
     }
 
     private Decision allocateInitialShardCopies(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        if (shardRouting.getParentShardId() != null) {
+            assert shardRouting.primary() == false;
+            //TODO: Implement throttling for replica recoveries after primary children synced state.
+            return allocation.decision(YES, NAME, "Skipping throttling for replica recovery");
+        }
         int currentInRecoveries = allocation.routingNodes().getInitialIncomingRecoveries(node.nodeId());
-        assert shardRouting.unassignedReasonIndexCreated() && !shardRouting.primary();
+        assert (shardRouting.unassignedReasonIndexCreated() || shardRouting.unassignedReasonChildShardCreated())
+            && !shardRouting.primary();
 
         return allocateShardCopies(
             shardRouting,
@@ -263,7 +269,13 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
     }
 
     private Integer getInitialPrimaryNodeOutgoingRecoveries(ShardRouting shardRouting, RoutingAllocation allocation) {
-        ShardRouting primaryShard = allocation.routingNodes().activePrimary(shardRouting.shardId());
+        ShardId primaryShardId;
+        if (shardRouting.getParentShardId() != null && shardRouting.primary() == false) {
+            primaryShardId = shardRouting.getParentShardId();
+        } else {
+            primaryShardId = shardRouting.shardId();
+        }
+        ShardRouting primaryShard = allocation.routingNodes().activePrimary(primaryShardId);
         return allocation.routingNodes().getInitialOutgoingRecoveries(primaryShard.currentNodeId());
     }
 
@@ -353,6 +365,9 @@ public class ThrottlingAllocationDecider extends AllocationDecider {
 
     @Override
     public Decision canMoveAway(ShardRouting shardRouting, RoutingAllocation allocation) {
+        if (shardRouting.getParentShardId() != null) {
+            return allocation.decision(NO, NAME, "recovering child shard");
+        }
         int outgoingRecoveries = 0;
         if (!shardRouting.primary()) {
             ShardRouting primaryShard = allocation.routingNodes().activePrimary(shardRouting.shardId());

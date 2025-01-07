@@ -147,7 +147,7 @@ public class IndexShardRoutingTable implements Iterable<ShardRouting> {
                     allAllocationIds.add(targetChild.allocationId().getId());
 
                     assert shard.assignedToNode() : "relocating from unassigned " + shard;
-                    assert targetChild.assignedToNode() : "relocating to unassigned " + shard.getTargetRelocatingShard();
+                    assert targetChild.assignedToNode() : "Child shard not assigned ";
                     assignedShards.add(targetChild);
                 }
             }

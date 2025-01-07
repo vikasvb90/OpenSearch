@@ -266,6 +266,10 @@ public final class RemoteShardsBalancer extends ShardsBalancer {
         }
     }
 
+    @Override
+    public void assignChildShardsOfSplittingShards() {
+    }
+
     /**
      * Calculates the total number of primary shards per node.
      * @param remoteRoutingNodes routing nodes for which the aggregation needs to be performed

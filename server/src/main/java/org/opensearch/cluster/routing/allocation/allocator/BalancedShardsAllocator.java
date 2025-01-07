@@ -226,6 +226,7 @@ public class BalancedShardsAllocator implements ShardsAllocator {
         localShardsBalancer.allocateUnassigned();
         localShardsBalancer.moveShards();
         localShardsBalancer.balance();
+        localShardsBalancer.assignChildShardsOfSplittingShards();
 
         final ShardsBalancer remoteShardsBalancer = new RemoteShardsBalancer(logger, allocation);
         remoteShardsBalancer.allocateUnassigned();

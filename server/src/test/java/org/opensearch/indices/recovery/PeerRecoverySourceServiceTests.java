@@ -40,6 +40,7 @@ import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.IndexShardTestCase;
 import org.opensearch.index.store.Store;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
 import org.opensearch.test.NodeRoles;
 import org.opensearch.transport.TransportService;
 
@@ -57,10 +58,15 @@ public class PeerRecoverySourceServiceTests extends IndexShardTestCase {
         final ClusterService clusterService = mock(ClusterService.class);
         when(clusterService.getSettings()).thenReturn(NodeRoles.dataNode());
         when(indicesService.clusterService()).thenReturn(clusterService);
+        InPlaceShardSplitRecoveryService splitRecoveryService = new InPlaceShardSplitRecoveryService(
+            indicesService,
+            new RecoverySettings(Settings.EMPTY, new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS))
+        );
         PeerRecoverySourceService peerRecoverySourceService = new PeerRecoverySourceService(
             mock(TransportService.class),
             indicesService,
-            new RecoverySettings(Settings.EMPTY, new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS))
+            new RecoverySettings(Settings.EMPTY, new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS)),
+            splitRecoveryService
         );
 
         StartRecoveryRequest startRecoveryRequest = new StartRecoveryRequest(

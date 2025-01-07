@@ -668,6 +668,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 request.isRetry()
             );
         }
+//        if (primary.isPrimaryMode() && primary.shardId().id() == 0) {
+//            logger.info("Indexing operation sequence " + result.getSeqNo() + " on shard 0.");
+//        }
         if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
 //            if (context.getBulkShardRequest().shardId().id() == 0) {
 //                logger.info("Executing bulk item mapping update");
@@ -873,7 +876,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             final BulkItemResponse response = item.getPrimaryResponse();
             final Engine.Result operationResult;
             boolean discardOperation = false;
-            if (replica.routingEntry().isSplitTarget() == true) {
+            if (replica.getParentShardId() != null) {
                 IndexMetadata indexMetadata = replica.indexSettings().getIndexMetadata();
                 // Discard operations belonging to a different child shard. This can happen during in-place shard
                 // split recovery where after all child shards are added to replication tracker, bulk
@@ -881,6 +884,13 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 int computedShardId = OperationRouting.generateShardId(indexMetadata, item.request().id(),
                     item.request().routing(), true);
                 discardOperation = computedShardId != replica.shardId().id();
+//                if (replica.routingEntry().isStartedChildReplica()) {
+//                    logger.info("Processing seq no." + response.getResponse().getSeqNo() + " on replica child "
+//                        + replica.shardId().id() + ", discarding " + discardOperation);
+//                } else if (replica.routingEntry().isSplitTarget()) {
+//                    logger.info("Processing seq no. on child primary" + response.getResponse().getSeqNo() + " on replica child "
+//                        + replica.shardId().id() + ", discarding " + discardOperation);
+//                }
             }
 
             if (item.getPrimaryResponse().isFailed()) {
@@ -909,7 +919,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                     operationResult = replica.markSeqNoAsNoop(
                         response.getResponse().getSeqNo(),
                         response.getResponse().getPrimaryTerm(),
-                        "op belongs to another child shard"
+                        Translog.NoOp.FILLING_GAPS
                     );
                 } else {
                     operationResult = performOpOnReplica(response.getResponse(), item.request(), replica);

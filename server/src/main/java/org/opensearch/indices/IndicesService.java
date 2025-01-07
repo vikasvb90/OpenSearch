@@ -1036,8 +1036,9 @@ public class IndicesService extends AbstractLifecycleComponent
             retentionLeaseSyncer,
             checkpointPublisher,
             remoteStoreStatsTrackerFactory,
-            null
+            shardRouting.getParentShardId()
         );
+
         indexShard.addShardFailureCallback(onShardFailure);
         indexShard.startRecovery(recoveryState, recoveryTargetService, recoveryListener, repositoriesService, mapping -> {
             assert recoveryState.getRecoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS
@@ -1072,7 +1073,6 @@ public class IndicesService extends AbstractLifecycleComponent
         IndexShard parentShard = indexService.getShard(parentShardId.id());
 
         List<InPlaceShardRecoveryContext> recoveryContexts = new ArrayList<>();
-        List<ShardId> shardIds = new ArrayList<>();
         for (ShardRouting shardRouting : shardRoutings) {
             RecoveryState recoveryState = indexService.createRecoveryState(shardRouting, node, node);
             IndexShard indexShard = indexService.createShard(
@@ -1085,7 +1085,6 @@ public class IndicesService extends AbstractLifecycleComponent
             );
             indexShard.addShardFailureCallback(onShardFailure);
             recoveryContexts.add(new InPlaceShardRecoveryContext(recoveryState, indexShard, parentShard));
-            shardIds.add(indexShard.shardId());
         }
 
         for (InPlaceShardRecoveryContext recoveryContext : recoveryContexts) {
@@ -1093,8 +1092,13 @@ public class IndicesService extends AbstractLifecycleComponent
             recoveryContext.getIndexShard().markAsRecovering("from in-place shard split", recoveryContext.getRecoveryState());
         }
 
-        threadPool.generic().execute(() -> inPlaceShardSplitRecoveryService.addAndStartRecovery(
-            recoveryContexts, node, parentShard, recoveryListener, shardIds, request));
+        threadPool.generic().execute(() -> inPlaceShardSplitRecoveryService.addAndStartRecovery(recoveryContexts, node,
+            parentShard, recoveryListener, request, indexService.getMetadata()));
+    }
+
+    public void moveChildShardsToStarted(ShardId parentShardId,
+                                         InPlaceShardSplitRecoveryService inPlaceShardSplitRecoveryService) {
+        threadPool.generic().execute(() -> inPlaceShardSplitRecoveryService.startChildShards(parentShardId));
     }
 
     @Override

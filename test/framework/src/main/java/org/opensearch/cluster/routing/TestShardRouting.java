@@ -66,7 +66,6 @@ public class TestShardRouting {
             buildAllocationId(state),
             -1,
             null,
-            null,
             null
         );
     }
@@ -88,7 +87,6 @@ public class TestShardRouting {
             buildUnassignedInfo(state),
             buildAllocationId(state),
             -1,
-            null,
             null,
             null
         );
@@ -128,7 +126,6 @@ public class TestShardRouting {
             buildUnassignedInfo(state),
             buildAllocationId(state),
             -1,
-            null,
             null,
             null
         );
@@ -172,7 +169,6 @@ public class TestShardRouting {
             allocationId,
             -1,
             null,
-            null,
             null
         );
     }
@@ -215,7 +211,6 @@ public class TestShardRouting {
             buildAllocationId(state),
             -1,
             null,
-            null,
             null
         );
     }
@@ -239,7 +234,6 @@ public class TestShardRouting {
             unassignedInfo,
             buildAllocationId(state),
             -1,
-            null,
             null,
             null
         );

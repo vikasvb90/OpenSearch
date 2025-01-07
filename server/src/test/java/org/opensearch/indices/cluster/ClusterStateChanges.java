@@ -461,6 +461,8 @@ public class ClusterStateChanges {
                     failedShard.getMessage(),
                     failedShard.getFailure(),
                     failedShard.markAsStale(),
+                    null,
+                    null,
                     null
                 )
             )
@@ -483,7 +485,7 @@ public class ClusterStateChanges {
             startedShards.entrySet()
                 .stream()
                 .map(
-                    e -> new StartedShardEntry(e.getKey().shardId(), e.getKey().allocationId().getId(), e.getValue(), "shard started", null)
+                    e -> new StartedShardEntry(e.getKey().shardId(), e.getKey().allocationId().getId(), e.getValue(), "shard started", null, null, null)
                 )
                 .collect(Collectors.toList())
         );

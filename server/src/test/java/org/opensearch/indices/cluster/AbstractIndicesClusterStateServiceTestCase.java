@@ -278,7 +278,23 @@ public abstract class AbstractIndicesClusterStateServiceTestCase extends OpenSea
         }
 
         @Override
-        public void createChildShardsForSplit(List<ShardRouting> shardRoutings, ShardId parentShardId, InPlaceShardSplitRecoveryService inPlaceShardSplitRecoveryService, InPlaceShardSplitRecoveryListener recoveryListener, Consumer<IndexShard.ShardFailure> onShardFailure, DiscoveryNode node, Consumer<ShardId> globalCheckpointSyncer, RetentionLeaseSyncer retentionLeaseSyncer, SegmentReplicationCheckpointPublisher checkpointPublisher, RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory, StartRecoveryRequest request) throws IOException {
+        public void createChildShardsForSplit(
+            List<ShardRouting> shardRoutings,
+            ShardId parentShardId,
+            InPlaceShardSplitRecoveryService inPlaceShardSplitRecoveryService,
+            InPlaceShardSplitRecoveryListener recoveryListener,
+            Consumer<IndexShard.ShardFailure> onShardFailure,
+            DiscoveryNode node,
+            Consumer<ShardId> globalCheckpointSyncer,
+            RetentionLeaseSyncer retentionLeaseSyncer,
+            SegmentReplicationCheckpointPublisher checkpointPublisher,
+            RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
+            StartRecoveryRequest request) throws IOException {
+
+        }
+
+        @Override
+        public void moveChildShardsToStarted(ShardId parentShardId, InPlaceShardSplitRecoveryService inPlaceShardSplitRecoveryService) {
 
         }
 

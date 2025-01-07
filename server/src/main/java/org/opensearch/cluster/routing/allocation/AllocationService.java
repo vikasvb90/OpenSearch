@@ -606,6 +606,7 @@ public class AllocationService {
 
         Map<ShardId, List<ShardRouting>> inPlaceChildShards = new HashMap<>();
         for (ShardRouting startedShard : startedShardEntries) {
+            logger.info("Started shard cluster state event for shard routing: " + startedShard);
             assert startedShard.initializing() : "only initializing shards can be started";
             assert routingAllocation.metadata().index(startedShard.shardId().getIndex()) != null
                 : "shard started for unknown index (shard entry: " + startedShard + ")";
@@ -625,7 +626,8 @@ public class AllocationService {
         if (inPlaceChildShards.isEmpty() == false) {
             inPlaceChildShards.values().forEach(childShards -> {
                 IndexMetadata indexMetadata = routingAllocation.metadata().getIndexSafe(childShards.get(0).index());
-                routingNodes.startInPlaceChildShards(logger, childShards, indexMetadata, routingAllocation.changes());
+                routingNodes.startInPlaceChildShards(logger, childShards, indexMetadata, routingAllocation.changes(),
+                    routingAllocation.routingTable());
             });
         }
     }

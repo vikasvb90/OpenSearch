@@ -17,18 +17,16 @@ public class InPlaceShardSplitAllocationDecider extends AllocationDecider {
 
     public static final String NAME = "in_place_shard_split";
 
-    @Override
-    public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        return canRemainDecision(shardRouting, node, allocation);
+    public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
+        if (shardRouting.isSplitTarget() || shardRouting.splitting()) {
+            return Decision.NO;
+        }
+        return Decision.ALWAYS;
     }
 
-    public static Decision canRemainDecision(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        // If shardRouting is a started parent shard and fact that it exists is sufficient to conclude
-        // that it needs to be split.
-        SplitShardsMetadata splitShardsMetadata = allocation.metadata().getIndexSafe(shardRouting.index()).getSplitShardsMetadata();
-        if (splitShardsMetadata.isSplitOfShardInProgress(shardRouting.shardId().id())
-            && shardRouting.started() && allocation.changes().isSplitOfShardFailed(shardRouting) == false) {
-            return Decision.SPLIT;
+    public Decision canMoveAway(ShardRouting shardRouting, RoutingAllocation allocation) {
+        if (shardRouting.isSplitTarget() || shardRouting.splitting()) {
+            return Decision.NO;
         }
         return Decision.ALWAYS;
     }

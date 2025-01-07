@@ -45,10 +45,11 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
         int maxConcurrentFileChunks,
         int maxConcurrentOperations,
         boolean skipSegmentFilesTransfer,
-        CancellableThreads cancellableThreads
+        CancellableThreads cancellableThreads,
+        IndexShard parentShard
     ) {
         super(shard, recoveryTarget, threadPool, request, fileChunkSizeInBytes, maxConcurrentFileChunks, maxConcurrentOperations,
-        skipSegmentFilesTransfer, cancellableThreads);
+        skipSegmentFilesTransfer, cancellableThreads, parentShard);
     }
 
     @Override
@@ -97,10 +98,11 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
         prepareEngineStep.whenComplete(prepareEngineTime -> {
             logger.debug("prepareEngineStep completed");
             assert Transports.assertNotTransportThread(this + "[phase2]");
+            IndexShard primaryTracker = replicationTrackingShard();
             RunUnderPrimaryPermit.run(
-                () -> shard.initiateTracking(request.targetAllocationId()),
-                shardId + " initiating tracking of " + request.targetAllocationId(),
-                shard,
+                () -> primaryTracker.initiateTracking(request.targetAllocationId()),
+                primaryTracker + " initiating tracking of " + request.targetAllocationId(),
+                primaryTracker,
                 cancellableThreads,
                 logger
             );
@@ -108,6 +110,8 @@ public class RemoteStorePeerRecoverySourceHandler extends RecoverySourceHandler 
             sendSnapshotStep.onResponse(Collections.singletonList(new SendSnapshotResult(endingSeqNo,
                 0, TimeValue.ZERO, request.targetAllocationId())));
         }, onFailure);
+
+        finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStep, prepareEngineStep, new StepListener<>(), onFailure);
     }
 
 

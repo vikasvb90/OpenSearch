@@ -87,13 +87,8 @@ public class SameShardAllocationDecider extends AllocationDecider {
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        Decision decision = InPlaceShardSplitAllocationDecider.canRemainDecision(shardRouting, node, allocation);
-        if (decision == Decision.SPLIT) {
-            return decision;
-        }
-
         Iterable<ShardRouting> assignedShards = allocation.routingNodes().assignedShards(shardRouting.shardId());
-        decision = decideSameNode(shardRouting, node, allocation, assignedShards);
+        Decision decision = decideSameNode(shardRouting, node, allocation, assignedShards);
         if (decision.type() == Decision.Type.NO || sameHost == false) {
             // if its already a NO decision looking at the node, or we aren't configured to look at the host, return the decision
             return decision;
