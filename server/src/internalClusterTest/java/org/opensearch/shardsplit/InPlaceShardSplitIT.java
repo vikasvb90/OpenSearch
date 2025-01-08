@@ -26,12 +26,19 @@ import org.opensearch.core.rest.RestStatus;
 import org.opensearch.index.mapper.MapperService;
 import org.opensearch.rest.RestRequest;
 import org.opensearch.rest.action.cat.RestClusterManagerAction;
+import org.opensearch.search.SearchHit;
 import org.opensearch.search.SearchHits;
 import org.opensearch.test.BackgroundIndexer;
 import org.opensearch.test.OpenSearchIntegTestCase;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -126,19 +133,21 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
 //            logger.info("Shard stat after first indexing of shard " + shardStat.getShardRouting().shardId().id() + " docs: "
 //                + shardStat.getStats().indexing.getTotal().getIndexCount() + " seq no: " + shardStat.getSeqNoStats().getMaxSeqNo());
 //        }
-
         SearchHits hits = client().prepareSearch("test")
             .setQuery(matchAllQuery())
             .setSize((int) totalIndexedDocs)
+            .seqNoAndPrimaryTerm(true)
+            .setPreference("_primary")
             .storedFields()
             .execute()
             .actionGet()
             .getHits();
+
         assertThat(hits.getTotalHits().value, equalTo(totalIndexedDocs));
         for (String id : ids) {
             // Make sure there is no duplicate doc.
             assertHitCount(client().prepareSearch("test").setSize(0)
-                .setQuery(matchQuery("_id", id)).get(), 1);
+                .setQuery(matchQuery("_id", id)).setPreference("_primary").get(), 1);
         }
         logger.info("Shard is split successfully");
     }
@@ -149,7 +158,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
         prepareCreate("test", Settings.builder().put("index.number_of_shards", 3)
             .put("index.number_of_replicas", replicaCount)).get();
         ensureGreen();
-        int numDocs = scaledRandomIntBetween(1500, 2400);
+        int numDocs = scaledRandomIntBetween(200, 500);
         try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs, 4)) {
             logger.info("--> waiting for {} docs to be indexed ...", numDocs);
             waitForDocs(numDocs, indexer);

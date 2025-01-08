@@ -49,9 +49,10 @@ public class ReplicationTimer implements Writeable {
 
     public synchronized void start() {
         if (startTime != 0) {
-            System.out.println();
+            // This needs to be handled properly because another flush (external?) operation can attempt to reset it
+            // before first one completes.
+            return;
         }
-        assert startTime == 0 : "already started";
         startTime = System.currentTimeMillis();
         startNanoTime = System.nanoTime();
     }

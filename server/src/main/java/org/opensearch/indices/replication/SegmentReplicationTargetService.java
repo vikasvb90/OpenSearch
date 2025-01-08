@@ -18,6 +18,7 @@ import org.opensearch.action.support.ChannelActionListener;
 import org.opensearch.cluster.ClusterChangedEvent;
 import org.opensearch.cluster.ClusterStateListener;
 import org.opensearch.cluster.node.DiscoveryNode;
+import org.opensearch.cluster.routing.IndexShardRoutingTable;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.Nullable;
@@ -33,6 +34,7 @@ import org.opensearch.index.IndexService;
 import org.opensearch.index.shard.IndexEventListener;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.shard.IndexShardState;
+import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.index.store.Store;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.recovery.FileChunkRequest;
@@ -172,17 +174,27 @@ public class SegmentReplicationTargetService extends AbstractLifecycleComponent 
                     for (IndexShard shard : indexService) {
                         if (shard.routingEntry().primary() == false && shard.routingEntry().isSplitTarget() == false) {
                             // for this shard look up its primary routing, if it has completed a relocation trigger replication
-                            final String previousNode = event.previousState()
-                                .routingTable()
-                                .shardRoutingTable(shard.shardId())
-                                .primaryShard()
-                                .currentNodeId();
+
                             final String currentNode = event.state()
                                 .routingTable()
                                 .shardRoutingTable(shard.shardId())
                                 .primaryShard()
                                 .currentNodeId();
-                            if (previousNode.equals(currentNode) == false) {
+
+                            String previousNode;
+                            try {
+                                previousNode = event.previousState()
+                                    .routingTable()
+                                    .shardRoutingTable(shard.shardId())
+                                    .primaryShard()
+                                    .currentNodeId();
+                            } catch (ShardNotFoundException ex) {
+                                // This will be true when a parent shard have just split into new child shards and hence,
+                                // new entries in routing table are only available in latest cluster state.
+                                previousNode = null;
+                            }
+
+                            if (previousNode == null || previousNode.equals(currentNode) == false) {
                                 processLatestReceivedCheckpoint(shard, Thread.currentThread());
                             }
                         }
@@ -383,7 +395,12 @@ public class SegmentReplicationTargetService extends AbstractLifecycleComponent 
         if (replicaShard.indexSettings().isRemoteStoreEnabled() == false) {
             return;
         }
-        ShardRouting primaryShard = clusterService.state().routingTable().shardRoutingTable(replicaShard.shardId()).primaryShard();
+        ShardRouting primaryShard;
+        if (replicaShard.routingEntry().isSplitTarget()) {
+            primaryShard = clusterService.state().getRoutingNodes().primaryChild(replicaShard.getParentShardId(), replicaShard.shardId());
+        } else {
+            primaryShard = clusterService.state().routingTable().shardRoutingTable(replicaShard.shardId()).primaryShard();
+        }
 
         final UpdateVisibleCheckpointRequest request = new UpdateVisibleCheckpointRequest(
             replicationId,

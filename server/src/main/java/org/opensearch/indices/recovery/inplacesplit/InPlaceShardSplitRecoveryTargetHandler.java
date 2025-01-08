@@ -243,7 +243,20 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
                     throw new IllegalStateException("Allocation ID " + allocationId +
                         " not found in synced checkpoint states of parent shard." + sourceShard.shardId());
                 }
-                checkpointStates.put(allocationId, primaryContext.getCheckpointStates().get(allocationId));
+                ReplicationTracker.CheckpointState checkpointState = primaryContext.getCheckpointStates().get(allocationId);
+                if (sourceShard.remoteStore() != null &&
+                    recoveryTarget.indexShard().routingEntry().allocationId().getId().equals(allocationId) == false) {
+                    // This is needed to update replicated to false on child replicas because now there won't be any
+                    // doc rep replication on them.
+                    checkpointState = new ReplicationTracker.CheckpointState(
+                        checkpointState.getLocalCheckpoint(),
+                        checkpointState.getGlobalCheckpoint(),
+                        true,
+                        true,
+                        false
+                    );
+                }
+                checkpointStates.put(allocationId, checkpointState);
             }
             ReplicationTracker.PrimaryContext childPrimaryContext = new ReplicationTracker.PrimaryContext(
                 primaryContext.clusterStateVersion(),

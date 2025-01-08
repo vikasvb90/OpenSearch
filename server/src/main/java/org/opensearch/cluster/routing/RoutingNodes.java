@@ -435,6 +435,23 @@ public class RoutingNodes implements Iterable<RoutingNode> {
     }
 
     /**
+     * Returns the primary child for the given shard id or <code>null</code> if
+     * no child is found or the parent shard is not splitting.
+     */
+    public ShardRouting primaryChild(ShardId parentShardId, ShardId childShardId) {
+        for (ShardRouting shardRouting : assignedShards(parentShardId)) {
+            if (shardRouting.splitting()) {
+                for (ShardRouting childShard : shardRouting.getRecoveringChildShards()) {
+                    if (childShard.shardId().id() == childShardId.id() && childShard.primary()) {
+                        return childShard;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * Returns one active replica shard for the given shard id or <code>null</code> if
      * no active replica is found.
      * <p>

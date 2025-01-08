@@ -654,9 +654,6 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
                 request.ifPrimaryTerm()
             );
         } else {
-//            if (context.getBulkShardRequest().shardId().id() == 0) {
-//                logger.info("Executing item index");
-//            }
             final IndexRequest request = context.getRequestToExecute();
             result = primary.applyIndexOperationOnPrimary(
                 version,
@@ -672,9 +669,6 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 //            logger.info("Indexing operation sequence " + result.getSeqNo() + " on shard 0.");
 //        }
         if (result.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
-//            if (context.getBulkShardRequest().shardId().id() == 0) {
-//                logger.info("Executing bulk item mapping update");
-//            }
             try {
                 primary.mapperService()
                     .merge(
@@ -716,17 +710,8 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             });
             return false;
         } else {
-//            if (context.getBulkShardRequest().shardId().id() == 0) {
-//                logger.info("Forming bulk item result");
-//            }
             onComplete(result, context, updateResult);
-//            if (context.getBulkShardRequest().shardId().id() == 0) {
-//                logger.info("Formed bulk item result");
-//            }
         }
-//        if (context.getBulkShardRequest().shardId().id() == 0) {
-//            logger.info("Return true bulk item request");
-//        }
         return true;
     }
 
@@ -887,11 +872,16 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 //                if (replica.routingEntry().isStartedChildReplica()) {
 //                    logger.info("Processing seq no." + response.getResponse().getSeqNo() + " on replica child "
 //                        + replica.shardId().id() + ", discarding " + discardOperation);
-//                } else if (replica.routingEntry().isSplitTarget()) {
-//                    logger.info("Processing seq no. on child primary" + response.getResponse().getSeqNo() + " on replica child "
-//                        + replica.shardId().id() + ", discarding " + discardOperation);
-//                }
+//                } else
+
             }
+//            if (replica.routingEntry().shardId().id() > 2 && replica.routingEntry().started()) {
+//                logger.info("Processing seq no. on child replica" + response.getResponse().getSeqNo() + " on replica child "
+//                    + replica.shardId().id() + ", discarding " + discardOperation);
+//            }
+//            if (replica.routingEntry().shardId().id() == 1 || replica.routingEntry().shardId().id() == 2) {
+//                logger.info("Processing seq no. on other child replica" + response.getResponse().getSeqNo() + " on replica child ");
+//            }
 
             if (item.getPrimaryResponse().isFailed()) {
                 if (response.getFailure().getSeqNo() == SequenceNumbers.UNASSIGNED_SEQ_NO) {

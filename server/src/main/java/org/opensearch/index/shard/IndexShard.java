@@ -894,7 +894,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         List<Releasable> releasablesOnHandoffFailures = new ArrayList<>(2);
         try (Releasable forceRefreshes = refreshListeners.forceRefreshes()) {
             TransportShardBulkAction.debugRequest.set(true);
-            Thread.sleep(1000);
             indexShardOperationPermits.blockOperations(30, TimeUnit.MINUTES, () -> {
                 forceRefreshes.close();
 

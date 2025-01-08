@@ -344,8 +344,11 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
         resetBackOffDelayIterator();
         // Set the minimum sequence number for keeping translog
         indexShard.getEngine().translogManager().setMinSeqNoToKeep(lastRefreshedCheckpoint + 1);
-        // Publishing the new checkpoint which is used for remote store + segrep indexes
-        checkpointPublisher.publish(indexShard, checkpoint);
+        // Publishing the new checkpoint which is used for remote store + segrep indexes. Skipping replication from child primary
+        // since it happens via parent primary on child replicas.
+        if (indexShard.routingEntry().isSplitTarget() == false) {
+            checkpointPublisher.publish(indexShard, checkpoint);
+        }
         logger.debug("onSuccessfulSegmentsSync lastRefreshedCheckpoint={} checkpoint={}", lastRefreshedCheckpoint, checkpoint);
     }
 

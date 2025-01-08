@@ -200,7 +200,6 @@ public class PublishCheckpointAction extends TransportReplicationAction<
         Objects.requireNonNull(request);
         Objects.requireNonNull(replica);
         ActionListener.completeWith(listener, () -> {
-            logger.trace(() -> new ParameterizedMessage("Checkpoint {} received on replica {}", request, replica.shardId()));
             if (request.getCheckpoint().getShardId().equals(replica.shardId())) {
                 replicationService.onNewCheckpoint(request.getCheckpoint(), replica);
             }

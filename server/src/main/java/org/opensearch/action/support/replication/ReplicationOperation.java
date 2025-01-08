@@ -204,9 +204,9 @@ public class ReplicationOperation<
                         logger.info("Updating checkpoints for id: " + id);
                     }
                     updateCheckPoints(primary.routingEntry(), primary::localCheckpoint, primary::globalCheckpoint);
-                    if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
-                        logger.info("Updated checkpoints for id: " + id);
-                    }
+//                    if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+//                        logger.info("Updated checkpoints for id: " + id);
+//                    }
                 } finally {
                     decPendingAndFinishIfNeeded();
                 }
@@ -256,9 +256,6 @@ public class ReplicationOperation<
         final ShardRouting primaryRouting = primary.routingEntry();
 
         for (final ShardRouting shardRouting : replicationGroup.getReplicationTargets()) {
-            if ((primaryRouting.isSplitTarget() || primaryRouting.isRelocationTarget()) && !shardRouting.isSameAllocation(primaryRouting)) {
-                logger.info("Performing unexpectedly on routing " + shardRouting.shardId().id());
-            }
             ReplicationProxyRequest<ReplicaRequest> proxyRequest = new Builder<ReplicaRequest>(
                 shardRouting,
                 primaryRouting,
@@ -466,9 +463,9 @@ public class ReplicationOperation<
         if (pendingActions.decrementAndGet() == 0) {
             finish();
         }
-        if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
-            logger.info("Pending action count for id " + id + " is:" + pendingActions.get() + " and list is: " + pendingActionsList);
-        }
+//        if (TransportShardBulkAction.debugRequest.get() && request.shardId().id() == 0) {
+//            logger.info("Pending action count for id " + id + " is:" + pendingActions.get() + " and list is: " + pendingActionsList);
+//        }
     }
 
     private void finish() {

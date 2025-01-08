@@ -1234,9 +1234,16 @@ public class ReplicationTracker extends AbstractIndexShardComponent implements L
     }
 
     private boolean isPrimaryRelocationOrChild(String allocationId) {
+        if (routingTable.primaryShard().splitting()) {
+            for (ShardRouting child : routingTable.primaryShard().getRecoveringChildShards()) {
+                if (child.allocationId().getId().equals(allocationId)) {
+                    return true;
+                }
+            }
+        }
         Optional<ShardRouting> shardRouting = routingTable.shards()
             .stream()
-            .filter(routing -> routing.allocationId().getId().equals(allocationId) || routing.isSplitTarget())
+            .filter(routing -> routing.allocationId().getId().equals(allocationId))
             .findAny();
         return shardRouting.isPresent() && shardRouting.get().primary();
     }
