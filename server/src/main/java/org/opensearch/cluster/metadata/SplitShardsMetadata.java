@@ -268,7 +268,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             }
 
             List<ShardRange> shardsUnderRoot = rootShardsToAllChildren[shardRangeTuple.v1()] == null ? new ArrayList<>() :
-                Arrays.asList(rootShardsToAllChildren[shardRangeTuple.v1()]);
+                new ArrayList<>(Arrays.asList(rootShardsToAllChildren[shardRangeTuple.v1()]));
             shardsUnderRoot.remove(shardRangeTuple.v2());
             shardsUnderRoot.addAll(Arrays.asList(parentToChildShards.get(sourceShardId)));
             ShardRange[] newShardsUnderRoot = shardsUnderRoot.toArray(new ShardRange[0]);
