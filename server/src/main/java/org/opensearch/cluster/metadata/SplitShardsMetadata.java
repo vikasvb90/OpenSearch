@@ -140,10 +140,10 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return emptyParents;
     }
 
-    private static void validateShardRanges(int shardId, ShardRange[] shardRanges) {
+    private static void validateShardRanges(int shardId, ShardRange[] shardRanges, long parentStart, long parentEnd) {
         Integer start = null;
         for (ShardRange shardRange : shardRanges) {
-            validateBounds(shardRange, start);
+            validateBounds(shardRange, start, parentStart);
             long rangeEnd = shardRange.getEnd();
             long rangeLength = rangeEnd - shardRange.getStart() + 1;
             if (rangeLength < MINIMUM_RANGE_LENGTH_THRESHOLD) {
@@ -159,18 +159,18 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             throw new IllegalArgumentException("No shard range defined for child shards of shard " + shardId);
         }
 
-        if (start != Integer.MAX_VALUE) {
+        if (start != parentEnd) {
             throw new IllegalArgumentException(
-                "Shard range from " + (start + 1) + " to " + Integer.MAX_VALUE
+                "Shard range from " + (start + 1) + " to " + parentEnd
                     + " is missing from the list of shard ranges");
         }
     }
 
-    private static void validateBounds(ShardRange shardRange, Integer start) {
+    private static void validateBounds(ShardRange shardRange, Integer start, long parentStart) {
         if (start == null) {
-            if (shardRange.getStart() != Integer.MIN_VALUE) {
+            if (shardRange.getStart() != parentStart) {
                 throw new IllegalArgumentException(
-                    "Shard range from " + Integer.MIN_VALUE + " to " + (shardRange.getStart() - 1)
+                    "Shard range from " + parentStart + " to " + (shardRange.getStart() - 1)
                         + " is missing from the list of shard ranges");
             }
         } else if (shardRange.getStart() != start + 1) {
@@ -253,7 +253,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
                 start = end + 1;
             }
             ShardRange[] newShardRanges = newChildShardsList.toArray(new ShardRange[0]);
-            validateShardRanges(splitShardId, newShardRanges);
+            validateShardRanges(splitShardId, newShardRanges, parentShard.getStart(), parentShard.getEnd());
 
             parentToChildShards.put(splitShardId, newShardRanges);
         }
@@ -273,7 +273,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             shardsUnderRoot.addAll(Arrays.asList(parentToChildShards.get(sourceShardId)));
             ShardRange[] newShardsUnderRoot = shardsUnderRoot.toArray(new ShardRange[0]);
             Arrays.sort(newShardsUnderRoot);
-            validateShardRanges(shardRangeTuple.v1(), newShardsUnderRoot);
+            validateShardRanges(shardRangeTuple.v1(), newShardsUnderRoot, Integer.MIN_VALUE, Integer.MAX_VALUE);
 
             maxShardId += newChildShardIds.size();
             rootShardsToAllChildren[shardRangeTuple.v1()] = newShardsUnderRoot;
