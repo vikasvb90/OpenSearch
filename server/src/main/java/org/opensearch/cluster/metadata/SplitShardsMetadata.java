@@ -335,7 +335,17 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         if (maxShardId != that.maxShardId) return false;
         if (inProgressSplitShardId != that.inProgressSplitShardId) return false;
         if (!Arrays.deepEquals(rootShardsToAllChildren, that.rootShardsToAllChildren)) return false;
-        return parentToChildShards.equals(that.parentToChildShards);
+        boolean parentToChildShardsEquals = true;
+        for (Integer key : parentToChildShards.keySet()) {
+            if (
+                !that.parentToChildShards.containsKey(key) ||
+                !Arrays.deepEquals(parentToChildShards.get(key), that.parentToChildShards.get(key))
+            ) {
+                parentToChildShardsEquals = false;
+                break;
+            }
+        }
+        return parentToChildShardsEquals;
     }
 
     @Override
