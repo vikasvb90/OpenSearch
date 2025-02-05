@@ -125,8 +125,8 @@ public abstract class RecoverySource implements Writeable, ToXContentObject {
         PEER,
         SNAPSHOT,
         LOCAL_SHARDS,
-        IN_PLACE_SHARD_SPLIT,
-        REMOTE_STORE
+        REMOTE_STORE,
+        IN_PLACE_SHARD_SPLIT
     }
 
     public abstract Type getType();
