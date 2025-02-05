@@ -1754,7 +1754,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 throw new IllegalArgumentException("must specify number of shards for index [" + index + "]");
             }
             if (splitShardsMetadata == null) {
-                this.splitShardsMetadata = new SplitShardsMetadata.Builder(numberOfShards()).build();
+                int numberOfShards = INDEX_NUMBER_OF_SHARDS_SETTING.get(settings);
+                this.splitShardsMetadata = new SplitShardsMetadata.Builder(numberOfShards).build();
             }
             final int numberOfShards = splitShardsMetadata.getNumberOfShards();
 
