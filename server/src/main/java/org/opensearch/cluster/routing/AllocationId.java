@@ -134,8 +134,6 @@ public class AllocationId implements ToXContentObject, Writeable {
         if (out.getVersion().onOrAfter(Version.V_3_0_0)) {
             out.writeOptionalStringCollection(splitChildAllocationIds);
             out.writeOptionalString(parentAllocationId);
-        } else {
-            throw new IllegalStateException("In-place split not allowed on older versions.");
         }
     }
 
