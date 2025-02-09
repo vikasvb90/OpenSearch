@@ -271,9 +271,8 @@ public class TestShardRouting {
                 }
             case STARTED:
             case RELOCATING:
-                return null;
             case SPLITTING:
-                return RecoverySource.InPlaceShardSplitRecoverySource.INSTANCE;
+                return null;
             default:
                 throw new IllegalStateException("illegal state");
         }
