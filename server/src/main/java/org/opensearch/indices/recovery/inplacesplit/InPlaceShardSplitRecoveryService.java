@@ -119,17 +119,24 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
         }
 
         Set<String> childShardAllocationIds = new HashSet<>();
-        recoveryContexts.forEach(context -> childShardAllocationIds.add(context.getIndexShard()
-            .routingEntry().allocationId().getId()));
-
         List<ReplicationTimer> timers = new ArrayList<>();
+        StringBuilder logPrefixBuilder = new StringBuilder();
+        logPrefixBuilder.append("splitting to [");
+        recoveryContexts.forEach(context -> {
+            childShardAllocationIds.add(context.getIndexShard().routingEntry().allocationId().getId());
+            timers.add(context.getRecoveryState().getTimer());
+            logPrefixBuilder.append(context.getIndexShard().shardId());
+        });
+        logPrefixBuilder.append("] ");
+        String logPrefix = logPrefixBuilder.toString();
+
         recoveryContexts.forEach(context -> timers.add(context.getRecoveryState().getTimer()));
         ActionListener<RecoveryResponse> recoveryResponseListener = new InPlaceShardSplitResponseHandler(
             replicationListener, request, timers, ongoingRecoveries, sourceShard);
 
         InPlaceShardSplitRecoverySourceHandler handler = ongoingRecoveries.addNewRecovery(sourceShard, node,
-            recoveryContexts, request, childShardAllocationIds, replicationListener, indexMetadata);
-        logger.trace(
+            recoveryContexts, request, childShardAllocationIds, replicationListener, indexMetadata, logPrefix);
+        logger.trace(logPrefix +
             "[{}] starting in-place recovery from [{}]",
             sourceShard.shardId().getIndex().getName(),
             sourceShard.shardId().id()
@@ -168,13 +175,16 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             private final InPlaceShardSplitRecoverySourceHandler sourceHandler;
             private final InPlaceShardSplitRecoveryListener replicationListener;
             private final List<ActionListener<Void>> replicaRecoveryListeners = new ArrayList<>();
+            private final String logPrefix;
 
             public Recovery(InPlaceShardSplitRecoveryTargetHandler targetHandler,
                             InPlaceShardSplitRecoverySourceHandler sourceHandler,
-                            InPlaceShardSplitRecoveryListener replicationListener) {
+                            InPlaceShardSplitRecoveryListener replicationListener,
+                            String logPrefix) {
                 this.targetHandler = targetHandler;
                 this.sourceHandler = sourceHandler;
                 this.replicationListener = replicationListener;
+                this.logPrefix = logPrefix;
             }
 
             private synchronized void notifyAllWaitingReplicaRecoveries() {
@@ -195,7 +205,8 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
         InPlaceShardSplitRecoverySourceHandler addNewRecovery(
             IndexShard sourceShard, DiscoveryNode node, List<InPlaceShardRecoveryContext> recoveryContexts,
             StartRecoveryRequest request, Set<String> childShardsAllocationIds,
-            InPlaceShardSplitRecoveryListener replicationListener, IndexMetadata indexMetadata
+            InPlaceShardSplitRecoveryListener replicationListener, IndexMetadata indexMetadata,
+            String logPrefix
         ) {
            synchronized (this) {
                assert lifecycle.started();
@@ -214,9 +225,9 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
                    targetHandler, request, cancellableThreads, recoveryContexts,
                    childShardsAllocationIds, replicationListener, indexMetadata);
 
-               recoveries.put(sourceShard.shardId(), new Recovery(targetHandler, sourceHandler, replicationListener));
+               recoveries.put(sourceShard.shardId(), new Recovery(targetHandler, sourceHandler, replicationListener, logPrefix));
                sourceShard.recoveryStats().incCurrentAsSource();
-               logger.info("Adding child primary recovery on node " + indicesService.clusterService().localNode().getName());
+               logger.info(logPrefix + "Adding child primary recovery on node " + indicesService.clusterService().localNode().getName());
                return sourceHandler;
            }
         }
@@ -247,7 +258,7 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
                 }
 
                 if (recovery.sourceHandler.isRecoveryStateInSync()) {
-                    logger.info("Parent in sync on node " + indicesService.clusterService().localNode().getName());
+                    logger.info(recovery.logPrefix + "Parent in sync on node " + indicesService.clusterService().localNode().getName());
                     listener.onResponse(null);
                     return;
                 }

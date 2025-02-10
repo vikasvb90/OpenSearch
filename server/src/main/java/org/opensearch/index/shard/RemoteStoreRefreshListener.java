@@ -298,6 +298,9 @@ public final class RemoteStoreRefreshListener extends ReleasableRetryableRefresh
                                 logger.debug("New segments upload successful");
                                 // Start metadata file upload
                                 uploadMetadata(localSegmentsPostRefresh, segmentInfos, checkpoint);
+                                if (indexShard.routingEntry().isSplitTarget()) {
+                                    logger.info("Uploading metadata of child shard " + indexShard.shardId());
+                                }
                                 logger.debug("Metadata upload successful");
                                 clearStaleFilesFromLocalSegmentChecksumMap(localSegmentsPostRefresh);
                                 onSuccessfulSegmentsSync(
