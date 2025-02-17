@@ -372,9 +372,9 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         builder.endObject();
 
         builder.startObject(KEY_TEMP_SHARD_ID_TO_CHILD_SHARDS);
-        for (Integer parentShardId : parentToChildShards.keySet()) {
-            builder.startArray(String.valueOf(parentShardId));
-            for (ShardRange childShard : parentToChildShards.get(parentShardId)) {
+        for (Map.Entry<Integer, ShardRange[]> entry : parentToChildShards.entrySet()) {
+            builder.startArray(String.valueOf(entry.getKey()));
+            for (ShardRange childShard : entry.getValue()) {
                 childShard.toXContent(builder, params);
             }
             builder.endArray();
