@@ -1496,7 +1496,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
          * @see #numberOfShards()
          */
         public int getRoutingNumShards() {
-            return routingNumShards == null ? numberOfShards() : routingNumShards;
+            return routingNumShards == null ? numberOfRootShards() : routingNumShards;
         }
 
         /**
@@ -1506,6 +1506,17 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
          */
         public int numberOfShards() {
             return settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1);
+        }
+
+        /**
+        * Returns the number of root shards. This value will differ from the value returned by 
+        * numberOfShards() if splits have occrred on any shards of the index
+        *
+        * @return number of root shards
+        *
+        **/ 
+        public int numberOfRootShards() {
+            return splitShardsMetadata == null ? numberOfShards() : splitShardsMetadata.getNumberOfRootShards();
         }
 
         public Builder updateMetadataForNewChildShards(Map<Integer, String> newChildAllocationIds, int sourceShardId) {
