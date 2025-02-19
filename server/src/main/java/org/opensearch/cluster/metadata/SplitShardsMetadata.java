@@ -347,7 +347,9 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
     @Override
     public int hashCode() {
         int result = Arrays.deepHashCode(rootShardsToAllChildren);
-        result = 31 * result + parentToChildShards.hashCode();
+        for (Map.Entry<Integer, ShardRange[]> entry : parentToChildShards.entrySet()) {
+            result = 31 * result + Objects.hash(entry.getKey(), Arrays.deepHashCode(entry.getValue()));
+        }
         result = 31 * result + maxShardId;
         result = 31 * result + inProgressSplitShardId;
         return result;
