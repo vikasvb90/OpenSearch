@@ -32,17 +32,19 @@
 
 package org.opensearch.cluster.routing;
 
+import org.junit.Test;
+import org.opensearch.cluster.metadata.ShardRange;
 import org.opensearch.common.io.stream.BytesStreamOutput;
 import org.opensearch.core.common.io.stream.BufferedChecksumStreamOutput;
 import org.opensearch.core.index.Index;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.test.OpenSearchTestCase;
+import org.opensearch.cluster.routing.AllocationId;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
+
+import static org.mockito.Mockito.*;
 
 public class IndexShardRoutingTableTests extends OpenSearchTestCase {
     public void testEqualsAttributesKey() {
@@ -142,4 +144,115 @@ public class IndexShardRoutingTableTests extends OpenSearchTestCase {
             table.shardsMatchingPredicate(shardRouting -> !shardRouting.primary() && shardRouting.relocating())
         );
     }
+    /**
+     *
+     * Testing various shard states and conditions
+     */
+    public void test_IndexShardRoutingTable_withVariousShardStates() {
+        ShardId shardId = new ShardId(new Index("test", "uuid"), 0);
+        ShardId shardId2 = new ShardId(new Index("test", "uuid"), 1);
+
+        // Create shards with different states and conditions
+        ShardRouting primaryShard = TestShardRouting.newShardRouting(shardId, "node1", true, ShardRoutingState.INITIALIZING);
+        ShardRouting relocatingShard = TestShardRouting.newShardRouting(shardId2, "node2", "node3", false, ShardRoutingState.RELOCATING);
+
+        // Arrange
+        ShardId parentShardId = new ShardId("test_index", "_na_", 2);
+        ShardRouting parentShard = TestShardRouting.newShardRouting(parentShardId, "node1", false, ShardRoutingState.SPLITTING);
+
+        // Create child shards
+        ShardId childShardId1 = new ShardId("test_index", "_na_", 3);
+        ShardId childShardId2 = new ShardId("test_index", "_na_", 4);
+        ShardRouting childShard1 = TestShardRouting.newShardRouting(childShardId1, "node1", false, ShardRoutingState.INITIALIZING);
+        ShardRouting childShard2 = TestShardRouting.newShardRouting(childShardId2, "node1", false, ShardRoutingState.INITIALIZING);
+
+        // Create a splitting shard
+        ShardRouting splittingShard = new ShardRouting(
+            parentShardId,
+            parentShard.currentNodeId(),
+            null,
+            parentShard.primary(),
+            parentShard.isSearchOnly(),
+            ShardRoutingState.SPLITTING,
+            parentShard.recoverySource(),
+            parentShard.unassignedInfo(),
+            parentShard.allocationId(),
+            1000L,
+            new ShardRouting[]{childShard1, childShard2},
+            null
+        );
+
+        List<ShardRouting> shards = Arrays.asList(primaryShard, relocatingShard, splittingShard);
+
+        // Create IndexShardRoutingTable
+        IndexShardRoutingTable table = new IndexShardRoutingTable(shardId, shards);
+
+        // Verify the state of the created table
+        assertEquals(shardId, table.shardId());
+        assertEquals(3, table.size());
+        assertEquals(primaryShard, table.primaryShard());
+        assertTrue(table.primaryShard().primary());
+        assertFalse(table.primaryShard().active());
+        assertTrue(table.primaryShard().initializing());
+
+        List<ShardRouting> allInitializingShards = table.getAllInitializingShards();
+        assertEquals(4, allInitializingShards.size());
+        assertTrue(allInitializingShards.contains(primaryShard));
+        assertTrue(allInitializingShards.contains(relocatingShard.getTargetRelocatingShard()));
+
+        List<ShardRouting> assignedShards = table.assignedShards();
+        assertEquals(6, assignedShards.size());
+        assertTrue(assignedShards.containsAll(shards));
+
+        assertFalse(table.allShardsStarted());
+    }
+
+    /**
+     * Test case for a primary shard that is active, initializing, search-only, relocating, and assigned to a node,
+     * but not splitting and not in STARTED state.
+     */
+    public void test_IndexShardRoutingTable_9() {
+        ShardId shardId = new ShardId(new Index("test", "_na_"), 0);
+
+        // Create a primary shard that meets all the specified conditions
+        ShardRouting primaryShard = TestShardRouting.newShardRouting(shardId, "sourceNode", "targetNode", true, ShardRoutingState.RELOCATING);
+
+        List<ShardRouting> shards = Collections.singletonList(primaryShard);
+
+        IndexShardRoutingTable table = new IndexShardRoutingTable(shardId, shards);
+
+        // Verify the properties of the created IndexShardRoutingTable
+        assertEquals(shardId, table.shardId());
+        assertEquals(1, table.size());
+        assertEquals(primaryShard, table.primaryShard());
+
+        // Verify shard properties
+        assertTrue(table.primaryShard().primary());
+        assertTrue(table.primaryShard().active());
+        assertFalse(table.primaryShard().initializing()); // Relocating shards are not considered initializing
+        assertFalse(table.primaryShard().isSearchOnly());
+        assertTrue(table.primaryShard().relocating());
+        assertTrue(table.primaryShard().assignedToNode());
+        assertFalse(table.primaryShard().splitting());
+        assertNotEquals(ShardRoutingState.STARTED, table.primaryShard().state());
+
+        // Verify other table properties
+        assertEquals(1, table.activeShards().size());
+        assertEquals(2, table.assignedShards().size());
+        assertEquals(1, table.getAllInitializingShards().size());
+        assertFalse(table.allShardsStarted());
+
+        // Verify allocation IDs
+        assertTrue(table.getAllAllocationIds().contains(primaryShard.allocationId().getId()));
+        assertEquals(2, table.getAllAllocationIds().size()); // Source and target allocation IDs
+
+        // Verify relocating shard properties
+        ShardRouting targetShard = table.getByAllocationId(primaryShard.getTargetRelocatingShard().allocationId().getId());
+        assertNotNull(targetShard);
+        assertEquals(ShardRoutingState.INITIALIZING, targetShard.state());
+        assertEquals(primaryShard.getTargetRelocatingShard().allocationId(), targetShard.allocationId());
+        assertEquals("targetNode", targetShard.currentNodeId());
+    }
 }
+
+
