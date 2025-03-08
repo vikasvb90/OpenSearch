@@ -114,7 +114,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     @Override
     public void shardFailed(ShardRouting failedShard, UnassignedInfo unassignedInfo) {
-        if (failedShard.primary() && (failedShard.active() || failedShard.getParentShardId() != null)) {
+        if (failedShard.primary() && failedShard.active()) {
             Updates updates = changes(failedShard.shardId());
             if (updates.firstFailedPrimary == null) {
                 // more than one primary can be failed (because of batching, primary can be failed, replica promoted and then failed...)
@@ -163,15 +163,6 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
         Updates childUpdates = changes(childReplica.shardId());
         childUpdates.addedAllocationIds.add(childReplica.allocationId().getId());
         childUpdates.isNewReplicaChild = true;
-    }
-
-    @Override
-    public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
-        assert childShard.allocationId().getParentAllocationId().equals(parentShard.allocationId().getId());
-        assert childShard.allocationId().equals(childShard.allocationId());
-        Updates updates = changes(parentShard.shardId());
-        updates.removedAllocationIds.add(childShard.allocationId().getId());
-        updates.splitFailed = true;
     }
 
     @Override
