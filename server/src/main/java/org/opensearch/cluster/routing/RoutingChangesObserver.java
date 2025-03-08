@@ -60,11 +60,6 @@ public interface RoutingChangesObserver {
     void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childShard);
 
     /**
-     * Called when a child shard fails.
-     */
-    void childShardFailed(ShardRouting parentShard, ShardRouting childShard);
-
-    /**
      * Called when relocation of a started shard is initiated.
      */
     void relocationStarted(ShardRouting startedShard, ShardRouting targetRelocatingShard);
@@ -139,11 +134,6 @@ public interface RoutingChangesObserver {
 
         @Override
         public void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childReplica) {
-
-        }
-
-        @Override
-        public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
 
         }
 
@@ -287,13 +277,6 @@ public interface RoutingChangesObserver {
         public void childReplicaStarted(ShardRouting initializingShard, ShardRouting parentShard, ShardRouting childReplica) {
             for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
                 routingChangesObserver.childReplicaStarted(initializingShard, parentShard, childReplica);
-            }
-        }
-
-        @Override
-        public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
-            for (RoutingChangesObserver routingChangesObserver : routingChangesObservers) {
-                routingChangesObserver.childShardFailed(parentShard, childShard);
             }
         }
 

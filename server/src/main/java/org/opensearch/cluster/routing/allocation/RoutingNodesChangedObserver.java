@@ -90,14 +90,6 @@ public class RoutingNodesChangedObserver implements RoutingChangesObserver {
     }
 
     @Override
-    public void childShardFailed(ShardRouting parentShard, ShardRouting childShard) {
-        assert childShard.getParentShardId() != null : "expected a child shard " + childShard;
-        assert childShard.getParentShardId().equals(parentShard.shardId());
-        assert childShard.allocationId().getParentAllocationId().equals(parentShard.allocationId().getId());
-        setChanged();
-    }
-
-    @Override
     public void unassignedInfoUpdated(ShardRouting unassignedShard, UnassignedInfo newUnassignedInfo) {
         assert unassignedShard.unassigned() : "expected unassigned shard " + unassignedShard;
         setChanged();
