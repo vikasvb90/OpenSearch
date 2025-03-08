@@ -114,7 +114,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
 
     @Override
     public void shardFailed(ShardRouting failedShard, UnassignedInfo unassignedInfo) {
-        if (failedShard.active() && failedShard.primary() && failedShard.getParentShardId() != null) {
+        if (failedShard.primary() && (failedShard.active() || failedShard.getParentShardId() != null)) {
             Updates updates = changes(failedShard.shardId());
             if (updates.firstFailedPrimary == null) {
                 // more than one primary can be failed (because of batching, primary can be failed, replica promoted and then failed...)
