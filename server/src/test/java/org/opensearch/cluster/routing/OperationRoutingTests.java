@@ -36,6 +36,7 @@ import org.opensearch.action.support.replication.ClusterStateCreationUtils;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.metadata.SplitShardsMetadata;
 import org.opensearch.cluster.metadata.WeightedRoutingMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.node.DiscoveryNodeRole;
@@ -66,6 +67,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
+
 
 import static java.util.Collections.singletonMap;
 import static org.opensearch.cluster.metadata.IndexMetadata.SETTING_CREATION_DATE;
@@ -511,6 +514,54 @@ public class OperationRoutingTests extends OpenSearchTestCase {
         int routingHash = Murmur3HashFunction.hash(sessionId);
         routingHash = 31 * routingHash + indexShard.shardId.hashCode();
         return indexShard.activeInitializingShardsIt(routingHash);
+    }
+
+    // Test Case to simulate shard split and test operation routing for child shards
+    public void testGenerateSearchShardIdSplit() {
+        final int SEARCH_NUMBER_OF_SHARDS = 8;
+        final int SPLIT_FACTOR = 2;
+        int toSplitShardId = 5;
+
+        IndexMetadata metadata = IndexMetadata.builder("test")
+            .settings(Settings.builder()
+                .put("index.version.created", Version.CURRENT)
+                .build())
+            .numberOfShards(SEARCH_NUMBER_OF_SHARDS)
+            .numberOfReplicas(1)
+            .build();
+
+        Map<String, Integer> docToParentShard = new HashMap<>();
+        for (int i = 0; i < 10000; i++) {
+            String docId = "DOC_" + i + "_" + UUID.randomUUID();
+            int resolvedShardId = OperationRouting.generateShardId(metadata, docId, null);
+            docToParentShard.put(docId, resolvedShardId);
+        }
+
+        SplitShardsMetadata.Builder splitMetadataBuilder =
+            new SplitShardsMetadata.Builder(metadata.getSplitShardsMetadata());
+        splitMetadataBuilder.splitShard(toSplitShardId, SPLIT_FACTOR);
+        SplitShardsMetadata newSplitMetadata = splitMetadataBuilder.build();
+
+        IndexMetadata updatedIndexMetadata = new IndexMetadata.Builder(metadata)
+            .splitShardsMetadata(newSplitMetadata)
+            .build();
+
+        for (Map.Entry<String, Integer> entry : docToParentShard.entrySet()) {
+            String docId = entry.getKey();
+            int parentShard = entry.getValue();
+
+            int newResolvedShardIdWithoutInProgress =
+                OperationRouting.generateShardId(updatedIndexMetadata, docId, null);
+            assertEquals("Routing without in-progress flag should match the original shard mapping.",
+                parentShard, newResolvedShardIdWithoutInProgress);
+
+            if (parentShard == toSplitShardId) {
+                int newResolvedShardIdWithInProgress =
+                    OperationRouting.generateShardId(updatedIndexMetadata, docId, null, true);
+                assertNotEquals("Routing with in-progress flag should differ for the split shard.",
+                    parentShard, newResolvedShardIdWithInProgress);
+            }
+        }
     }
 
     public void testThatOnlyNodesSupportNodeIds() throws InterruptedException, IOException {
