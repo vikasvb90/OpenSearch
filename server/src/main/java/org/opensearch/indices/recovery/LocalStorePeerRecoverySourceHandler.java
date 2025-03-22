@@ -191,11 +191,11 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
                 logger
             );
 
-            final long endingSeqNo = shard.seqNoStats().getMaxSeqNo();
+            final long endingSeqNo = primaryTracker.seqNoStats().getMaxSeqNo();
             if (logger.isTraceEnabled()) {
                 logger.trace("snapshot translog for recovery; current size is [{}]", countNumberOfHistoryOperations(startingSeqNo));
             }
-            final Translog.Snapshot phase2Snapshot = shard.newChangesSnapshot(
+            final Translog.Snapshot phase2Snapshot = primaryTracker.newChangesSnapshot(
                 PEER_RECOVERY_NAME,
                 startingSeqNo,
                 Long.MAX_VALUE,
@@ -207,10 +207,10 @@ public class LocalStorePeerRecoverySourceHandler extends RecoverySourceHandler {
 
             // we have to capture the max_seen_auto_id_timestamp and the max_seq_no_of_updates to make sure that these values
             // are at least as high as the corresponding values on the primary when any of these operations were executed on it.
-            final long maxSeenAutoIdTimestamp = shard.getMaxSeenAutoIdTimestamp();
-            final long maxSeqNoOfUpdatesOrDeletes = shard.getMaxSeqNoOfUpdatesOrDeletes();
-            final RetentionLeases retentionLeases = shard.getRetentionLeases();
-            final long mappingVersionOnPrimary = shard.indexSettings().getIndexMetadata().getMappingVersion();
+            final long maxSeenAutoIdTimestamp = primaryTracker.getMaxSeenAutoIdTimestamp();
+            final long maxSeqNoOfUpdatesOrDeletes = primaryTracker.getMaxSeqNoOfUpdatesOrDeletes();
+            final RetentionLeases retentionLeases = primaryTracker.getRetentionLeases();
+            final long mappingVersionOnPrimary = primaryTracker.indexSettings().getIndexMetadata().getMappingVersion();
             phase2(
                 startingSeqNo,
                 endingSeqNo,

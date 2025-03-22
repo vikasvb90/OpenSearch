@@ -563,8 +563,7 @@ public class ShardStateAction {
                     }
                 }
             }
-            assert tasksToBeApplied.size() == failedShardsToBeApplied.size() + staleShardsToBeApplied.size()
-                - (numberOfFailedChildShards > 0 ? numberOfFailedChildShards - 1 : 0);
+            assert tasksToBeApplied.size() == failedShardsToBeApplied.size() + staleShardsToBeApplied.size();
 
             ClusterState maybeUpdatedState = currentState;
             try {

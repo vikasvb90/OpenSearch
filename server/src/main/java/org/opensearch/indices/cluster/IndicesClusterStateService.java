@@ -703,7 +703,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                 nodes.getLocalNode(),
                 nodes.getLocalNode(),
                 Store.MetadataSnapshot.EMPTY,
-                false,
+                true,
                 -1,
                 SequenceNumbers.UNASSIGNED_SEQ_NO
             );

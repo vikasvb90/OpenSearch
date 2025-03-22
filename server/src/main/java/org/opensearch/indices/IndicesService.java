@@ -1121,8 +1121,7 @@ public class IndicesService extends AbstractLifecycleComponent
             remoteStoreStatsTrackerFactory,
             targetNode,
             sourceNode,
-            discoveryNodes,
-            shardRouting.getParentShardId()
+            discoveryNodes
         );
         indexShard.addShardFailureCallback(onShardFailure);
         indexShard.startRecovery(recoveryState, recoveryTargetService, recoveryListener, repositoriesService, mapping -> {
@@ -1169,8 +1168,7 @@ public class IndicesService extends AbstractLifecycleComponent
                 remoteStoreStatsTrackerFactory,
                 node,
                 node,
-                discoveryNodes,
-                parentShardId
+                discoveryNodes
             );
             indexShard.addShardFailureCallback(onShardFailure);
             recoveryContexts.add(new InPlaceShardRecoveryContext(recoveryState, indexShard, parentShard));
@@ -1187,7 +1185,9 @@ public class IndicesService extends AbstractLifecycleComponent
 
     public void moveChildShardsToStarted(ShardId parentShardId,
                                          InPlaceShardSplitRecoveryService inPlaceShardSplitRecoveryService) {
-        threadPool.generic().execute(() -> inPlaceShardSplitRecoveryService.startChildShards(parentShardId));
+        if (inPlaceShardSplitRecoveryService.isHandOffPending(parentShardId) == true) {
+            threadPool.generic().execute(() -> inPlaceShardSplitRecoveryService.startChildShards(parentShardId));
+        }
     }
 
     @Override

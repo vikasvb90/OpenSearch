@@ -364,7 +364,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
      */
     private final ShardMigrationState shardMigrationState;
     private DiscoveryNodes discoveryNodes;
-    private final ShardId parentShardId;
 
     public IndexShard(
         final ShardRouting shardRouting,
@@ -395,8 +394,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         final RecoverySettings recoverySettings,
         final RemoteStoreSettings remoteStoreSettings,
         boolean seedRemote,
-        final DiscoveryNodes discoveryNodes,
-        final ShardId parentShardId
+        final DiscoveryNodes discoveryNodes
     ) throws IOException {
         super(shardRouting.shardId(), indexSettings);
         assert shardRouting.initializing();
@@ -503,7 +501,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         this.fileDownloader = new RemoteStoreFileDownloader(shardRouting.shardId(), threadPool, recoverySettings);
         this.shardMigrationState = getShardMigrationState(indexSettings, seedRemote);
         this.discoveryNodes = discoveryNodes;
-        this.parentShardId = parentShardId;
     }
 
     public ThreadPool getThreadPool() {
@@ -641,7 +638,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
 
     @Override
     public ShardId getParentShardId() {
-        return parentShardId;
+        return routingEntry().getParentShardId();
     }
 
     public RemoteStoreFileDownloader getFileDownloader() {

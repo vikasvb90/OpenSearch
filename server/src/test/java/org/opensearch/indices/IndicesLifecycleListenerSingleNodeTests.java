@@ -165,8 +165,7 @@ public class IndicesLifecycleListenerSingleNodeTests extends OpenSearchSingleNod
                 null,
                 localNode,
                 null,
-                DiscoveryNodes.builder().add(localNode).build(),
-                null
+                DiscoveryNodes.builder().add(localNode).build()
             );
             IndexShardTestCase.updateRoutingEntry(shard, newRouting);
             assertEquals(5, counter.get());

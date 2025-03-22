@@ -176,7 +176,7 @@ public class PeerRecoverySourceService extends AbstractLifecycleComponent implem
                     initiateRecovery(request, shard, listener);
                 });
             logger.info("Adding child replica recovery for node " + request.targetNode().getName() + " on parent shard node " + indicesService.clusterService().localNode().getName());
-            splitRecoveryService.addReplicaRecoveryAfterChildPrimariesSync(routingEntry.getParentShardId(), initiateRecoveryListener);
+            splitRecoveryService.addReplicaRecovery(routingEntry.getParentShardId(), initiateRecoveryListener);
             return;
         }
 
