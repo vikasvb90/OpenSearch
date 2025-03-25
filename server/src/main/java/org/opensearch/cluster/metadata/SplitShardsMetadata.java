@@ -21,8 +21,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 
 public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> implements ToXContentFragment {
@@ -138,6 +140,28 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             emptyParents -= 1;
         }
         return emptyParents;
+    }
+
+    public Iterator<Integer> getActiveShardIterator() {
+        return new Iterator<>() {
+            private int currentIndex = 0;
+
+            @Override
+            public boolean hasNext() {
+               while(currentIndex<=maxShardId && isEmptyParentShard(currentIndex)){
+                   currentIndex++;
+               }
+               return currentIndex<=maxShardId;
+            }
+
+            @Override
+            public Integer next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                return currentIndex++;
+            }
+        };
     }
 
     private static void validateShardRanges(int shardId, ShardRange[] shardRanges, long parentStart, long parentEnd) {

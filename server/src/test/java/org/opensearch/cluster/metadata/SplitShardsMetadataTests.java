@@ -8,6 +8,7 @@ import java.util.*;
 import org.mockito.Mockito;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.core.common.io.stream.StreamInput;
+import org.opensearch.core.common.util.CollectionUtils;
 import org.opensearch.test.OpenSearchTestCase;
 
 import static org.junit.Assert.*;
@@ -23,6 +24,100 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         // Test: When there are no children, should return the root shard id
         int result = builder.build().getShardIdOfHash(0, 100, false);
         assertEquals(0, result);
+    }
+
+
+    @Test
+    public void testGetActiveShardIterator_emptyIterator() {
+        // Arrange
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(0); // maxShardId = -1
+        SplitShardsMetadata metadata = builder.build();
+
+        // Act & Assert
+        Iterator<Integer> iterator = metadata.getActiveShardIterator();
+        assertFalse(iterator.hasNext());
+    }
+
+    /**
+     * Tests get active shard iterator for split in progress
+     */
+    @Test
+    public void test_getActiveShardIterator_splitInProgress() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3); // Start with 1 root shard
+        // First split - create existing child shards
+        builder.splitShard(0, 3);
+
+        Set<Integer> expectedActiveShards = Set.of(0, 1, 2);
+        Set<Integer> actualActiveShards = new HashSet<>();
+        SplitShardsMetadata metadata = builder.build();
+        for (Iterator<Integer> it = metadata.getActiveShardIterator(); it.hasNext(); ) {
+            actualActiveShards.add(it.next());
+        }
+
+        //Split in progress, should return all 3 shards
+        assertEquals(actualActiveShards, expectedActiveShards);
+
+    }
+
+    /**
+     * Tests get active shard iterator for split completed
+     */
+    @Test
+    public void test_getActiveShardIterator_splitCompleted() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3); // Start with 1 root shard
+        // First split - create existing child shards
+        builder.splitShard(0, 3);
+
+        //split completed for shard 0
+        builder.updateSplitMetadataForChildShards(0, Set.of(3, 4, 5));
+
+        Set<Integer> expectedActiveShardsForConsecutiveShardSplit = Set.of(1,2,3,4,5);
+        Set<Integer> actualActiveShardsForConsecutiveShardSplit = new HashSet<>();
+        SplitShardsMetadata splitCompletedShardSplitMetadata = builder.build();
+        for (Iterator<Integer> it = splitCompletedShardSplitMetadata.getActiveShardIterator(); it.hasNext();) {
+            actualActiveShardsForConsecutiveShardSplit.add(it.next());
+        }
+        //Split in progress, should return all 4 shards
+        assertEquals(expectedActiveShardsForConsecutiveShardSplit, actualActiveShardsForConsecutiveShardSplit);
+    }
+
+    /**
+     * Tests get active shard iterator for consecutive split
+     */
+    @Test
+    public void test_getActiveShardIterator_consecutiveSplits() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3); // Start with 1 root shard
+        // First split - create existing child shards
+        builder.splitShard(0, 3);
+
+        Set<Integer> expectedActiveShards = Set.of(0,1,2);
+        Set<Integer> actualActiveShards = new HashSet<>();
+        SplitShardsMetadata metadata = builder.build();
+        for (Iterator<Integer> it = metadata.getActiveShardIterator(); it.hasNext(); ) {
+            actualActiveShards.add(it.next());
+        }
+
+        //Split in progress, should return all 3 shards
+        assertEquals(actualActiveShards, expectedActiveShards);
+
+        //split completed for shard 0
+        builder.updateSplitMetadataForChildShards(0, Set.of(3, 4, 5));
+
+        //split in progress for shard 1
+        builder.splitShard(1, 2);
+
+        //split completed for shard 1
+        builder.updateSplitMetadataForChildShards(1, Set.of(6,7));
+
+        Set<Integer> expectedActiveShardsForConsecutiveShardSplit = Set.of(2,3,4,5,6,7);
+        Set<Integer> actualActiveShardsForConsecutiveShardSplit = new HashSet<>();
+        SplitShardsMetadata consecutiveShardSplitMetadata = builder.build();
+        for (Iterator<Integer> it = consecutiveShardSplitMetadata.getActiveShardIterator(); it.hasNext();) {
+            actualActiveShardsForConsecutiveShardSplit.add(it.next());
+        }
+
+        //Should return only active child shards
+        assertEquals(actualActiveShardsForConsecutiveShardSplit, expectedActiveShardsForConsecutiveShardSplit);
     }
 
     /**
