@@ -60,6 +60,7 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         false,
         ShardRoutingState.RELOCATING
     );
+    private ShardRouting splittingShard0 = TestShardRouting.newShardRouting("test", 3, "node-1", false, ShardRoutingState.SPLITTING);
     private RoutingNode routingNode;
 
     @Override
@@ -68,29 +69,32 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         InetAddress inetAddress = InetAddress.getByAddress("name1", new byte[] { (byte) 192, (byte) 168, (byte) 0, (byte) 1 });
         TransportAddress transportAddress = new TransportAddress(inetAddress, randomIntBetween(0, 65535));
         DiscoveryNode discoveryNode = new DiscoveryNode("name1", "node-1", transportAddress, emptyMap(), emptySet(), Version.CURRENT);
-        routingNode = new RoutingNode("node1", discoveryNode, unassignedShard0, initializingShard0, relocatingShard0);
+        routingNode = new RoutingNode("node1", discoveryNode, unassignedShard0, initializingShard0, relocatingShard0, splittingShard0);
     }
 
     public void testAdd() {
-        ShardRouting initializingShard1 = TestShardRouting.newShardRouting("test", 3, "node-1", false, ShardRoutingState.INITIALIZING);
+        ShardRouting initializingShard1 = TestShardRouting.newShardRouting("test", 4, "node-1", false, ShardRoutingState.INITIALIZING);
         ShardRouting relocatingShard0 = TestShardRouting.newShardRouting(
             "test",
-            4,
+            5,
             "node-1",
             "node-2",
             false,
             ShardRoutingState.RELOCATING
         );
+        ShardRouting splittingShard = TestShardRouting.newShardRouting("test", 6, "node-1", false, ShardRoutingState.SPLITTING);
         routingNode.add(initializingShard1);
         routingNode.add(relocatingShard0);
-        assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 3)), equalTo(initializingShard1));
-        assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 4)), equalTo(relocatingShard0));
+        routingNode.add(splittingShard);
+        assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 4)), equalTo(initializingShard1));
+        assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 5)), equalTo(relocatingShard0));
+        assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 6)), equalTo(splittingShard));
     }
 
     public void testPrimaryFirstIterator() {
-        ShardRouting initializingShard3 = TestShardRouting.newShardRouting("test", 3, "node-1", false, ShardRoutingState.INITIALIZING);
-        ShardRouting relocatingShard4 = TestShardRouting.newShardRouting("test", 4, "node-1", "node-2", true, ShardRoutingState.RELOCATING);
-        ShardRouting initializingShard5 = TestShardRouting.newShardRouting("test", 5, "node-1", true, ShardRoutingState.INITIALIZING);
+        ShardRouting initializingShard3 = TestShardRouting.newShardRouting("test", 4, "node-1", false, ShardRoutingState.INITIALIZING);
+        ShardRouting relocatingShard4 = TestShardRouting.newShardRouting("test", 5, "node-1", "node-2", true, ShardRoutingState.RELOCATING);
+        ShardRouting initializingShard5 = TestShardRouting.newShardRouting("test", 6, "node-1", true, ShardRoutingState.INITIALIZING);
         routingNode.add(initializingShard3);
         routingNode.add(relocatingShard4);
         routingNode.add(initializingShard5);
@@ -106,6 +110,8 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         assertTrue(shardRoutingIterator.hasNext());
         assertThat(shardRoutingIterator.next(), equalTo(relocatingShard0));
         assertTrue(shardRoutingIterator.hasNext());
+        assertThat(shardRoutingIterator.next(), equalTo(splittingShard0));
+        assertTrue(shardRoutingIterator.hasNext());
         assertThat(shardRoutingIterator.next(), equalTo(initializingShard3));
         assertFalse(shardRoutingIterator.hasNext());
     }
@@ -114,9 +120,11 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         ShardRouting startedShard0 = TestShardRouting.newShardRouting("test", 0, "node-1", false, ShardRoutingState.STARTED);
         ShardRouting startedShard1 = TestShardRouting.newShardRouting("test", 1, "node-1", "node-2", false, ShardRoutingState.RELOCATING);
         ShardRouting startedShard2 = TestShardRouting.newShardRouting("test", 2, "node-1", false, ShardRoutingState.INITIALIZING);
+        ShardRouting startedShard3 = TestShardRouting.newShardRouting("test", 3, "node-1", false, ShardRoutingState.SPLITTING);
         routingNode.update(unassignedShard0, startedShard0);
         routingNode.update(initializingShard0, startedShard1);
         routingNode.update(relocatingShard0, startedShard2);
+        routingNode.update(splittingShard0, startedShard3);
         assertThat(
             routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 0)).state(),
             equalTo(ShardRoutingState.STARTED)
@@ -129,15 +137,21 @@ public class RoutingNodeTests extends OpenSearchTestCase {
             routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 2)).state(),
             equalTo(ShardRoutingState.INITIALIZING)
         );
+        assertThat(
+            routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 3)).state(),
+            equalTo(ShardRoutingState.SPLITTING)
+        );
     }
 
     public void testRemove() {
         routingNode.remove(unassignedShard0);
         routingNode.remove(initializingShard0);
         routingNode.remove(relocatingShard0);
+        routingNode.remove(splittingShard0);
         assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 0)), is(nullValue()));
         assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 1)), is(nullValue()));
         assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 2)), is(nullValue()));
+        assertThat(routingNode.getByShardId(new ShardId("test", IndexMetadata.INDEX_UUID_NA_VALUE, 3)), is(nullValue()));
     }
 
     public void testNumberOfShardsWithState() {
@@ -145,6 +159,7 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         assertThat(routingNode.numberOfShardsWithState(ShardRoutingState.STARTED), equalTo(1));
         assertThat(routingNode.numberOfShardsWithState(ShardRoutingState.RELOCATING), equalTo(1));
         assertThat(routingNode.numberOfShardsWithState(ShardRoutingState.INITIALIZING), equalTo(1));
+        assertThat(routingNode.numberOfShardsWithState(ShardRoutingState.SPLITTING), equalTo(1));
     }
 
     public void testShardsWithState() {
@@ -152,6 +167,7 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         assertThat(routingNode.shardsWithState(ShardRoutingState.STARTED).size(), equalTo(1));
         assertThat(routingNode.shardsWithState(ShardRoutingState.RELOCATING).size(), equalTo(1));
         assertThat(routingNode.shardsWithState(ShardRoutingState.INITIALIZING).size(), equalTo(1));
+        assertThat(routingNode.shardsWithState(ShardRoutingState.SPLITTING).size(), equalTo(1));
     }
 
     public void testShardsWithStateInIndex() {
@@ -159,10 +175,11 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         assertThat(routingNode.shardsWithState("test", ShardRoutingState.STARTED).size(), equalTo(1));
         assertThat(routingNode.shardsWithState("test", ShardRoutingState.RELOCATING).size(), equalTo(1));
         assertThat(routingNode.shardsWithState("test", ShardRoutingState.INITIALIZING).size(), equalTo(1));
+        assertThat(routingNode.shardsWithState("test", ShardRoutingState.SPLITTING).size(), equalTo(1));
     }
 
     public void testNumberOfOwningShards() {
-        assertThat(routingNode.numberOfOwningShards(), equalTo(2));
+        assertThat(routingNode.numberOfOwningShards(), equalTo(3));
     }
 
     public void testNumberOfOwningShardsForIndex() {
@@ -177,10 +194,9 @@ public class RoutingNodeTests extends OpenSearchTestCase {
         );
         routingNode.add(test1Shard0);
         routingNode.add(test2Shard0);
-        assertThat(routingNode.numberOfOwningShardsForIndex(new Index("test", IndexMetadata.INDEX_UUID_NA_VALUE)), equalTo(2));
+        assertThat(routingNode.numberOfOwningShardsForIndex(new Index("test", IndexMetadata.INDEX_UUID_NA_VALUE)), equalTo(3));
         assertThat(routingNode.numberOfOwningShardsForIndex(new Index("test1", IndexMetadata.INDEX_UUID_NA_VALUE)), equalTo(1));
         assertThat(routingNode.numberOfOwningShardsForIndex(new Index("test2", IndexMetadata.INDEX_UUID_NA_VALUE)), equalTo(0));
         assertThat(routingNode.numberOfOwningShardsForIndex(new Index("test3", IndexMetadata.INDEX_UUID_NA_VALUE)), equalTo(0));
     }
-
 }
