@@ -10,6 +10,7 @@ package org.opensearch.cluster.metadata;
 
 import org.opensearch.cluster.AbstractDiffable;
 import org.opensearch.cluster.Diff;
+import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
@@ -119,6 +120,14 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
 
     public int getNumberOfShards() {
         return maxShardId + 1;
+    }
+
+    public List<Integer> getRootShards() {
+        List<Integer> rootShardList = new ArrayList<>();
+        for (int i = 0; i < rootShardsToAllChildren.length; i++) {
+            rootShardList.add(i);
+        }
+        return rootShardList;
     }
 
     public ShardRange[] getChildShardsOfParent(int shardId) {
