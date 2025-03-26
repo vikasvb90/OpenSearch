@@ -911,10 +911,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifySplit(testShardSplitParams, testSplitResources.testShardUtils);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -936,10 +936,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifySplit(testShardSplitParams, testSplitResources.testShardUtils);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -961,10 +961,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifySplit(testShardSplitParams, testSplitResources.testShardUtils);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -986,10 +986,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifySplit(testShardSplitParams, testSplitResources.testShardUtils);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -1011,10 +1011,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifySplit(testShardSplitParams, testSplitResources.testShardUtils);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -1038,10 +1038,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             splitRecoveryService.triggerSplit(shards);
             verifySplit(testShardSplitParams, testSplitResources.testShardUtils);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -1063,10 +1063,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifyFailure(testShardSplitParams);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -1089,10 +1089,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifyFailure(testShardSplitParams);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 
@@ -1115,10 +1115,10 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             initiateSplit(shards, testShardSplitParams, inPlaceShardSplitRecoveryService);
             verifyFailure(testShardSplitParams);
         } finally {
-            testSplitResources.tearDown();
             if (shards != null) {
                 testSplitResources.testShardUtils.closeShards(shards);
             }
+            testSplitResources.tearDown();
         }
     }
 

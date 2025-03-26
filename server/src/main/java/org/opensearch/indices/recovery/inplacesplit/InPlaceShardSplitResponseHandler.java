@@ -91,6 +91,6 @@ public class InPlaceShardSplitResponseHandler implements ActionListener<Recovery
             return;
         }
         logger.error("Shard split failed for source shard " + sourceShard.shardId(), e);
-        ongoingRecoveries.fail(sourceShard, new RecoveryFailedException(request, e.getCause()), true);
+        ongoingRecoveries.fail(sourceShard, new RecoveryFailedException(request, e), true);
     }
 }
