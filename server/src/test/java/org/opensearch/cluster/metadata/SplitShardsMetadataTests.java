@@ -26,7 +26,36 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         assertEquals(0, result);
     }
 
+    public void testGetRootShards_splitInProgress() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3);
+        builder.splitShard(0, 3);
 
+        SplitShardsMetadata metadata = builder.build();
+        List<Integer> rootShards = metadata.getRootShards();
+        List<Integer> expectedRootShards = List.of(0,1,2);
+        assertEquals(expectedRootShards, rootShards);
+    }
+
+
+    public void testGetRootShards_splitCompleted() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3);
+
+        //split
+        builder.splitShard(0, 3);
+
+        //split completed for shard 0
+        builder.updateSplitMetadataForChildShards(0, Set.of(3, 4, 5));
+
+        SplitShardsMetadata metadata = builder.build();
+        List<Integer> rootShards = metadata.getRootShards();
+        List<Integer> expectedRootShards = List.of(0,1,2);
+        assertEquals(expectedRootShards, rootShards);
+    }
+
+
+    /**
+     * Test for no split data
+     */
     @Test
     public void testGetActiveShardIterator_emptyIterator() {
         // Arrange
