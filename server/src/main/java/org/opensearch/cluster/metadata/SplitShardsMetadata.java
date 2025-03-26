@@ -121,6 +121,14 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return maxShardId + 1;
     }
 
+    public List<Integer> getRootShards() {
+        List<Integer> rootShardList = new ArrayList<>();
+        for (int i = 0; i < rootShardsToAllChildren.length; i++) {
+            rootShardList.add(i);
+        }
+        return rootShardList;
+    }
+
     public ShardRange[] getChildShardsOfParent(int shardId) {
         if (parentToChildShards.containsKey(shardId) == false) {
             return null;
