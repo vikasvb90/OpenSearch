@@ -1434,8 +1434,7 @@ public class IndicesRequestCacheTests extends OpenSearchSingleNodeTestCase {
             null,
             localNode,
             null,
-            DiscoveryNodes.builder().add(localNode).build(),
-            null
+            DiscoveryNodes.builder().add(localNode).build()
         );
 
         // Verify that the new shard requestStats entries are empty.

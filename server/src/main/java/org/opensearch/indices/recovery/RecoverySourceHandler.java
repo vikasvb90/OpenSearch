@@ -1005,7 +1005,7 @@ public abstract class RecoverySourceHandler {
             logger.info("finalizeListenerStep completed");
             updateGlobalCheckpointForShard(globalCheckpoint);
 
-            if (request.isPrimaryRelocation() || shard.routingEntry().splitting()) {
+            if (request.isPrimaryRelocation()) {
                 logger.trace("performing relocation hand-off");
                 final Runnable forceSegRepRunnable = shard.indexSettings().isSegRepEnabledOrRemoteNode()
                     || (request.sourceNode().isRemoteStoreNode() && request.targetNode().isRemoteStoreNode())

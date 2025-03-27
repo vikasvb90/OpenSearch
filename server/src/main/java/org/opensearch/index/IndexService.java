@@ -564,8 +564,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         final RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory,
         final DiscoveryNode targetNode,
         @Nullable DiscoveryNode sourceNode,
-        DiscoveryNodes discoveryNodes,
-        final ShardId parentShardId
+        DiscoveryNodes discoveryNodes
     ) throws IOException {
         Objects.requireNonNull(retentionLeaseSyncer);
         /*
@@ -691,8 +690,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 recoverySettings,
                 remoteStoreSettings,
                 seedRemote,
-                discoveryNodes,
-                parentShardId
+                discoveryNodes
             );
             eventListener.indexShardStateChanged(indexShard, null, indexShard.state(), "shard created");
             eventListener.afterIndexShardCreated(indexShard);

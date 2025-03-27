@@ -70,11 +70,11 @@ import static org.opensearch.index.translog.Translog.TRANSLOG_UUID_KEY;
 
 public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHandler, Closeable {
     private final Map<ShardId, RecoveryTarget> recoveryTargets;
-    private final List<InPlaceShardRecoveryContext> recoveryContexts;
+    protected final List<InPlaceShardRecoveryContext> recoveryContexts;
     private final Set<String> childShardsAllocationIds;
-    private final IndexShard sourceShard;
+    protected final IndexShard sourceShard;
     private final CancellableThreads cancellableThreads;
-    private final SetOnce<Function<Store, Releasable>> storeAcquirer = new SetOnce<>();
+    protected final SetOnce<Function<Store, Releasable>> storeAcquirer = new SetOnce<>();
 
     private final ReplicationListener unSupportedTargetListener = new ReplicationListener() {
         @Override
@@ -346,7 +346,7 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
 
     }
 
-    public Directory syncLocalDirectory(Store store, StoreFileMetadata[] files, IndexShard childShard)
+    protected Directory syncLocalDirectory(Store store, StoreFileMetadata[] files, IndexShard childShard)
         throws IOException {
         ArrayUtil.timSort(files, Comparator.comparingLong(StoreFileMetadata::length));
 

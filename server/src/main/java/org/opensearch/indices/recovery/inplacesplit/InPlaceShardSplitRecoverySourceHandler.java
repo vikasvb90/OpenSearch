@@ -67,7 +67,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     private final InPlaceShardSplitRecoveryListener replicationListener;
     private final IndexMetadata indexMetadata;
     private volatile boolean inSync = false;
-    private final Consumer<ShardId> onSync;
+    protected final Consumer<ShardId> onSync;
     private volatile Runnable finalizer;
 
     public InPlaceShardSplitRecoverySourceHandler(
@@ -158,7 +158,6 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 
         postSendFileComplete(sendFileStep, lastCommit, releaseStore, delayedStaleCommitDeleteOps);
         long startingSeqNo = Long.parseLong(lastCommit.get().getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY)) + 1L;
-        logger.info("Docs in commit " + (startingSeqNo));
         assert Transports.assertNotTransportThread(this + "[phase1]");
         phase1(lastCommit.get(), startingSeqNo, () -> 0, sendFileStep, true);
 
@@ -169,10 +168,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             logger.info("prepareEngineStep completed");
             assert Transports.assertNotTransportThread(this + "[phase2]");
             initiateTracking();
-            final long endingSeqNo = sourceShard.seqNoStats().getMaxSeqNo();
-            // Syncing here because sequence number can be greater than local checkpoint and operations may not yet be
-            // present in translog.
-            sourceShard.sync();
+            final long endingSeqNo = cacheMaxSequenceNumber();
             // Flush because one or more operations in the provided range may still be pending to be indexed into lucene
             // and therefore, may not be available yet in translog. This is a best effort to ensure all operations within
             // this range are indexed and therefore, available in translog.
@@ -213,11 +209,15 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         finalizeStepAndCompleteFuture(startingSeqNo, sendSnapshotStep, sendFileStepWithEmptyResult(), prepareEngineStep, finalizeStep, onFailure);
     }
 
+    protected long cacheMaxSequenceNumber() {
+        return sourceShard.seqNoStats().getMaxSeqNo();
+    }
+
     private void addRetentionLeases() {
         recoveryContexts.forEach(context -> {
             long retentionLeaseSeqNo = sourceShard.getNewRetainedRetentionLeaseSeqNo(context.getIndexShard().routingEntry().allocationId().getId());
             RetentionLease primaryRetentionLease = new RetentionLease(
-                ReplicationTracker.getPeerRecoveryRetentionLeaseId(shard.routingEntry()),
+                ReplicationTracker.getPeerRecoveryRetentionLeaseId(context.getIndexShard().routingEntry()),
                 retentionLeaseSeqNo,
                 shard.getThreadPool().absoluteTimeInMillis(),
                 ReplicationTracker.PEER_RECOVERY_RETENTION_LEASE_SOURCE
@@ -362,7 +362,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         recoveryTarget.cleanFiles(translogOps.getAsInt(), globalCheckpoint, sourceMetadata, listener);
     }
 
-    private void initiateTracking() {
+    protected void initiateTracking() {
         cancellableThreads.checkForCancel();
         List<String> allocationIDs = new ArrayList<>();
         recoveryContexts.forEach(context -> allocationIDs.add(context.getIndexShard()

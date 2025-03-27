@@ -501,6 +501,47 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
     /**
      * creates a new initializing shard. The shard will be put in its proper path under the
      * current node id the shard is assigned to.
+     * @param routing                shard routing to use
+     * @param indexMetadata          indexMetadata for the shard, including any mapping
+     * @param indexReaderWrapper     an optional wrapper to be used during search
+     * @param globalCheckpointSyncer callback for syncing global checkpoints
+     * @param listeners              an optional set of listeners to add to the shard
+     */
+    protected IndexShard newShard(
+        ShardRouting routing,
+        IndexMetadata indexMetadata,
+        @Nullable CheckedFunction<DirectoryReader, DirectoryReader, IOException> indexReaderWrapper,
+        @Nullable EngineFactory engineFactory,
+        Runnable globalCheckpointSyncer,
+        RetentionLeaseSyncer retentionLeaseSyncer,
+        Path path,
+        MapperService mapperService,
+        IndexingOperationListener... listeners
+    ) throws IOException {
+        // add node id as name to settings for proper logging
+        final ShardId shardId = routing.shardId();
+        final NodeEnvironment.NodePath nodePath = new NodeEnvironment.NodePath(createTempDir());
+        ShardPath shardPath = new ShardPath(false, nodePath.resolve(shardId), nodePath.resolve(shardId), shardId);
+        return newShard(
+            routing,
+            shardPath,
+            indexMetadata,
+            null,
+            indexReaderWrapper,
+            engineFactory,
+            new EngineConfigFactory(new IndexSettings(indexMetadata, indexMetadata.getSettings())),
+            globalCheckpointSyncer,
+            retentionLeaseSyncer,
+            EMPTY_EVENT_LISTENER,
+            path,
+            mapperService,
+            listeners
+        );
+    }
+
+    /**
+     * creates a new initializing shard. The shard will be put in its proper path under the
+     * current node id the shard is assigned to.
      * @param routing                       shard routing to use
      * @param shardPath                     path to use for shard data
      * @param indexMetadata                 indexMetadata for the shard, including any mapping
@@ -537,6 +578,52 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
             indexEventListener,
             SegmentReplicationCheckpointPublisher.EMPTY,
             remotePath,
+            null,
+            listeners
+        );
+    }
+
+    /**
+     * creates a new initializing shard. The shard will be put in its proper path under the
+     * current node id the shard is assigned to.
+     * @param routing                       shard routing to use
+     * @param shardPath                     path to use for shard data
+     * @param indexMetadata                 indexMetadata for the shard, including any mapping
+     * @param storeProvider                 an optional custom store provider to use. If null a default file based store will be created
+     * @param indexReaderWrapper            an optional wrapper to be used during search
+     * @param globalCheckpointSyncer        callback for syncing global checkpoints
+     * @param indexEventListener            index event listener
+     * @param listeners                     an optional set of listeners to add to the shard
+     */
+    protected IndexShard newShard(
+        ShardRouting routing,
+        ShardPath shardPath,
+        IndexMetadata indexMetadata,
+        @Nullable CheckedFunction<IndexSettings, Store, IOException> storeProvider,
+        @Nullable CheckedFunction<DirectoryReader, DirectoryReader, IOException> indexReaderWrapper,
+        @Nullable EngineFactory engineFactory,
+        @Nullable EngineConfigFactory engineConfigFactory,
+        Runnable globalCheckpointSyncer,
+        RetentionLeaseSyncer retentionLeaseSyncer,
+        IndexEventListener indexEventListener,
+        Path remotePath,
+        MapperService mapperService,
+        IndexingOperationListener... listeners
+    ) throws IOException {
+        return newShard(
+            routing,
+            shardPath,
+            indexMetadata,
+            storeProvider,
+            indexReaderWrapper,
+            engineFactory,
+            engineConfigFactory,
+            globalCheckpointSyncer,
+            retentionLeaseSyncer,
+            indexEventListener,
+            SegmentReplicationCheckpointPublisher.EMPTY,
+            remotePath,
+            mapperService,
             listeners
         );
     }
@@ -589,6 +676,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
             RetentionLeaseSyncer.EMPTY,
             EMPTY_EVENT_LISTENER,
             checkpointPublisher,
+            null,
             null
         );
     }
@@ -618,6 +706,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         IndexEventListener indexEventListener,
         SegmentReplicationCheckpointPublisher checkpointPublisher,
         @Nullable Path remotePath,
+        MapperService mapperService,
         IndexingOperationListener... listeners
     ) throws IOException {
         Settings nodeSettings = Settings.builder().put("node.name", routing.currentNodeId()).build();
@@ -639,12 +728,14 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         boolean success = false;
         try {
             IndexCache indexCache = new IndexCache(indexSettings, new DisabledQueryCache(indexSettings), null);
-            MapperService mapperService = MapperTestUtils.newMapperService(
-                xContentRegistry(),
-                createTempDir(),
-                indexSettings.getSettings(),
-                "index"
-            );
+            if (mapperService == null) {
+                mapperService = MapperTestUtils.newMapperService(
+                    xContentRegistry(),
+                    createTempDir(),
+                    indexSettings.getSettings(),
+                    "index"
+                );
+            }
             mapperService.merge(indexMetadata, MapperService.MergeReason.MAPPING_RECOVERY);
             SimilarityService similarityService = new SimilarityService(indexSettings, null, Collections.emptyMap());
             final Engine.Warmer warmer = createTestWarmer(indexSettings);
@@ -718,8 +809,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
                 DefaultRecoverySettings.INSTANCE,
                 DefaultRemoteStoreSettings.INSTANCE,
                 false,
-                discoveryNodes,
-                null
+                discoveryNodes
             );
             indexShard.addShardFailureCallback(DEFAULT_SHARD_FAILURE_HANDLER);
             if (remoteStoreStatsTrackerFactory != null) {
@@ -1040,6 +1130,20 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         recoverReplica(replica, primary, startReplica, getReplicationFunc(replica));
     }
 
+    protected void recoverReplicaInSync(IndexShard replica, IndexShard primary, boolean startReplica,
+                                        IndexShardRoutingTable routingTable, IndexShard parentShard) throws IOException {
+        recoverReplicaAndAddToSyncedShards(
+            replica,
+            primary,
+            (r, sourceNode) -> new RecoveryTarget(r, sourceNode, recoveryListener, threadPool),
+            true,
+            startReplica,
+            getReplicationFunc(replica),
+            routingTable,
+            parentShard
+        );
+    }
+
     /** recovers a replica from the given primary **/
     protected void recoverReplica(
         IndexShard replica,
@@ -1095,7 +1199,30 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         }
         final Set<String> inSyncIds = Collections.singleton(primary.routingEntry().allocationId().getId());
         final IndexShardRoutingTable routingTable = newRoutingTable.build();
-        recoverUnstartedReplica(replica, primary, targetSupplier, markAsRecovering, inSyncIds, routingTable, replicatePrimaryFunction);
+        recoverUnstartedReplica(replica, primary, targetSupplier, markAsRecovering, inSyncIds, routingTable, replicatePrimaryFunction, null);
+        if (markAsStarted) {
+            startReplicaAfterRecovery(replica, primary, inSyncIds, routingTable);
+        }
+    }
+
+    /** recovers a replica from the given primary **/
+    protected void recoverReplicaAndAddToSyncedShards(
+        final IndexShard replica,
+        final IndexShard primary,
+        final BiFunction<IndexShard, DiscoveryNode, RecoveryTarget> targetSupplier,
+        final boolean markAsRecovering,
+        final boolean markAsStarted,
+        final Function<List<IndexShard>, List<SegmentReplicationTarget>> replicatePrimaryFunction,
+        IndexShardRoutingTable routingTable,
+        IndexShard parentShard
+    ) throws IOException {
+        Set<String> inSyncIds;
+        if (parentShard != null) {
+            inSyncIds = parentShard.getReplicationGroup().getInSyncAllocationIds();
+         } else {
+            inSyncIds = primary.getReplicationGroup().getInSyncAllocationIds();
+         }
+        recoverUnstartedReplica(replica, primary, targetSupplier, markAsRecovering, inSyncIds, routingTable, replicatePrimaryFunction, parentShard);
         if (markAsStarted) {
             startReplicaAfterRecovery(replica, primary, inSyncIds, routingTable);
         }
@@ -1119,11 +1246,13 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         final boolean markAsRecovering,
         final Set<String> inSyncIds,
         final IndexShardRoutingTable routingTable,
-        final Function<List<IndexShard>, List<SegmentReplicationTarget>> replicatePrimaryFunction
+        final Function<List<IndexShard>, List<SegmentReplicationTarget>> replicatePrimaryFunction,
+        final IndexShard parentShard
     ) throws IOException {
         final DiscoveryNode pNode;
         final DiscoveryNode rNode;
-        if (primary.isRemoteTranslogEnabled()) {
+        boolean remoteTranslogEnabled = parentShard != null ? parentShard.isRemoteTranslogEnabled() : primary.isRemoteTranslogEnabled();
+        if (remoteTranslogEnabled) {
             pNode = IndexShardTestUtils.getFakeRemoteEnabledNode(primary.routingEntry().currentNodeId());
         } else {
             pNode = IndexShardTestUtils.getFakeDiscoNode(primary.routingEntry().currentNodeId());
@@ -1141,7 +1270,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         replica.prepareForIndexRecovery();
         final RecoveryTarget recoveryTarget = targetSupplier.apply(replica, pNode);
         IndexShard indexShard = recoveryTarget.indexShard();
-        boolean remoteTranslogEnabled = recoveryTarget.state().getPrimary() == false && indexShard.isRemoteTranslogEnabled();
+        remoteTranslogEnabled = recoveryTarget.state().getPrimary() == false && indexShard.isRemoteTranslogEnabled();
         final long startingSeqNo = indexShard.recoverLocallyAndFetchStartSeqNo(!remoteTranslogEnabled);
         final StartRecoveryRequest request = PeerRecoveryTargetService.getStartRecoveryRequest(
             logger,
@@ -1168,7 +1297,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
             recoverySettings,
             false,
             new CancellableThreads(),
-            null
+            parentShard
         );
         primary.updateShardState(
             primary.routingEntry(),
@@ -1301,7 +1430,7 @@ public abstract class IndexShardTestCase extends OpenSearchTestCase {
         throws IOException {
         SourceToParse sourceToParse = new SourceToParse(shard.shardId().getIndexName(), id, new BytesArray(source), mediaType, routing);
         Engine.IndexResult result;
-        if (shard.routingEntry().primary()) {
+        if (shard.routingEntry().primary() && !shard.routingEntry().isSplitTarget()) {
             result = shard.applyIndexOperationOnPrimary(
                 Versions.MATCH_ANY,
                 VersionType.INTERNAL,
