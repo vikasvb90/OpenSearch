@@ -1505,7 +1505,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
          * @return the provided value or -1 if it has not been set.
          */
         public int numberOfShards() {
-            return settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1);
+            return splitShardsMetadata != null ? splitShardsMetadata.getNumberOfShards() : settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1);
         }
 
         public Builder updateMetadataForNewChildShards(Map<Integer, String> newChildAllocationIds, int sourceShardId) {
@@ -1531,8 +1531,6 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             splitShardsMetadata.updateSplitMetadataForChildShards(sourceShardId, newChildAllocationIds.keySet());
 
             this.splitShardsMetadata = splitShardsMetadata.build();
-            numberOfShards(this.splitShardsMetadata.getNumberOfShards());
-            this.settingsVersion += 1;
 
             return this;
         }
