@@ -51,6 +51,7 @@ import org.opensearch.core.index.shard.ShardId;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -347,7 +348,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         return this.unassignedShards;
     }
 
-    public List<ShardRouting> splitting() {
+    public List<ShardRouting> splittingShards() {
         return this.splittingShards;
     }
 
@@ -643,27 +644,43 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         return Tuple.tuple(source, target);
     }
 
+
     /**
-     * Update assigned child shards against the current splitting parent and their respective recoveries.
+     * A temporary initialization of child shard to initialize and keep track of assigned child shards
+     * used in honouring node limits.
      */
-    public void assignChildShards(
-        ShardRouting startedShard,
+    public ShardRouting initializeChildShard(
+        ShardRouting childShard,
         ShardRouting parentShard,
-        RoutingChangesObserver changes,
-        Map<ShardRouting, String> assignedRoutingNodes
+        String nodeId,
+        int recoveringChildIdx
     ) {
+        ensureMutable();
+        assert parentShard.splitting() : "expected a splitting shard " + parentShard;
+        ShardRouting assignedChildShard = parentShard.assignChildShard(nodeId, childShard, recoveringChildIdx);
+        node(nodeId).add(assignedChildShard);
+        assignedShardsAdd(assignedChildShard);
+        addRecovery(assignedChildShard);
+        return assignedChildShard;
+    }
+
+    /**
+     * A temporary removal of initialzing child shard to clean up assigned child shards
+     * used in honouring node limits.
+     */
+    public void cleanUpChild(ShardRouting childShard) {
+        ensureMutable();
+        assert childShard.isSplitTarget() : "expected a child shard " + childShard;
+        remove(childShard);
+    }
+
+    public void startSplit(ShardRouting parentShard, ShardRouting startedShard, RoutingChangesObserver changes) {
         ensureMutable();
         assert parentShard.splitting();
         splittingShardsCount++;
-        List<ShardRouting> assignedChildShards = parentShard.assignChildShards(assignedRoutingNodes);
-        for (ShardRouting assignedChildShard : assignedChildShards) {
-            node(assignedChildShard.currentNodeId()).add(assignedChildShard);
-            assignedShardsAdd(assignedChildShard);
-            addRecovery(assignedChildShard);
-        }
         updateSplitSourceOutgoingRecovery(parentShard, true);
         updateAssigned(startedShard, parentShard);
-        changes.splitStarted(startedShard, assignedChildShards);
+        changes.splitStarted(startedShard, Arrays.asList(parentShard.getRecoveringChildShards()));
     }
 
     public void startInPlaceChildShards(

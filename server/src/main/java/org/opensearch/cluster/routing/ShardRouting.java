@@ -187,6 +187,25 @@ public class ShardRouting implements Writeable, ToXContentObject {
         }
     }
 
+    public ShardRouting assignChildShard(String assignedRoutingNode, ShardRouting childShard, int idx) {
+        ShardRouting assignedChildShard = new ShardRouting(
+            childShard.shardId,
+            assignedRoutingNode,
+            null,
+            childShard.primary,
+            childShard.searchOnly,
+            ShardRoutingState.INITIALIZING,
+            childShard.recoverySource,
+            unassignedInfo,
+            childShard.allocationId,
+            expectedShardSize,
+            null,
+            shardId
+        );
+        recoveringChildShards[idx] = assignedChildShard;
+        return assignedChildShard;
+    }
+
     public List<ShardRouting> assignChildShards(Map<ShardRouting, String> assignedRoutingNodes) {
         List<ShardRouting> assignedChildShards = new ArrayList<>();
         int idx = 0;

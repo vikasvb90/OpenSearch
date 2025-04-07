@@ -14,7 +14,6 @@ import org.apache.lucene.util.IntroSorter;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.Metadata;
 import org.opensearch.cluster.routing.RecoverySource;
-import org.opensearch.cluster.metadata.SplitShardsMetadata;
 import org.opensearch.cluster.routing.RoutingNode;
 import org.opensearch.cluster.routing.RoutingNodes;
 import org.opensearch.cluster.routing.RoutingPool;
@@ -972,115 +971,61 @@ public class LocalShardsBalancer extends ShardsBalancer {
 
     @Override
     public void assignChildShardsOfSplittingShards() {
-        List<ShardRouting> splittingShards = routingNodes.splitting();
+        List<ShardRouting> splittingShards = routingNodes.splittingShards();
         if (splittingShards.isEmpty()) {
             return;
         }
 
-        List<SplittingShardAssignmentInfo> splittingShardAssignmentInfos = new ArrayList<>();
+        Collections.shuffle(splittingShards);
         for (ShardRouting splittingShard : splittingShards) {
-            IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(splittingShard.index());
-            SplitShardsMetadata splitShardsMetadata = indexMetadata.getSplitShardsMetadata();
-            boolean inProgress = splitShardsMetadata.isSplitOfShardInProgress(splittingShard.shardId().id())
-                && allocation.changes().isSplitOfShardFailed(splittingShard) == false;
-            ShardRouting assignedPrimaryParent = routingNodes.activePrimary(splittingShard.shardId());
-            if (inProgress && assignedPrimaryParent != null) {
-                List<ShardRouting> primaryChildShards = new ArrayList<>();
-                List<ShardRouting> replicaChildShards = new ArrayList<>();
-
-                for (ShardRouting childShard : splittingShard.getRecoveringChildShards()) {
-                    if (childShard.primary()) {
-                        primaryChildShards.add(childShard);
-                    } else {
-                        replicaChildShards.add(childShard);
-                    }
-                }
-                SplittingShardAssignmentInfo splittingShardAssignmentInfo = new SplittingShardAssignmentInfo(
-                    indexMetadata.getIndexUUID(), assignedPrimaryParent, splittingShard, primaryChildShards,
-                    replicaChildShards);
-                splittingShardAssignmentInfos.add(splittingShardAssignmentInfo);
-            }
-        }
-
-        Collections.shuffle(splittingShardAssignmentInfos);
-        //TODO: build retry and cancel split to come out of failed shard
-
-        for (SplittingShardAssignmentInfo splittingShardAssignmentInfo : splittingShardAssignmentInfos) {
-
-            RoutingNode parentShardNode = routingNodes.node(splittingShardAssignmentInfo.assignedPrimaryParent.currentNodeId());
-            ShardRouting primaryChild;
-            BalancedShardsAllocator.ModelNode parentModelNode = nodes.get(splittingShardAssignmentInfo.assignedPrimaryParent.currentNodeId());
-            Map<ShardRouting, String> assignedRoutingNodes = new HashMap<>();
-            for (int addIdx = 0; addIdx < splittingShardAssignmentInfo.primaryChildShards.size(); addIdx++) {
-                primaryChild = splittingShardAssignmentInfo.primaryChildShards.get(addIdx);
-                Decision currentDecision = allocation.deciders().canAllocate(primaryChild, parentShardNode, allocation);
-                if (currentDecision.type() == Decision.Type.NO) {
-                    break;
-                }
-                parentModelNode.addShard(primaryChild);
-                assignedRoutingNodes.put(primaryChild, parentModelNode.getNodeId());
-            }
-
-            if (assignedRoutingNodes.size() != splittingShardAssignmentInfo.primaryChildShards.size()) {
-                assignedRoutingNodes.keySet().forEach(routing -> {
-                    BalancedShardsAllocator.ModelNode node = nodes.get(assignedRoutingNodes.get(routing));
-                    node.removeShard(routing);
-                });
+            ShardRouting startedShard = routingNodes.activePrimary(splittingShard.shardId());
+            if (startedShard == null) {
+                logger.trace("Splitting shard is in unassigned state [{}]", splittingShard.shardId());
                 continue;
             }
 
-            for (ShardRouting replicaChild : splittingShardAssignmentInfo.replicaChildShards) {
-                final AllocateUnassignedDecision allocationDecision = decideAllocateUnassigned(replicaChild);
-                if (allocationDecision.getAllocationDecision() != AllocationDecision.YES) {
+            RoutingNode parentShardNode = routingNodes.node(splittingShard.currentNodeId());
+            ShardRouting[] recoveringChildShards = splittingShard.getRecoveringChildShards();
+            boolean assignmentFailed = false;
+            List<Runnable> cleanUpTasksOnAssignFailure = new ArrayList<>();
+            for (int recoveringChildIdx = 0; recoveringChildIdx < recoveringChildShards.length; recoveringChildIdx++) {
+                String assignedNodeId;
+                if (recoveringChildShards[recoveringChildIdx].primary() == true) {
+                    Decision currentDecision = allocation.deciders().canAllocate(
+                        recoveringChildShards[recoveringChildIdx], parentShardNode, allocation);
+                    assignedNodeId = currentDecision.type() == Decision.Type.YES ? parentShardNode.nodeId() : null;
+                } else {
+                    final AllocateUnassignedDecision allocationDecision = decideAllocateUnassigned(recoveringChildShards[recoveringChildIdx]);
+                    assignedNodeId = allocationDecision.getAllocationDecision() == AllocationDecision.YES?
+                        allocationDecision.getTargetNode().getId() : null;
+                }
+
+                if (assignedNodeId == null) {
+                    assignmentFailed = true;
                     break;
                 }
-                String assignedNodeId = allocationDecision.getTargetNode().getId();
-                assignedRoutingNodes.put(replicaChild, nodes.get(assignedNodeId).getNodeId());
-                nodes.get(assignedNodeId).addShard(replicaChild);
+                routingNodes.initializeChildShard(recoveringChildShards[recoveringChildIdx], splittingShard,
+                    assignedNodeId, recoveringChildIdx);
+                nodes.get(assignedNodeId).addShard(recoveringChildShards[recoveringChildIdx]);
+                final int childShardIdx = recoveringChildIdx;
+                cleanUpTasksOnAssignFailure.add(() -> {
+                    routingNodes.cleanUpChild(recoveringChildShards[childShardIdx]);
+                    nodes.get(assignedNodeId).removeShard(recoveringChildShards[childShardIdx]);
+                });
             }
 
-            if (assignedRoutingNodes.size() != splittingShardAssignmentInfo.primaryChildShards.size() +
-                splittingShardAssignmentInfo.replicaChildShards.size()) {
-                assignedRoutingNodes.keySet().forEach(routing -> {
-                    BalancedShardsAllocator.ModelNode node = nodes.get(assignedRoutingNodes.get(routing));
-                    node.removeShard(routing);
-                });
+            if (assignmentFailed == true) {
+                cleanUpTasksOnAssignFailure.forEach(Runnable::run);
+                // TODO: build retry and cancel split to come out of failed shard. Failed shard will be left in
+                //  RoutingNodes#splittingShards to be retried or cleaned in cancel flow. Also, add assignment failures
+                // to allocation explain output.
                 continue;
             }
 
-            if (logger.isTraceEnabled()) {
-                logger.trace("Splitting shard [{}]", splittingShardAssignmentInfo.assignedPrimaryParent.shardId());
-            }
-
-            routingNodes.assignChildShards(
-                splittingShardAssignmentInfo.assignedPrimaryParent,
-                splittingShardAssignmentInfo.splittingPrimaryParent,
-                allocation.changes(),
-                assignedRoutingNodes
-            );
+            logger.trace("Splitting shard [{}]", splittingShard.shardId());
+            routingNodes.startSplit(splittingShard, startedShard, allocation.changes());
         }
 
-    }
-
-    private static class SplittingShardAssignmentInfo {
-        final String indexUUID;
-        final ShardRouting assignedPrimaryParent;
-        final ShardRouting splittingPrimaryParent;
-        final List<ShardRouting> primaryChildShards;
-        final List<ShardRouting> replicaChildShards;
-
-        public SplittingShardAssignmentInfo(
-            String indexUUID,
-            ShardRouting assignedPrimaryParent,
-            ShardRouting splittingPrimaryParent,
-            List<ShardRouting> primaryChildShards,
-            List<ShardRouting> replicaChildShards) {
-            this.indexUUID = indexUUID;
-            this.assignedPrimaryParent = assignedPrimaryParent;
-            this.splittingPrimaryParent = splittingPrimaryParent;
-            this.primaryChildShards = primaryChildShards;
-            this.replicaChildShards = replicaChildShards;
-        }
     }
 
     /**

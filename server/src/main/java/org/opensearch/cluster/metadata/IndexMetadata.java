@@ -1466,7 +1466,9 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.rolloverInfos = new HashMap<>(indexMetadata.rolloverInfos);
             this.isSystem = indexMetadata.isSystem;
             this.context = indexMetadata.context;
-            this.splitShardsMetadata = new SplitShardsMetadata.Builder(indexMetadata.splitShardsMetadata).build();
+            if (indexMetadata.splitShardsMetadata != null) {
+                this.splitShardsMetadata = new SplitShardsMetadata.Builder(indexMetadata.splitShardsMetadata).build();
+            }
         }
 
         public Builder index(String index) {
@@ -1505,7 +1507,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
          * @return the provided value or -1 if it has not been set.
          */
         public int numberOfShards() {
-            return settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1);
+            return splitShardsMetadata != null ? splitShardsMetadata.getNumberOfShards() : settings.getAsInt(SETTING_NUMBER_OF_SHARDS, -1);
         }
 
         public Builder updateMetadataForNewChildShards(Map<Integer, String> newChildAllocationIds, int sourceShardId) {
