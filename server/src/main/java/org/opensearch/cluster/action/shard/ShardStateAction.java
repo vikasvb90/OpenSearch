@@ -864,7 +864,6 @@ public class ShardStateAction {
                         builder.success(task);
                         continue;
                     }
-//                    seenShardRoutings.add(matched);
                     if (Boolean.TRUE.equals(task.allChildPrimariesStarted)) {
                         logger.debug("{} starting child shards of {} (shard started task: [{}])", task.shardId, parentShard, task);
                         tasksToBeApplied.add(task);
