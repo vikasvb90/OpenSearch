@@ -11,6 +11,7 @@ package org.opensearch.indices.recovery.inplacesplit;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.OpenSearchException;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.cluster.ClusterChangedEvent;
 import org.opensearch.cluster.ClusterState;
@@ -32,6 +33,7 @@ import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.shard.IndexEventListener;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.cluster.IndicesClusterStateService;
 import org.opensearch.indices.recovery.DelayRecoveryException;
 import org.opensearch.indices.recovery.RecoveryResponse;
 import org.opensearch.indices.recovery.RecoverySettings;
@@ -107,6 +109,12 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     @Override
     public void clusterChanged(ClusterChangedEvent event) {}
 
+    public synchronized void cancelRecovery(IndicesClusterStateService.Shard shard) {
+        assert shard instanceof IndexShard;
+        IndexShard indexShard = (IndexShard) shard;
+        ongoingRecoveries.cancel(indexShard, "split-cancel-event");
+    }
+
     public void addAndStartRecovery(List<InPlaceShardRecoveryContext> recoveryContexts,
                                     DiscoveryNode node,
                                     IndexShard sourceShard,
@@ -167,13 +175,8 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
         return recovery != null && Boolean.TRUE.equals(recovery.handOffInitiated.get()) == false;
     }
 
-    public synchronized void cancelRecovery(ShardId shardId) {
-        OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(shardId);
-        if (recovery == null) {
-            return;
-        }
-
-        recovery.sourceHandler.cancel("Cancelled on cancellation event");
+    public boolean isRecoveryInProgress(ShardId shardId) {
+        return ongoingRecoveries.recoveries.get(shardId) != null;
     }
 
     public void startChildShards(ShardId parentShardId) {
