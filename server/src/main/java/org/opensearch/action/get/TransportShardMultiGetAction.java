@@ -60,7 +60,7 @@ import java.io.IOException;
  */
 public class TransportShardMultiGetAction extends TransportSingleShardAction<MultiGetShardRequest, MultiGetShardResponse> {
 
-    private static final String ACTION_NAME = MultiGetAction.NAME + "[shard]";
+    protected static String ACTION_NAME = MultiGetAction.NAME + "[shard]";
 
     private final IndicesService indicesService;
 
@@ -84,6 +84,11 @@ public class TransportShardMultiGetAction extends TransportSingleShardAction<Mul
             ThreadPool.Names.GET
         );
         this.indicesService = indicesService;
+    }
+
+    @Override
+    protected ClusterState getClusterState() {
+        return super.getClusterState();
     }
 
     @Override

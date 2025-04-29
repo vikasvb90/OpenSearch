@@ -32,25 +32,36 @@
 
 package org.opensearch.action.get;
 
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.RoutingMissingException;
+import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.HandledTransportAction;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.ClusterStateObserver;
 import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.metadata.Metadata;
 import org.opensearch.cluster.routing.Preference;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.inject.Inject;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.AtomicArray;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
+import org.opensearch.node.NodeClosedException;
 import org.opensearch.tasks.Task;
+import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.TransportService;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.Predicate;
 
 /**
  * Perform the multi get action.
@@ -62,6 +73,8 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
     private final ClusterService clusterService;
     private final TransportShardMultiGetAction shardAction;
     private final IndexNameExpressionResolver indexNameExpressionResolver;
+    protected static String actionName = MultiGetAction.NAME;
+    private final ThreadPool threadPool;
 
     @Inject
     public TransportMultiGetAction(
@@ -69,21 +82,27 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
         ClusterService clusterService,
         TransportShardMultiGetAction shardAction,
         ActionFilters actionFilters,
-        IndexNameExpressionResolver resolver
+        IndexNameExpressionResolver resolver,
+        ThreadPool threadPool
     ) {
-        super(MultiGetAction.NAME, transportService, actionFilters, MultiGetRequest::new);
+        super(actionName, transportService, actionFilters, MultiGetRequest::new);
         this.clusterService = clusterService;
         this.shardAction = shardAction;
         this.indexNameExpressionResolver = resolver;
+        this.threadPool = threadPool;
     }
 
     protected static boolean shouldForcePrimaryRouting(Metadata metadata, boolean realtime, String preference, String indexName) {
         return metadata.isSegmentReplicationEnabled(indexName) && realtime && preference == null;
     }
 
+    protected ClusterState getClusterState() {
+        return clusterService.state();
+    }
+
     @Override
     protected void doExecute(Task task, final MultiGetRequest request, final ActionListener<MultiGetResponse> listener) {
-        ClusterState clusterState = clusterService.state();
+        ClusterState clusterState = getClusterState();
         clusterState.blocks().globalBlockedRaiseException(ClusterBlockLevel.READ);
 
         final AtomicArray<MultiGetItemResponse> responses = new AtomicArray<>(request.items.size());
@@ -128,8 +147,47 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
             // only failures..
             listener.onResponse(new MultiGetResponse(responses.toArray(new MultiGetItemResponse[responses.length()])));
         }
+        executeShardAction(wrapWithSplitExHandler(task, request, listener, clusterState), responses, shardRequests);
+    }
 
-        executeShardAction(listener, responses, shardRequests);
+    protected ActionListener<MultiGetResponse> wrapWithSplitExHandler(Task task, MultiGetRequest request,
+                                                                      ActionListener<MultiGetResponse> listener,
+                                                                      ClusterState clusterState) {
+        return ActionListener.delegateResponse(listener, (delegatedListener, ex) -> {
+            if (ex instanceof PrimaryShardSplitException) {
+                ClusterStateObserver observer = new ClusterStateObserver(clusterState, clusterService, null,
+                    logger, threadPool.getThreadContext());
+                PrimaryShardSplitException splitException = (PrimaryShardSplitException) ex;
+                waitForSplitCompleteOnStateAndRedrive(
+                    observer,
+                    InPlaceShardSplitRecoveryService.splitNotActivePredicate(splitException.getShardId()),
+                    listener,
+                    () -> this.doExecute(task, request, listener)
+                );
+                return;
+            }
+            listener.onFailure(ex);
+        });
+    }
+
+    protected void waitForSplitCompleteOnStateAndRedrive(ClusterStateObserver observer, Predicate<ClusterState> splitNotActive,
+                                                         ActionListener<MultiGetResponse> listener, Runnable runnable) {
+        observer.waitForNextChange(new ClusterStateObserver.Listener() {
+            @Override
+            public void onNewClusterState(ClusterState state) {
+                runnable.run();
+            }
+
+            @Override
+            public void onClusterServiceClose() {
+                listener.onFailure(new NodeClosedException(clusterService.localNode()));
+            }
+
+            @Override
+            public void onTimeout(TimeValue timeout) {
+                throw new AssertionError("Cannot happen: there is not timeout");
+            }
+        }, splitNotActive);
     }
 
     protected void executeShardAction(
@@ -141,6 +199,8 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
 
         for (final MultiGetShardRequest shardRequest : shardRequests.values()) {
             shardAction.execute(shardRequest, new ActionListener<MultiGetShardResponse>() {
+                private final AtomicReference<PrimaryShardSplitException> shardSplitEx = new AtomicReference<>();
+
                 @Override
                 public void onResponse(MultiGetShardResponse response) {
                     for (int i = 0; i < response.locations.size(); i++) {
@@ -154,13 +214,20 @@ public class TransportMultiGetAction extends HandledTransportAction<MultiGetRequ
 
                 @Override
                 public void onFailure(Exception e) {
+                    if (e instanceof PrimaryShardSplitException) {
+                        shardSplitEx.set((PrimaryShardSplitException) e);
+                    }
                     // create failures for all relevant requests
                     for (int i = 0; i < shardRequest.locations.size(); i++) {
                         MultiGetRequest.Item item = shardRequest.items.get(i);
                         responses.set(shardRequest.locations.get(i), newItemFailure(shardRequest.index(), item.id(), e));
                     }
                     if (counter.decrementAndGet() == 0) {
-                        finishHim();
+                        if (shardSplitEx.get() != null) {
+                            listener.onFailure(shardSplitEx.get());
+                        } else {
+                            finishHim();
+                        }
                     }
                 }
 

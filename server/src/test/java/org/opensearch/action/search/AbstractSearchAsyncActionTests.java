@@ -33,9 +33,13 @@
 package org.opensearch.action.search;
 
 import org.apache.logging.log4j.LogManager;
+import org.opensearch.Version;
 import org.opensearch.action.OriginalIndices;
 import org.opensearch.action.support.IndicesOptions;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.metadata.IndexMetadata;
+import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.metadata.SplitShardsMetadata;
 import org.opensearch.cluster.routing.GroupShardsIterator;
 import org.opensearch.common.UUIDs;
 import org.opensearch.common.collect.Tuple;
@@ -69,6 +73,7 @@ import org.opensearch.transport.Transport;
 import org.junit.After;
 import org.junit.Before;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -153,6 +158,32 @@ public class AbstractSearchAsyncActionTests extends OpenSearchTestCase {
         final TaskResourceUsage resourceUsage,
         final SearchShardIterator... shards
     ) {
+        return createAction(
+            request,
+            results,
+            listener,
+            controlled,
+            failExecutePhaseOnShard,
+            catchExceptionWhenExecutePhaseOnShard,
+            expected,
+            resourceUsage,
+            ClusterState.EMPTY_STATE,
+            shards
+        );
+    }
+
+    private AbstractSearchAsyncAction<SearchPhaseResult> createAction(
+        SearchRequest request,
+        ArraySearchPhaseResults<SearchPhaseResult> results,
+        ActionListener<SearchResponse> listener,
+        final boolean controlled,
+        final boolean failExecutePhaseOnShard,
+        final boolean catchExceptionWhenExecutePhaseOnShard,
+        final AtomicLong expected,
+        final TaskResourceUsage resourceUsage,
+        final ClusterState clusterState,
+        final SearchShardIterator... shards
+    ) {
 
         final Runnable runnable;
         final TransportSearchAction.SearchTimeProvider timeProvider;
@@ -193,7 +224,7 @@ public class AbstractSearchAsyncActionTests extends OpenSearchTestCase {
             listener,
             new GroupShardsIterator<>(Arrays.asList(shards)),
             timeProvider,
-            ClusterState.EMPTY_STATE,
+            clusterState,
             null,
             results,
             request.getMaxConcurrentShardRequests(),

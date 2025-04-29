@@ -243,7 +243,8 @@ public class TransportMultiGetActionTests extends OpenSearchTestCase {
             clusterService,
             shardAction,
             new ActionFilters(emptySet()),
-            new Resolver()
+            new Resolver(),
+            threadPool
         ) {
             @Override
             protected void executeShardAction(
@@ -275,7 +276,8 @@ public class TransportMultiGetActionTests extends OpenSearchTestCase {
             clusterService,
             shardAction,
             new ActionFilters(emptySet()),
-            new Resolver()
+            new Resolver(),
+            threadPool
         ) {
             @Override
             protected void executeShardAction(

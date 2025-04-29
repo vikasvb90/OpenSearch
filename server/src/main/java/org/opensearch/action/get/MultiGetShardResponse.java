@@ -51,7 +51,7 @@ public class MultiGetShardResponse extends ActionResponse {
     final List<GetResponse> responses;
     final List<MultiGetResponse.Failure> failures;
 
-    MultiGetShardResponse() {
+    public MultiGetShardResponse() {
         locations = new ArrayList<>();
         responses = new ArrayList<>();
         failures = new ArrayList<>();

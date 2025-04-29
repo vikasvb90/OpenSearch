@@ -62,6 +62,7 @@ import java.io.IOException;
 public class TransportGetAction extends TransportSingleShardAction<GetRequest, GetResponse> {
 
     private final IndicesService indicesService;
+    protected static String actionName = GetAction.NAME;
 
     @Inject
     public TransportGetAction(
@@ -73,7 +74,7 @@ public class TransportGetAction extends TransportSingleShardAction<GetRequest, G
         IndexNameExpressionResolver indexNameExpressionResolver
     ) {
         super(
-            GetAction.NAME,
+            actionName,
             threadPool,
             clusterService,
             transportService,
@@ -113,7 +114,12 @@ public class TransportGetAction extends TransportSingleShardAction<GetRequest, G
             preference = request.request().preference();
         }
         return clusterService.operationRouting()
-            .getShards(clusterService.state(), request.concreteIndex(), request.request().id(), request.request().routing(), preference);
+            .getShards(getClusterState(), request.concreteIndex(), request.request().id(), request.request().routing(), preference);
+    }
+
+    @Override
+    protected ClusterState getClusterState() {
+        return super.getClusterState();
     }
 
     @Override

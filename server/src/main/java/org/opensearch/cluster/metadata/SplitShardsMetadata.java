@@ -321,6 +321,10 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return inProgressSplitShardId == shardId;
     }
 
+    public boolean isActiveShard(int shardId) {
+        return shardId <= maxShardId && shardId >= 0;
+    }
+
     public boolean isEmptyParentShard(int shardId) {
         return isSplitOfShardInProgress(shardId) == false && parentToChildShards.containsKey(shardId);
     }

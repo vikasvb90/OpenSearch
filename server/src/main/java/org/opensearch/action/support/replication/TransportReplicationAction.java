@@ -588,7 +588,8 @@ public abstract class TransportReplicationAction<
                     if (primaryShardReference.routingEntry().splitting()) {
                         // This means shard was being split and was in relocation handoff stage when replication op on primary arrived.
                         // Write ops specifically will now get retried and will be routed to respective child shards by coordinator.
-                        throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
+                        throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.",
+                            primaryShardReference.routingEntry().shardId());
                     }
 
                     setPhase(replicationTask, "primary_delegation");
@@ -1078,7 +1079,8 @@ public abstract class TransportReplicationAction<
                     // This will get retried on coordinator. Entire request will be re-driven on respective child shards.
                     // Since, we are throwing a custom exception, coordinator will re-drive it explicitly on child shards
                     // even if coordinator is also stale and yet to receive update from cluster manager.
-                    throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.");
+                    throw new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary.",
+                        request.shardId);
                 } else {
                     IndexRoutingTable indexRoutingTable = state.getRoutingTable().index(request.shardId().getIndex());
                     IndexShardRoutingTable shardRoutingTable = indexRoutingTable.shard(request.shardId().id());

@@ -32,24 +32,32 @@
 
 package org.opensearch.action.termvectors;
 
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.RoutingMissingException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.HandledTransportAction;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.ClusterStateObserver;
 import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.inject.Inject;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.AtomicArray;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexNotFoundException;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
+import org.opensearch.node.NodeClosedException;
 import org.opensearch.tasks.Task;
+import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.TransportService;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 /**
  * Performs the multi term get operation.
@@ -61,6 +69,8 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
     private final ClusterService clusterService;
     private final TransportShardMultiTermsVectorAction shardAction;
     private final IndexNameExpressionResolver indexNameExpressionResolver;
+    protected static String actionName = MultiTermVectorsAction.NAME;
+    private final ThreadPool threadPool;
 
     @Inject
     public TransportMultiTermVectorsAction(
@@ -68,17 +78,23 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
         ClusterService clusterService,
         TransportShardMultiTermsVectorAction shardAction,
         ActionFilters actionFilters,
-        IndexNameExpressionResolver indexNameExpressionResolver
+        IndexNameExpressionResolver indexNameExpressionResolver,
+        ThreadPool threadPool
     ) {
-        super(MultiTermVectorsAction.NAME, transportService, actionFilters, MultiTermVectorsRequest::new);
+        super(actionName, transportService, actionFilters, MultiTermVectorsRequest::new);
         this.clusterService = clusterService;
         this.shardAction = shardAction;
         this.indexNameExpressionResolver = indexNameExpressionResolver;
+        this.threadPool = threadPool;
+    }
+
+    protected ClusterState getClusterState() {
+        return clusterService.state();
     }
 
     @Override
     protected void doExecute(Task task, final MultiTermVectorsRequest request, final ActionListener<MultiTermVectorsResponse> listener) {
-        ClusterState clusterState = clusterService.state();
+        ClusterState clusterState = getClusterState();
 
         clusterState.blocks().globalBlockedRaiseException(ClusterBlockLevel.READ);
 
@@ -135,8 +151,49 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
             listener.onResponse(new MultiTermVectorsResponse(responses.toArray(new MultiTermVectorsItemResponse[responses.length()])));
         }
 
-        executeShardAction(listener, responses, shardRequests);
+        executeShardAction(wrapWithSplitExHandler(task, request, listener, clusterState), responses, shardRequests);
     }
+
+    protected ActionListener<MultiTermVectorsResponse> wrapWithSplitExHandler(Task task, MultiTermVectorsRequest request,
+                                                                      ActionListener<MultiTermVectorsResponse> listener,
+                                                                      ClusterState clusterState) {
+        return ActionListener.delegateResponse(listener, (delegatedListener, ex) -> {
+            if (ex instanceof PrimaryShardSplitException) {
+                ClusterStateObserver observer = new ClusterStateObserver(clusterState, clusterService, null,
+                    logger, threadPool.getThreadContext());
+                PrimaryShardSplitException splitException = (PrimaryShardSplitException) ex;
+                waitForSplitCompleteOnStateAndRedrive(
+                    observer,
+                    InPlaceShardSplitRecoveryService.splitNotActivePredicate(splitException.getShardId()),
+                    listener,
+                    () -> this.doExecute(task, request, listener)
+                );
+                return;
+            }
+            listener.onFailure(ex);
+        });
+    }
+
+    protected void waitForSplitCompleteOnStateAndRedrive(ClusterStateObserver observer, Predicate<ClusterState> splitNotActive,
+                                                         ActionListener<MultiTermVectorsResponse> listener, Runnable runnable) {
+        observer.waitForNextChange(new ClusterStateObserver.Listener() {
+            @Override
+            public void onNewClusterState(ClusterState state) {
+                runnable.run();
+            }
+
+            @Override
+            public void onClusterServiceClose() {
+                listener.onFailure(new NodeClosedException(clusterService.localNode()));
+            }
+
+            @Override
+            public void onTimeout(TimeValue timeout) {
+                throw new AssertionError("Cannot happen: there is not timeout");
+            }
+        }, splitNotActive);
+    }
+
 
     protected void executeShardAction(
         ActionListener<MultiTermVectorsResponse> listener,
@@ -147,6 +204,8 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
 
         for (final MultiTermVectorsShardRequest shardRequest : shardRequests.values()) {
             shardAction.execute(shardRequest, new ActionListener<MultiTermVectorsShardResponse>() {
+                private final AtomicReference<PrimaryShardSplitException> shardSplitEx = new AtomicReference<>();
+
                 @Override
                 public void onResponse(MultiTermVectorsShardResponse response) {
                     for (int i = 0; i < response.locations.size(); i++) {
@@ -162,6 +221,9 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
 
                 @Override
                 public void onFailure(Exception e) {
+                    if (e instanceof PrimaryShardSplitException) {
+                        shardSplitEx.set((PrimaryShardSplitException) e);
+                    }
                     // create failures for all relevant requests
                     for (int i = 0; i < shardRequest.locations.size(); i++) {
                         TermVectorsRequest termVectorsRequest = shardRequest.requests.get(i);
@@ -174,7 +236,11 @@ public class TransportMultiTermVectorsAction extends HandledTransportAction<Mult
                         );
                     }
                     if (counter.decrementAndGet() == 0) {
-                        finishHim();
+                        if (shardSplitEx.get() != null) {
+                            listener.onFailure(shardSplitEx.get());
+                        } else {
+                            finishHim();
+                        }
                     }
                 }
 

@@ -10,6 +10,7 @@ package org.opensearch.action;
 
 import org.opensearch.OpenSearchException;
 import org.opensearch.core.common.io.stream.StreamInput;
+import org.opensearch.core.index.shard.ShardId;
 
 import java.io.IOException;
 
@@ -19,8 +20,9 @@ import java.io.IOException;
  * @opensearch.internal
  */
 public class PrimaryShardSplitException extends OpenSearchException {
-    public PrimaryShardSplitException(String msg) {
+    public PrimaryShardSplitException(String msg, ShardId shardId) {
         super(msg);
+        setShard(shardId);
     }
 
     public PrimaryShardSplitException(final StreamInput in) throws IOException {

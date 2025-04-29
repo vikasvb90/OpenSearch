@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.opensearch.OpenSearchException;
 import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.cluster.ClusterChangedEvent;
+import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.ClusterStateListener;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
@@ -46,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent implements IndexEventListener, ClusterStateListener {
     private static final Logger logger = LogManager.getLogger(InPlaceShardSplitRecoveryService.class);
@@ -105,15 +107,6 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     @Override
     public void clusterChanged(ClusterChangedEvent event) {}
 
-    public synchronized void cancelRecovery(ShardId shardId) {
-        OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(shardId);
-        if (recovery == null) {
-            return;
-        }
-
-        recovery.sourceHandler.cancel("Cancelled on cancellation event");
-    }
-
     public void addAndStartRecovery(List<InPlaceShardRecoveryContext> recoveryContexts,
                                     DiscoveryNode node,
                                     IndexShard sourceShard,
@@ -172,6 +165,15 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     public boolean isHandOffPending(ShardId parentShardId) {
         OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(parentShardId);
         return recovery != null && Boolean.TRUE.equals(recovery.handOffInitiated.get()) == false;
+    }
+
+    public synchronized void cancelRecovery(ShardId shardId) {
+        OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(shardId);
+        if (recovery == null) {
+            return;
+        }
+
+        recovery.sourceHandler.cancel("Cancelled on cancellation event");
     }
 
     public void startChildShards(ShardId parentShardId) {
@@ -399,6 +401,14 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             FutureUtils.get(future);
         }
 
+    }
+
+    public static Predicate<ClusterState> splitNotActivePredicate(ShardId shardId) {
+        Predicate<ClusterState> indexPresent = state -> state.metadata().index(shardId.getIndex()) != null;
+        Predicate<ClusterState> isSplitOngoing = state ->  state.metadata().index(shardId.getIndex()).getSplitShardsMetadata()
+            .isSplitOfShardInProgress(shardId.id());
+        return state -> shardId == null ||
+            indexPresent.test(state) == false || isSplitOngoing.test(state) == false;
     }
 
 }

@@ -38,8 +38,10 @@ import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchException;
 import org.opensearch.Version;
 import org.opensearch.action.NoShardAvailableActionException;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.TransportActions;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.routing.FailAwareWeightedRouting;
 import org.opensearch.cluster.routing.GroupShardsIterator;
 import org.opensearch.common.Nullable;
@@ -514,6 +516,20 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         // we do make sure to clean it on a successful response from a shard
         setPhaseResourceUsages();
         onShardFailure(shardIndex, shard, e);
+
+        if (shardIt != null) {
+            IndexMetadata index = clusterState.metadata().index(shardIt.shardId().getIndex());
+            boolean shardSplitting = index != null && index.getSplitShardsMetadata().isSplitOfShardInProgress(shardIt.shardId().id());
+            if (TransportActions.isShardNotAvailableException(e) && shardSplitting) {
+                // We throw a split exception but this may not really be a split if a splitting shard has been relocated away from the node.
+                // It will be retried with right routings fetched from next cluster state update in both cases.
+                // Since we are using a stale cluster state object through all shard iterations, we can never hit the case
+                // of shard split already completed.
+                onPhaseFailure(this, "", new PrimaryShardSplitException("Parent shard " + shard.getShardId() + " is split", shard.getShardId()));
+                return;
+            }
+        }
+
         SearchShardTarget nextShard = FailAwareWeightedRouting.getInstance()
             .findNext(shardIt, clusterState, e, () -> totalOps.incrementAndGet());
 
@@ -799,7 +815,8 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         }
         Releasables.close(releasables);
         onRequestFailure(searchRequestContext);
-        listener.onFailure(exception);
+        Exception propagateException = exception.getCause() instanceof PrimaryShardSplitException ? (Exception) exception.getCause() : exception;
+        listener.onFailure(propagateException);
     }
 
     /**
