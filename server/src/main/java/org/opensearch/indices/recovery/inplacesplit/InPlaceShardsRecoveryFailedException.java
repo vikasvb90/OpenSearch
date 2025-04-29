@@ -9,9 +9,11 @@
 package org.opensearch.indices.recovery.inplacesplit;
 
 import org.opensearch.common.annotation.ExperimentalApi;
+import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.indices.replication.common.ReplicationFailedException;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 
@@ -27,4 +29,7 @@ public class InPlaceShardsRecoveryFailedException extends ReplicationFailedExcep
         super("Split of shard : " + sourceShardId + " failed.");
     }
 
+    public InPlaceShardsRecoveryFailedException(StreamInput in) throws IOException {
+        super(in);
+    }
 }
