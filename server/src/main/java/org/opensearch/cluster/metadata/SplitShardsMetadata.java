@@ -9,10 +9,12 @@
 package org.opensearch.cluster.metadata;
 
 import org.opensearch.cluster.AbstractDiffable;
+import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.Diff;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
+import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.core.xcontent.ToXContentFragment;
 import org.opensearch.core.xcontent.XContentBuilder;
 import org.opensearch.core.xcontent.XContentParser;
@@ -24,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> implements ToXContentFragment {
     private static final int MINIMUM_RANGE_LENGTH_THRESHOLD = 1000;
@@ -321,6 +324,10 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return inProgressSplitShardId == shardId;
     }
 
+    public boolean isActiveShard(int shardId) {
+        return shardId <= maxShardId && shardId >= 0;
+    }
+
     public boolean isEmptyParentShard(int shardId) {
         return isSplitOfShardInProgress(shardId) == false && parentToChildShards.containsKey(shardId);
     }
@@ -442,6 +449,14 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
 
     public static Diff<SplitShardsMetadata> readDiffFrom(StreamInput in) throws IOException {
         return readDiffFrom(SplitShardsMetadata::new, in);
+    }
+
+    public static Predicate<ClusterState> splitNotActivePredicate(ShardId shardId) {
+        Predicate<ClusterState> indexPresent = state -> state.metadata().index(shardId.getIndex()) != null;
+        Predicate<ClusterState> isSplitOngoing = state ->  state.metadata().index(shardId.getIndex()).getSplitShardsMetadata()
+            .isSplitOfShardInProgress(shardId.id());
+        return state -> shardId == null ||
+            indexPresent.test(state) == false || isSplitOngoing.test(state) == false;
     }
 
 }

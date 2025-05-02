@@ -33,6 +33,8 @@
 package org.opensearch.action.search;
 
 import org.apache.logging.log4j.LogManager;
+import org.junit.After;
+import org.junit.Before;
 import org.opensearch.action.OriginalIndices;
 import org.opensearch.action.support.IndicesOptions;
 import org.opensearch.cluster.ClusterState;
@@ -66,8 +68,6 @@ import org.opensearch.test.OpenSearchTestCase;
 import org.opensearch.threadpool.TestThreadPool;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.Transport;
-import org.junit.After;
-import org.junit.Before;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -89,10 +89,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.stream.IntStream;
 
-import static org.opensearch.tasks.TaskResourceTrackingService.TASK_RESOURCE_USAGE;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.opensearch.tasks.TaskResourceTrackingService.TASK_RESOURCE_USAGE;
 
 public class AbstractSearchAsyncActionTests extends OpenSearchTestCase {
 

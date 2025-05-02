@@ -35,14 +35,19 @@ package org.opensearch.action.support.single.shard;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.opensearch.action.ActionRunnable;
 import org.opensearch.action.NoShardAvailableActionException;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.ChannelActionListener;
 import org.opensearch.action.support.TransportAction;
 import org.opensearch.action.support.TransportActions;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.ClusterStateObserver;
 import org.opensearch.cluster.block.ClusterBlockException;
 import org.opensearch.cluster.block.ClusterBlockLevel;
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
+import org.opensearch.cluster.metadata.ShardRange;
+import org.opensearch.cluster.metadata.SplitShardsMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.routing.FailAwareWeightedRouting;
@@ -50,12 +55,15 @@ import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.routing.ShardsIterator;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.Nullable;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.action.ActionResponse;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.Writeable;
 import org.opensearch.core.common.logging.LoggerMessageFormat;
 import org.opensearch.core.index.shard.ShardId;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
+import org.opensearch.node.NodeClosedException;
 import org.opensearch.tasks.Task;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.TransportChannel;
@@ -65,6 +73,10 @@ import org.opensearch.transport.TransportResponseHandler;
 import org.opensearch.transport.TransportService;
 
 import java.io.IOException;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Predicate;
 
 import static org.opensearch.action.support.TransportActions.isShardNotAvailableException;
 
@@ -154,6 +166,43 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
     @Nullable
     protected abstract ShardsIterator shards(ClusterState state, InternalRequest request);
 
+    protected void waitForSplitCompletionAndRedrive(ClusterStateObserver observer, ActionListener<Response> listener,
+                                                    InternalRequest internalRequest, Exception currentFailure,
+                                                    Predicate<ClusterState> splitNotActive) {
+        observer.waitForNextChange(new ClusterStateObserver.Listener() {
+            @Override
+            public void onNewClusterState(ClusterState state) {
+                publishResponseOnNewClusterState(listener, internalRequest);
+            }
+
+            @Override
+            public void onClusterServiceClose() {
+                NodeClosedException ex = new NodeClosedException(clusterService.localNode());
+                ex.addSuppressed(currentFailure);
+                sendFailure(ex, listener, internalRequest);
+            }
+
+            @Override
+            public void onTimeout(TimeValue timeout) {
+                throw new AssertionError("Cannot happen: there is not timeout");
+            }
+        }, splitNotActive);
+    }
+
+    protected void publishResponseOnNewClusterState(ActionListener<Response> listener, InternalRequest internalRequest) {
+        if (isSubAction()) {
+            listener.onFailure(new PrimaryShardSplitException("Shard "
+                + internalRequest.request().internalShardId + " is split",
+                internalRequest.request().internalShardId));
+        } else {
+            new AsyncSingleAction(internalRequest.request, listener).start();
+        }
+    }
+
+    protected ClusterState getClusterState() {
+        return clusterService.state();
+    }
+
     /**
      * Asynchronous single action
      *
@@ -166,11 +215,12 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
         private final InternalRequest internalRequest;
         private final DiscoveryNodes nodes;
         private volatile Exception lastFailure;
+        private final Set<Integer> recoveringChildShardIds;
 
         private AsyncSingleAction(Request request, ActionListener<Response> listener) {
             this.listener = listener;
 
-            ClusterState clusterState = clusterService.state();
+            ClusterState clusterState = getClusterState();
             if (logger.isTraceEnabled()) {
                 logger.trace("executing [{}] based on cluster state version [{}]", request, clusterState.version());
             }
@@ -195,6 +245,17 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
             }
 
             this.shardIt = shards(clusterState, internalRequest);
+
+            recoveringChildShardIds = new HashSet<>();
+            if (shardIt != null && shardIt.size() > 0) {
+                ShardRange[] childShards = clusterState.metadata().index(concreteSingleIndex).getSplitShardsMetadata()
+                    .getChildShardsOfParent(shardIt.getShardRoutings().get(0).id());
+                if (childShards != null) {
+                    for (ShardRange childShard : childShards) {
+                        recoveringChildShardIds.add(childShard.getShardId());
+                    }
+                }
+            }
         }
 
         public void start() {
@@ -246,22 +307,48 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
                 this.lastFailure = currentFailure;
             }
             ShardRouting shardRouting = FailAwareWeightedRouting.getInstance()
-                .findNext(shardIt, clusterService.state(), currentFailure, () -> {});
+                .findNext(shardIt, getClusterState(), currentFailure, () -> {});
 
-            if (shardRouting == null) {
-                Exception failure = lastFailure;
-                if (failure == null || isShardNotAvailableException(failure)) {
-                    failure = new NoShardAvailableActionException(
-                        null,
-                        LoggerMessageFormat.format("No shard available for [{}]", internalRequest.request()),
-                        failure
-                    );
-                } else {
-                    logger.debug(() -> new ParameterizedMessage("{}: failed to execute [{}]", null, internalRequest.request()), failure);
+            boolean shardSplitting = false;
+            ClusterState state = getClusterState();
+
+            IndexMetadata indexMetadata = null;
+            if (shardIt.size() > 0) {
+                ShardId shardId = shardIt.getShardRoutings().get(0).shardId();
+                indexMetadata = state.metadata().index(shardId.getIndex());
+                if (indexMetadata != null) {
+                    shardSplitting = indexMetadata.getSplitShardsMetadata().isSplitOfShardInProgress(shardId.id());
                 }
-                listener.onFailure(failure);
+            }
+
+            while (shardRouting != null && indexMetadata != null &&
+                indexMetadata.getSplitShardsMetadata().isActiveShard(shardRouting.id()) == false) {
+                // Skipping initializing child shards here.
+                shardRouting = FailAwareWeightedRouting.getInstance()
+                    .findNext(shardIt, getClusterState(), currentFailure, () -> {});
+            }
+
+            if (shardRouting == null && shardIt.size() > 0 && shardSplitting && TransportActions.isShardNotAvailableException(currentFailure)) {
+                ClusterStateObserver observer = new ClusterStateObserver(state, clusterService, null, logger, threadPool.getThreadContext());
+                ShardId shardId = shardIt.getShardRoutings().get(0).shardId();
+                waitForSplitCompletionAndRedrive(observer, listener, internalRequest, currentFailure,
+                    SplitShardsMetadata.splitNotActivePredicate(shardId));
+                return;
+            } else if (shardRouting == null) {
+                sendFailure(lastFailure, listener, internalRequest);
+                return;
+            } else if (recoveringChildShardIds.contains(shardRouting.id()) && isSubAction()) {
+                // For multi shard actions, we need to throw it back to base action and redrive on right child shards.
+                // If request lands on single shard action after cluster state is updated then there's no handling required
+                // since shard iterator will be created with correct routings and because of this current node will forward
+                // the request to the node having respective child shard.
+                // But if cluster state gets updated after shard iterator is created then iterator will have stale
+                // routings but cluster state will be latest since we enter this block only when cluster state is already
+                // updated. Hence, this block handles this specific scenario.
+                publishResponseOnNewClusterState(listener, internalRequest);
                 return;
             }
+
             DiscoveryNode node = nodes.get(shardRouting.currentNodeId());
             if (node == null) {
                 onFailure(shardRouting, new NoShardAvailableActionException(shardRouting.shardId()));
@@ -306,6 +393,21 @@ public abstract class TransportSingleShardAction<Request extends SingleShardRequ
                 );
             }
         }
+
+
+    }
+
+    private void sendFailure(Exception failure, ActionListener<Response> listener, InternalRequest internalRequest) {
+        if (failure == null || isShardNotAvailableException(failure)) {
+            failure = new NoShardAvailableActionException(
+                null,
+                LoggerMessageFormat.format("No shard available for [{}]", internalRequest.request()),
+                failure
+            );
+        } else {
+            logger.debug(() -> new ParameterizedMessage("{}: failed to execute [{}]", null, internalRequest.request()), failure);
+        }
+        listener.onFailure(failure);
     }
 
     /**

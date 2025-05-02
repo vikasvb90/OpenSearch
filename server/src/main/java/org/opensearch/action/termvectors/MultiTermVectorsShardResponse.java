@@ -51,7 +51,7 @@ public class MultiTermVectorsShardResponse extends ActionResponse {
     final List<TermVectorsResponse> responses;
     final List<MultiTermVectorsResponse.Failure> failures;
 
-    MultiTermVectorsShardResponse() {
+    public MultiTermVectorsShardResponse() {
         locations = new ArrayList<>();
         responses = new ArrayList<>();
         failures = new ArrayList<>();

@@ -61,7 +61,7 @@ public class TransportShardMultiTermsVectorAction extends TransportSingleShardAc
 
     private final IndicesService indicesService;
 
-    private static final String ACTION_NAME = MultiTermVectorsAction.NAME + "[shard]";
+    protected static String ACTION_NAME = MultiTermVectorsAction.NAME + "[shard]";
 
     @Inject
     public TransportShardMultiTermsVectorAction(
@@ -83,6 +83,11 @@ public class TransportShardMultiTermsVectorAction extends TransportSingleShardAc
             ThreadPool.Names.GET
         );
         this.indicesService = indicesService;
+    }
+
+    @Override
+    protected ClusterState getClusterState() {
+        return super.getClusterState();
     }
 
     @Override

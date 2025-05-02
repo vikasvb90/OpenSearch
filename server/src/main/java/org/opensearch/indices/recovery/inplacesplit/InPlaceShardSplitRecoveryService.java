@@ -105,15 +105,6 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     @Override
     public void clusterChanged(ClusterChangedEvent event) {}
 
-    public synchronized void cancelRecovery(ShardId shardId) {
-        OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(shardId);
-        if (recovery == null) {
-            return;
-        }
-
-        recovery.sourceHandler.cancel("Cancelled on cancellation event");
-    }
-
     public void addAndStartRecovery(List<InPlaceShardRecoveryContext> recoveryContexts,
                                     DiscoveryNode node,
                                     IndexShard sourceShard,
@@ -172,6 +163,15 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     public boolean isHandOffPending(ShardId parentShardId) {
         OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(parentShardId);
         return recovery != null && Boolean.TRUE.equals(recovery.handOffInitiated.get()) == false;
+    }
+
+    public synchronized void cancelRecovery(ShardId shardId) {
+        OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(shardId);
+        if (recovery == null) {
+            return;
+        }
+
+        recovery.sourceHandler.cancel("Cancelled on cancellation event");
     }
 
     public void startChildShards(ShardId parentShardId) {

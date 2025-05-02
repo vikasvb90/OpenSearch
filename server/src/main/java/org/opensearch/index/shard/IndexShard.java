@@ -63,7 +63,6 @@ import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.upgrade.post.UpgradeRequest;
-import org.opensearch.action.bulk.TransportShardBulkAction;
 import org.opensearch.action.support.replication.PendingReplicationActions;
 import org.opensearch.action.support.replication.ReplicationResponse;
 import org.opensearch.cluster.metadata.DataStream;
@@ -4320,7 +4319,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 // Scenario when replication tracker is no longer in primary mode after split and child shards are still
                 // pending to be started.
                 r.close();
-                l.onFailure(new PrimaryShardSplitException("Primary shard is already split."));
+                l.onFailure(new PrimaryShardSplitException("Primary shard is already split.", shardId));
             } else {
                 r.close();
                 l.onFailure(new ShardNotInPrimaryModeException(shardId, state));

@@ -33,6 +33,7 @@
 package org.opensearch.action.search;
 
 import org.opensearch.action.OriginalIndices;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.admin.cluster.node.tasks.cancel.CancelTasksRequest;
 import org.opensearch.action.admin.cluster.shards.ClusterSearchShardsGroup;
 import org.opensearch.action.admin.cluster.shards.ClusterSearchShardsRequest;
@@ -45,11 +46,13 @@ import org.opensearch.client.Client;
 import org.opensearch.client.OriginSettingClient;
 import org.opensearch.client.node.NodeClient;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.ClusterStateObserver;
 import org.opensearch.cluster.block.ClusterBlockException;
 import org.opensearch.cluster.block.ClusterBlockLevel;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.metadata.ShardRange;
+import org.opensearch.cluster.metadata.SplitShardsMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.node.DiscoveryNodes;
 import org.opensearch.cluster.routing.GroupShardsIterator;
@@ -73,6 +76,8 @@ import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.core.indices.breaker.CircuitBreakerService;
 import org.opensearch.core.tasks.TaskId;
 import org.opensearch.index.query.Rewriteable;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoveryService;
+import org.opensearch.node.NodeClosedException;
 import org.opensearch.search.SearchPhaseResult;
 import org.opensearch.search.SearchService;
 import org.opensearch.search.SearchShardTarget;
@@ -122,6 +127,7 @@ import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
@@ -177,6 +183,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
     private final SearchPipelineService searchPipelineService;
     private final SearchRequestOperationsCompositeListenerFactory searchRequestOperationsCompositeListenerFactory;
     private final Tracer tracer;
+    protected static String actionName = SearchAction.NAME;
 
     private final MetricsRegistry metricsRegistry;
 
@@ -201,14 +208,14 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         Tracer tracer,
         TaskResourceTrackingService taskResourceTrackingService
     ) {
-        super(SearchAction.NAME, transportService, actionFilters, (Writeable.Reader<SearchRequest>) SearchRequest::new);
+        super(actionName, transportService, actionFilters, (Writeable.Reader<SearchRequest>) SearchRequest::new);
         this.client = client;
         this.threadPool = threadPool;
         this.circuitBreaker = circuitBreakerService.getBreaker(CircuitBreaker.REQUEST);
         this.searchPhaseController = searchPhaseController;
         this.searchTransportService = searchTransportService;
         this.remoteClusterService = searchTransportService.getRemoteClusterService();
-        SearchTransportService.registerRequestHandler(transportService, searchService);
+        registerSearchTransportHandlers(transportService, searchService);
         this.clusterService = clusterService;
         this.searchService = searchService;
         this.indexNameExpressionResolver = indexNameExpressionResolver;
@@ -218,6 +225,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         this.searchRequestOperationsCompositeListenerFactory = searchRequestOperationsCompositeListenerFactory;
         this.tracer = tracer;
         this.taskResourceTrackingService = taskResourceTrackingService;
+    }
+
+    protected void registerSearchTransportHandlers(TransportService transportService, SearchService searchService) {
+        SearchTransportService.registerRequestHandler(transportService, searchService);
     }
 
     private Map<String, AliasFilter> buildPerIndexAliasFilter(
@@ -432,58 +443,124 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
         final Span requestSpan = tracer.startSpan(SpanBuilder.from(task, actionName));
         try (final SpanScope spanScope = tracer.withSpanInScope(requestSpan)) {
-            SearchRequestOperationsListener.CompositeListener requestOperationsListeners;
+            final ClusterState clusterState = getClusterState();
+            ClusterStateObserver observer = new ClusterStateObserver(clusterState, clusterService, null, logger, threadPool.getThreadContext());
             final ActionListener<SearchResponse> updatedListener = TraceableActionListener.create(originalListener, requestSpan, tracer);
-            requestOperationsListeners = searchRequestOperationsCompositeListenerFactory.buildCompositeListener(
-                originalSearchRequest,
-                logger,
-                TraceableSearchRequestOperationsListener.create(tracer, requestSpan)
-            );
-            SearchRequestContext searchRequestContext = new SearchRequestContext(
-                requestOperationsListeners,
-                originalSearchRequest,
-                taskResourceTrackingService::getTaskResourceUsageFromThreadContext
-            );
-            searchRequestContext.getSearchRequestOperationsListener().onRequestStart(searchRequestContext);
-
-            // At this point either the QUERY_GROUP_ID header will be present in ThreadContext either via ActionFilter
-            // or HTTP header (HTTP header will be deprecated once ActionFilter is implemented)
-            if (task instanceof QueryGroupTask) {
-                ((QueryGroupTask) task).setQueryGroupId(threadPool.getThreadContext());
-            }
-
-            PipelinedRequest searchRequest;
-            ActionListener<SearchResponse> listener;
-            try {
-                searchRequest = searchPipelineService.resolvePipeline(originalSearchRequest, indexNameExpressionResolver);
-                listener = searchRequest.transformResponseListener(updatedListener);
-            } catch (Exception e) {
-                updatedListener.onFailure(e);
-                return;
-            }
-
-            ActionListener<SearchRequest> requestTransformListener = ActionListener.wrap(sr -> {
-
-                ActionListener<SearchSourceBuilder> rewriteListener = buildRewriteListener(
-                    sr,
+            BiConsumer<ActionListener<SearchResponse>, ClusterState> searchRequestExecutable =
+                (delegatedListener, delegatedState) -> innerExecuteRequest(
                     task,
-                    timeProvider,
+                    originalSearchRequest,
                     searchAsyncActionProvider,
-                    listener,
-                    searchRequestContext
+                    timeProvider,
+                    delegatedState,
+                    TraceableSearchRequestOperationsListener.create(tracer, requestSpan),
+                    delegatedListener
                 );
-                if (sr.source() == null) {
-                    rewriteListener.onResponse(sr.source());
-                } else {
-                    Rewriteable.rewriteAndFetch(
-                        sr.source(),
-                        searchService.getRewriteContext(timeProvider::getAbsoluteStartMillis),
-                        rewriteListener
-                    );
-                }
-            }, listener::onFailure);
-            searchRequest.transformRequest(requestTransformListener);
+            ActionListener<SearchResponse> splitExHandlerWrappedOriginalListener = wrapWithSplitExceptionHandler(observer,
+                updatedListener, searchRequestExecutable);
+            searchRequestExecutable.accept(splitExHandlerWrappedOriginalListener, clusterState);
         }
+    }
+
+    protected ClusterState getClusterState() {
+        return clusterService.state();
+    }
+
+    private ActionListener<SearchResponse> wrapWithSplitExceptionHandler(ClusterStateObserver observer,
+                                                                         ActionListener<SearchResponse> delegate,
+                                                                         BiConsumer<ActionListener<SearchResponse>, ClusterState> localSearchExecutable) {
+        return ActionListener.delegateResponse(delegate, (delegatedListener, ex) -> {
+            if (ex instanceof PrimaryShardSplitException) {
+                PrimaryShardSplitException splitException = (PrimaryShardSplitException) ex;
+                waitForSplitCompleteOnStateAndRedrive(observer,
+                    SplitShardsMetadata.splitNotActivePredicate(splitException.getShardId()),
+                    delegate, localSearchExecutable);
+            } else {
+                delegate.onFailure(ex);
+            }
+        });
+    }
+
+    protected void waitForSplitCompleteOnStateAndRedrive(ClusterStateObserver observer, Predicate<ClusterState> splitNotActive,
+                                                         ActionListener<SearchResponse> delegate,
+                                                         BiConsumer<ActionListener<SearchResponse>, ClusterState> localSearchExecutable) {
+        observer.waitForNextChange(new ClusterStateObserver.Listener() {
+            @Override
+            public void onNewClusterState(ClusterState state) {
+                localSearchExecutable.accept(delegate, state);
+            }
+
+            @Override
+            public void onClusterServiceClose() {
+                delegate.onFailure(new NodeClosedException(clusterService.localNode()));
+            }
+
+            @Override
+            public void onTimeout(TimeValue timeout) {
+                throw new AssertionError("Cannot happen: there is not timeout");
+            }
+        }, splitNotActive);
+    }
+
+    private void innerExecuteRequest(
+        Task task,
+        SearchRequest originalSearchRequest,
+        SearchAsyncActionProvider searchAsyncActionProvider,
+        SearchTimeProvider timeProvider,
+        ClusterState clusterState,
+        SearchRequestOperationsListener traceableListener,
+        ActionListener<SearchResponse> updatedListener
+    ) {
+        SearchRequestOperationsListener.CompositeListener requestOperationsListeners;
+        requestOperationsListeners = searchRequestOperationsCompositeListenerFactory.buildCompositeListener(
+            originalSearchRequest,
+            logger,
+            traceableListener
+        );
+        SearchRequestContext searchRequestContext = new SearchRequestContext(
+            requestOperationsListeners,
+            originalSearchRequest,
+            taskResourceTrackingService::getTaskResourceUsageFromThreadContext
+        );
+        searchRequestContext.getSearchRequestOperationsListener().onRequestStart(searchRequestContext);
+
+        // At this point either the QUERY_GROUP_ID header will be present in ThreadContext either via ActionFilter
+        // or HTTP header (HTTP header will be deprecated once ActionFilter is implemented)
+        if (task instanceof QueryGroupTask) {
+            ((QueryGroupTask) task).setQueryGroupId(threadPool.getThreadContext());
+        }
+
+        PipelinedRequest searchRequest;
+        ActionListener<SearchResponse> listener;
+        try {
+            searchRequest = searchPipelineService.resolvePipeline(originalSearchRequest, indexNameExpressionResolver);
+            listener = searchRequest.transformResponseListener(updatedListener);
+        } catch (Exception e) {
+            updatedListener.onFailure(e);
+            return;
+        }
+
+        ActionListener<SearchRequest> requestTransformListener = ActionListener.wrap(sr -> {
+            ActionListener<SearchSourceBuilder> rewriteListener = buildRewriteListener(
+                sr,
+                task,
+                timeProvider,
+                searchAsyncActionProvider,
+                listener,
+                searchRequestContext,
+                clusterState
+            );
+            if (sr.source() == null) {
+                rewriteListener.onResponse(sr.source());
+            } else {
+                Rewriteable.rewriteAndFetch(
+                    sr.source(),
+                    searchService.getRewriteContext(timeProvider::getAbsoluteStartMillis),
+                    rewriteListener
+                );
+            }
+        }, listener::onFailure);
+        searchRequest.transformRequest(requestTransformListener);
     }
 
     private ActionListener<SearchSourceBuilder> buildRewriteListener(
@@ -492,7 +569,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         SearchTimeProvider timeProvider,
         SearchAsyncActionProvider searchAsyncActionProvider,
         ActionListener<SearchResponse> listener,
-        SearchRequestContext searchRequestContext
+        SearchRequestContext searchRequestContext,
+        ClusterState clusterState
     ) {
         return ActionListener.wrap(source -> {
             if (source != searchRequest.source()) {
@@ -500,7 +578,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 // situations when source is rewritten to null due to a bug
                 searchRequest.source(source);
             }
-            final ClusterState clusterState = clusterService.state();
             final SearchContextId searchContext;
             final Map<String, OriginalIndices> remoteClusterIndices;
             if (searchRequest.pointInTimeBuilder() != null) {
