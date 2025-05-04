@@ -224,6 +224,11 @@ final class ShardSplittingQuery extends Query {
     private static void findSplitDocs(String idField, Predicate<BytesRef> includeInShard, LeafReader leafReader, IntConsumer consumer)
         throws IOException {
         Terms terms = leafReader.terms(idField);
+        if (terms == null) {
+            // This can happen if leafReader only has NoOp doc(s). In consecutive splits or heavy delete only traffic
+            // in a non-empty shard this is likely to occur.
+            return;
+        }
         TermsEnum iterator = terms.iterator();
         BytesRef idTerm;
         PostingsEnum postingsEnum = null;
