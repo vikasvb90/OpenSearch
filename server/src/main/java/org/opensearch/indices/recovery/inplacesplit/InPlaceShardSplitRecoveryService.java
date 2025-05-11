@@ -31,6 +31,7 @@ import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.shard.IndexEventListener;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.indices.cluster.IndicesClusterStateService;
 import org.opensearch.indices.recovery.DelayRecoveryException;
 import org.opensearch.indices.recovery.RecoveryResponse;
 import org.opensearch.indices.recovery.RecoverySettings;
@@ -105,13 +106,10 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     @Override
     public void clusterChanged(ClusterChangedEvent event) {}
 
-    public synchronized void cancelRecovery(ShardId shardId) {
-        OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(shardId);
-        if (recovery == null) {
-            return;
-        }
-
-        recovery.sourceHandler.cancel("Cancelled on cancellation event");
+    public void cancelRecovery(IndicesClusterStateService.Shard shard) {
+        assert shard instanceof IndexShard;
+        IndexShard indexShard = (IndexShard) shard;
+        ongoingRecoveries.cancel(indexShard, "split-cancel-event");
     }
 
     public void addAndStartRecovery(List<InPlaceShardRecoveryContext> recoveryContexts,
@@ -337,6 +335,9 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
         }
 
         public void markAsDone(IndexShard sourceShard) {
+            if (!recoveries.containsKey(sourceShard.shardId())) {
+                return;
+            }
             synchronized (this) {
                 Recovery removed = recoveries.remove(sourceShard.shardId());
                 if (removed != null) {
@@ -349,6 +350,9 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
         }
 
         public void fail(IndexShard sourceShard, ReplicationFailedException ex, boolean sendShardFailure) {
+            if (!recoveries.containsKey(sourceShard.shardId())) {
+                return;
+            }
             synchronized (this) {
                 Recovery removed = recoveries.remove(sourceShard.shardId());
                 if (removed != null) {
@@ -360,10 +364,14 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
         }
 
         void cancel(IndexShard shard, String reason) {
+            ShardId sourceShardId = getSplittingSourceShardId(shard);
+            if (sourceShardId == null || !recoveries.containsKey(sourceShardId)) {
+                return;
+            }
+            logger.info("ShardSplit: cancelling split of shard {} with reason {}", shard.shardId(), reason);
             synchronized (this) {
                 try {
-                    ShardId sourceShardId = getSplittingSourceShardId(shard);
-                    if (sourceShardId != null && recoveries.containsKey(sourceShardId)) {
+                    if (recoveries.containsKey(sourceShardId)) {
                         recoveries.get(sourceShardId).sourceHandler.cancel(reason);
                     }
                 } catch (Exception ex) {

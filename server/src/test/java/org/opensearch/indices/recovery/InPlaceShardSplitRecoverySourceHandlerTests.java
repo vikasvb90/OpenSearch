@@ -138,7 +138,7 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
         private final TestShardUtils testShardUtils;
         private ActionListener<RecoveryResponse> recoveryResponseListener;
         private final Consumer<IndexShard> failParent;
-        private final Consumer<ShardId> cancelRecovery;
+        private final Consumer<IndexShard> cancelRecovery;
 
         public TestInPlaceShardSplitRecoverySourceHandler(
             IndexShard sourceShard, InPlaceShardSplitRecoveryTargetHandler recoveryTarget, StartRecoveryRequest request,
@@ -146,7 +146,7 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             CancellableThreads cancellableThreads, List<InPlaceShardRecoveryContext> recoveryContexts,
             Set<String> childShardsAllocationIds, InPlaceShardSplitRecoveryListener replicationListener,
             IndexMetadata indexMetadata, Consumer<ShardId> onSync, TestShardSplitParams testShardSplitParams,
-            TestShardUtils testShardUtils, Consumer<IndexShard> failParent, Consumer<ShardId> cancelRecovery) {
+            TestShardUtils testShardUtils, Consumer<IndexShard> failParent, Consumer<IndexShard> cancelRecovery) {
 
             super(sourceShard, recoveryTarget, request, fileChunkSizeInBytes, maxConcurrentFileChunks,
                 maxConcurrentOperations, cancellableThreads, recoveryContexts, childShardsAllocationIds,
@@ -179,7 +179,7 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             } else if (testShardSplitParams.testParentShardFailure && randomBoolean()) {
                 failParent.accept(parentShard);
             } else if (testShardSplitParams.testRecoveryCancelled && randomBoolean()) {
-                cancelRecovery.accept(parentShard.shardId());
+                cancelRecovery.accept(parentShard);
             }
 
             if (testShardSplitParams.indexDocsForTranslogReplay) {
@@ -222,7 +222,7 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
                 failParent.accept(parentShard);
                 // Don't return from here. Let's test whether recovery fails while shard failure is accepted.
             } else if (testShardSplitParams.testRecoveryCancelled ) {
-                cancelRecovery.accept(parentShard.shardId());
+                cancelRecovery.accept(parentShard);
                 // Don't return from here. Let's test whether recovery fails while recovery was cancelled.
             }
 
@@ -240,7 +240,7 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             TestShardSplitParams testShardSplitParams;
             TestShardUtils testShardUtils;
             Consumer<IndexShard> failParent;
-            Consumer<ShardId> cancelRecovery;
+            Consumer<IndexShard> cancelRecovery;
 
             public TestOngoingRecoveries(Lifecycle lifecycle, IndicesService indicesService, RecoverySettings recoverySettings) {
                 super(lifecycle, indicesService, recoverySettings);
@@ -297,7 +297,7 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             super(testShardSplitParams.testSplitResources.indicesService, recoverySettings);
             this.ongoingRecoveries.testShardUtils = testShardSplitParams.testSplitResources.testShardUtils;
             this.ongoingRecoveries.failParent = (parentShard) -> beforeIndexShardClosed(null, parentShard, null);
-            this.ongoingRecoveries.cancelRecovery = (shardId) -> cancelRecovery(shardId);
+            this.ongoingRecoveries.cancelRecovery = this::cancelRecovery;
             this.ongoingRecoveries.testShardSplitParams = testShardSplitParams;
         }
 
