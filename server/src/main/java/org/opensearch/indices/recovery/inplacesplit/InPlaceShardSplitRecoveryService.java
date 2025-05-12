@@ -338,14 +338,20 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             if (!recoveries.containsKey(sourceShard.shardId())) {
                 return;
             }
+            Recovery removed = null;
             synchronized (this) {
-                Recovery removed = recoveries.remove(sourceShard.shardId());
+                removed = recoveries.remove(sourceShard.shardId());
                 if (removed != null) {
                     assert sourceShard.routingEntry().splitting();
                     remove(removed.sourceHandler);
                     removed.targetHandler.onDone();
-                    removed.replicationListener.onDone(null);
+                } else {
+                    logger.error("ShardSplit: No ongoing split found for shard {}", sourceShard.shardId());
                 }
+            }
+
+            if (removed != null) {
+                removed.replicationListener.onDone(null);
             }
         }
 
@@ -353,13 +359,19 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
             if (!recoveries.containsKey(sourceShard.shardId())) {
                 return;
             }
+            Recovery removed = null;
             synchronized (this) {
-                Recovery removed = recoveries.remove(sourceShard.shardId());
+                removed = recoveries.remove(sourceShard.shardId());
                 if (removed != null) {
                     remove(removed.sourceHandler);
-                    removed.replicationListener.onFailure(null, ex, sendShardFailure);
                     failedRecoveries.add(sourceShard.shardId());
                 }
+            }
+            // keeping this outside the synchronized block to avoid a deadlock with IndicesClusterStateService
+            // trying to cancel recovery due to a failing shard while replicationListener::onFailure concurrently
+            // trying to enter synchronized block of IndicesClusterStateService::handleChildRecoveriesFailure
+            if(removed != null) {
+                removed.replicationListener.onFailure(null, ex, sendShardFailure);
             }
         }
 
