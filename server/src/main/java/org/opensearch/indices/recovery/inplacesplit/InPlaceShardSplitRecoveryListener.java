@@ -10,6 +10,7 @@ package org.opensearch.indices.recovery.inplacesplit;
 
 import org.opensearch.cluster.routing.RecoverySource;
 import org.opensearch.cluster.routing.ShardRouting;
+import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.indices.cluster.IndicesClusterStateService;
 import org.opensearch.indices.replication.common.ReplicationFailedException;
@@ -20,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@ExperimentalApi
 public class InPlaceShardSplitRecoveryListener implements ReplicationListener {
 
     private final Map<ShardId, ShardRouting> recoveringShards;

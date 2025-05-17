@@ -1061,6 +1061,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
      *
      * @opensearch.internal
      */
+    @PublicApi(since = "1.0.0")
     public interface Shard {
 
         /**

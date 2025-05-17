@@ -20,6 +20,8 @@ import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.SetOnce;
+import org.opensearch.common.annotation.ExperimentalApi;
+import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.inject.Inject;
 import org.opensearch.common.lifecycle.AbstractLifecycleComponent;
 import org.opensearch.common.lifecycle.Lifecycle;
@@ -48,6 +50,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+@PublicApi(since = "3.0.0")
 public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent implements IndexEventListener, ClusterStateListener {
     private static final Logger logger = LogManager.getLogger(InPlaceShardSplitRecoveryService.class);
 
