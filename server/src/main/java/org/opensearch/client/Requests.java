@@ -67,6 +67,7 @@ import org.opensearch.action.admin.indices.create.CreateIndexRequest;
 import org.opensearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.opensearch.action.admin.indices.exists.indices.IndicesExistsRequest;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
+import org.opensearch.action.admin.indices.forcemerge.ForceExpungeDeletesShardRequest;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.mapping.put.PutMappingRequest;
 import org.opensearch.action.admin.indices.open.OpenIndexRequest;
@@ -292,6 +293,18 @@ public class Requests {
      */
     public static ForceMergeRequest forceMergeRequest(String... indices) {
         return new ForceMergeRequest(indices);
+    }
+
+    /**
+     * Creates a expunge deletes shard request.
+     *
+     * @param index Index name to execute expunge on
+     * @param shardId shard id to execute expunge on.
+     * @return The expunge delete request
+     * @see org.opensearch.client.IndicesAdminClient#forceExpungeDelete(ForceExpungeDeletesShardRequest)
+     */
+    public static ForceExpungeDeletesShardRequest forceExpungeDelete(String index, int shardId) {
+        return new ForceExpungeDeletesShardRequest(index, shardId);
     }
 
     /**

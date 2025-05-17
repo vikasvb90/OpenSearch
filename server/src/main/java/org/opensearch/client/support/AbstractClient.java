@@ -221,6 +221,9 @@ import org.opensearch.action.admin.indices.flush.FlushAction;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.admin.indices.flush.FlushRequestBuilder;
 import org.opensearch.action.admin.indices.flush.FlushResponse;
+import org.opensearch.action.admin.indices.forcemerge.ForceExpungeDeletesShardAction;
+import org.opensearch.action.admin.indices.forcemerge.ForceExpungeDeletesShardRequest;
+import org.opensearch.action.admin.indices.forcemerge.ForceExpungeDeletesShardResponse;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeAction;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequestBuilder;
@@ -1756,6 +1759,19 @@ public abstract class AbstractClient implements Client {
         @Override
         public void forceMerge(final ForceMergeRequest request, final ActionListener<ForceMergeResponse> listener) {
             execute(ForceMergeAction.INSTANCE, request, listener);
+        }
+
+        @Override
+        public ActionFuture<ForceExpungeDeletesShardResponse> forceExpungeDelete(final ForceExpungeDeletesShardRequest request) {
+            return execute(ForceExpungeDeletesShardAction.INSTANCE, request);
+        }
+
+        @Override
+        public void forceExpungeDelete(
+            final ForceExpungeDeletesShardRequest request,
+            ActionListener<ForceExpungeDeletesShardResponse> listener
+        ) {
+            execute(ForceExpungeDeletesShardAction.INSTANCE, request, listener);
         }
 
         @Override

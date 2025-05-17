@@ -59,6 +59,8 @@ import org.opensearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
 import org.opensearch.action.admin.indices.flush.FlushRequestBuilder;
 import org.opensearch.action.admin.indices.flush.FlushResponse;
+import org.opensearch.action.admin.indices.forcemerge.ForceExpungeDeletesShardRequest;
+import org.opensearch.action.admin.indices.forcemerge.ForceExpungeDeletesShardResponse;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequestBuilder;
 import org.opensearch.action.admin.indices.forcemerge.ForceMergeResponse;
@@ -441,6 +443,26 @@ public interface IndicesAdminClient extends OpenSearchClient {
      * Explicitly force merge one or more indices into a the number of segments.
      */
     ForceMergeRequestBuilder prepareForceMerge(String... indices);
+
+    /**
+     * Explicitly force merge one or more indices into a the number of segments.
+     *
+     * @param request The optimize request
+     * @return A result future
+     * @see org.opensearch.client.Requests#forceExpungeDelete(String, int)
+     */
+    ActionFuture<ForceExpungeDeletesShardResponse> forceExpungeDelete(final ForceExpungeDeletesShardRequest request);
+
+    /**
+     * Explicitly force merge one or more indices into a the number of segments.
+     *
+     * @param request The optimize request
+     * @see org.opensearch.client.Requests#forceExpungeDelete(String, int)
+     */
+    void forceExpungeDelete(
+        final ForceExpungeDeletesShardRequest request,
+        ActionListener<ForceExpungeDeletesShardResponse> listener
+    );
 
     /**
      * Explicitly upgrade one or more indices

@@ -8,12 +8,21 @@
 
 package org.opensearch.common.blobstore.transfer.stream;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.lucene.store.AlreadyClosedException;
+import org.apache.lucene.store.IndexInput;
+import org.opensearch.common.concurrent.RefCountedReleasable;
+import org.opensearch.common.lucene.store.InputStreamIndexInput;
+import org.opensearch.common.util.concurrent.RunOnce;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * OffsetRangeFileInputStream extends InputStream to read from a specified offset using FileChannel
@@ -21,6 +30,7 @@ import java.nio.file.StandardOpenOption;
  * @opensearch.internal
  */
 public class OffsetRangeFileInputStream extends OffsetRangeInputStream {
+    private static final Logger logger = LogManager.getLogger(OffsetRangeIndexInputStream.class);
     private final InputStream inputStream;
     private final FileChannel fileChannel;
 
@@ -33,6 +43,9 @@ public class OffsetRangeFileInputStream extends OffsetRangeInputStream {
 
     private long markPointer;
     private long markCounter;
+    private AtomicBoolean readBlock;
+    private final OffsetRangeRefCount offsetRangeRefCount;
+    private final RunOnce closeOnce;
 
     /**
      * Construct a new OffsetRangeFileInputStream object
@@ -54,6 +67,10 @@ public class OffsetRangeFileInputStream extends OffsetRangeInputStream {
         } else {
             actualSizeToRead = totalLength - position;
         }
+
+        ClosingStreams closingStreams = new ClosingStreams(inputStream, fileChannel);
+        offsetRangeRefCount = new OffsetRangeRefCount(closingStreams);
+        closeOnce = new RunOnce(offsetRangeRefCount::decRef);
     }
 
     @Override
@@ -63,6 +80,7 @@ public class OffsetRangeFileInputStream extends OffsetRangeInputStream {
         } else if (off < 0 || len < 0 || len > b.length - off) {
             throw new IndexOutOfBoundsException();
         }
+        ensureReadable();
         if (fileChannel.position() >= fileChannel.size()) {
             return -1;
         }
@@ -86,7 +104,19 @@ public class OffsetRangeFileInputStream extends OffsetRangeInputStream {
         if (counter++ >= limit) {
             return -1;
         }
+        ensureReadable();
         return (fileChannel.position() < fileChannel.size()) ? (inputStream.read() & 0xff) : -1;
+    }
+
+    private void ensureReadable() {
+        if (readBlock != null && readBlock.get() == true) {
+            logger.debug("Read attempted on a stream which was read blocked!");
+            throw alreadyClosed("Read blocked stream.");
+        }
+    }
+
+    AlreadyClosedException alreadyClosed(String msg) {
+        return new AlreadyClosedException(msg + this);
     }
 
     @Override
@@ -115,8 +145,37 @@ public class OffsetRangeFileInputStream extends OffsetRangeInputStream {
         return fileChannel.position();
     }
 
+    private static class ClosingStreams {
+        private final InputStream inputStream;
+        private final FileChannel channel;
+
+        public ClosingStreams(InputStream inputStream, FileChannel channel) {
+            this.inputStream = inputStream;
+            this.channel = channel;
+        }
+    }
+
+    private static class OffsetRangeRefCount extends RefCountedReleasable<ClosingStreams> {
+        private static final Logger logger = LogManager.getLogger(OffsetRangeRefCount.class);
+
+        public OffsetRangeRefCount(ClosingStreams ref) {
+            super("OffsetRangeRefCount", ref, () -> {
+                try {
+                    ref.inputStream.close();
+                } catch (IOException ex) {
+                    logger.error("Failed to close inputstream", ex);
+                }
+                try {
+                    ref.channel.close();
+                } catch (IOException ex) {
+                    logger.error("Failed to close channel", ex);
+                }
+            });
+        }
+    }
+
     @Override
     public void close() throws IOException {
-        inputStream.close();
+        closeOnce.run();
     }
 }

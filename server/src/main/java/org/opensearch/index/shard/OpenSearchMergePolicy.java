@@ -34,6 +34,7 @@ package org.opensearch.index.shard;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.index.CodecReader;
 import org.apache.lucene.index.FilterMergePolicy;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.MergePolicy;
@@ -99,6 +100,19 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
         }
         // Version matches, or segment is not ancient and we are only upgrading ancient segments:
         return false;
+    }
+
+    @Override
+    public MergeSpecification findMerges(CodecReader... readers) throws IOException {
+        return in.findMerges(readers);
+    }
+
+    @Override
+    public MergeSpecification findForcedDeletesMerges(
+        SegmentInfos segmentInfos, MergeContext mergeContext) throws IOException {
+        MergeSpecification mergeSpecification = in.findForcedDeletesMerges(segmentInfos, mergeContext);
+        logger.info("Merges found for deletes " + mergeSpecification);
+        return mergeSpecification;
     }
 
     @Override

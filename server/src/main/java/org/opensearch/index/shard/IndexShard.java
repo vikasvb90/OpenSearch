@@ -1594,6 +1594,19 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         );
     }
 
+    public void onlyExpungeDeletes(String expungeDeletesUUID) throws IOException {
+        verifyActive();
+        Engine engine = getEngine();
+        engine.forceMerge(
+            false,
+            1,
+            true,
+            false,
+            false,
+            expungeDeletesUUID
+        );
+    }
+
     /**
      * Upgrades the shard to the current version of Lucene and returns the minimum segment version
      */
