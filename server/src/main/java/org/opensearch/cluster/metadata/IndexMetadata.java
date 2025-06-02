@@ -1533,8 +1533,6 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             splitShardsMetadata.updateSplitMetadataForChildShards(sourceShardId, newChildAllocationIds.keySet());
 
             this.splitShardsMetadata = splitShardsMetadata.build();
-            numberOfShards(this.splitShardsMetadata.getNumberOfShards());
-            this.settingsVersion += 1;
 
             return this;
         }
