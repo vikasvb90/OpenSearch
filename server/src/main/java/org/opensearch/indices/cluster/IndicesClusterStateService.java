@@ -36,6 +36,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.opensearch.ResourceAlreadyExistsException;
+import org.opensearch.action.get.TransportGetAction;
 import org.opensearch.cluster.ClusterChangedEvent;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.ClusterStateApplier;
@@ -90,6 +91,7 @@ import org.opensearch.indices.recovery.PeerRecoverySourceService;
 import org.opensearch.indices.recovery.PeerRecoveryTargetService;
 import org.opensearch.indices.recovery.RecoveryListener;
 import org.opensearch.indices.recovery.RecoveryState;
+import org.opensearch.indices.recovery.inplacesplit.InPlaceShardSplitRecoverySourceHandler;
 import org.opensearch.indices.replication.SegmentReplicationSourceService;
 import org.opensearch.indices.replication.SegmentReplicationTargetService;
 import org.opensearch.indices.replication.checkpoint.SegmentReplicationCheckpointPublisher;
@@ -532,6 +534,9 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     // and assigning an initializing primary to this node
                     logger.debug("{} removing shard (not active, current {}, new {})", shardId, currentRoutingEntry, newShardRouting);
                     indexService.removeShard(shardId.id(), "removing shard (stale copy)");
+                } else if (currentRoutingEntry.splitting() && newShardRouting.splitting() == false) {
+                    logger.debug("{} removing child shards (not splitting, current {}, new {})", shardId, currentRoutingEntry, newShardRouting);
+                    cancelChildRecoveryInSplit(currentRoutingEntry.shardId());
                 }
             }
         }
@@ -873,6 +878,15 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
         }
     }
 
+    public void cancelChildRecoveryInSplit(ShardId shardId) {
+        Shard indexShard = indicesService.getShardOrNull(shardId);
+        if (indexShard == null) {
+            return;
+        }
+        assert indexShard.routingEntry().isSplitTarget() || indexShard.routingEntry().splitting();
+        inPlaceShardSplitRecoveryService.cancelRecovery(indexShard);
+    }
+
     /**
      * Finds the routing source node for peer recovery, return null if its not found. Note, this method expects the shard
      * routing to *require* peer recovery, use {@link ShardRouting#recoverySource()} to check if its needed or not.
@@ -1020,10 +1034,13 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                 () -> new ParameterizedMessage("{} marking and sending shard failed due to [{}]", shardRouting.shardId(), message),
                 failure
             );
+            ShardRouting anyChildShard = null;
             for (ShardRouting childShard : shardRouting.getRecoveringChildShards()) {
                 failedShardsCache.put(childShard.shardId(), childShard);
+                anyChildShard = childShard;
             }
-            shardStateAction.localShardFailed(shardRouting, message, failure, SHARD_STATE_ACTION_LISTENER, state);
+            assert anyChildShard != null;
+            shardStateAction.localShardFailed(anyChildShard, message, failure, SHARD_STATE_ACTION_LISTENER, state);
         } catch (Exception inner) {
             if (failure != null) inner.addSuppressed(failure);
             logger.warn(

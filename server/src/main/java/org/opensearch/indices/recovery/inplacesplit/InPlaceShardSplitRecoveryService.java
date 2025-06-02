@@ -11,6 +11,7 @@ package org.opensearch.indices.recovery.inplacesplit;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.OpenSearchException;
+import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.support.PlainActionFuture;
 import org.opensearch.cluster.ClusterChangedEvent;
 import org.opensearch.cluster.ClusterStateListener;
@@ -109,7 +110,7 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     @Override
     public void clusterChanged(ClusterChangedEvent event) {}
 
-    public void cancelRecovery(IndicesClusterStateService.Shard shard) {
+    public synchronized void cancelRecovery(IndicesClusterStateService.Shard shard) {
         assert shard instanceof IndexShard;
         IndexShard indexShard = (IndexShard) shard;
         ongoingRecoveries.cancel(indexShard, "split-cancel-event");
@@ -173,6 +174,10 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     public boolean isHandOffPending(ShardId parentShardId) {
         OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(parentShardId);
         return recovery != null && Boolean.TRUE.equals(recovery.handOffInitiated.get()) == false;
+    }
+
+    public boolean isRecoveryInProgress(ShardId shardId) {
+        return ongoingRecoveries.recoveries.get(shardId) != null;
     }
 
     public void startChildShards(ShardId parentShardId) {
