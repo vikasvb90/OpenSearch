@@ -508,8 +508,10 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
                     // we can just remove the shard without cleaning it locally, since we will clean it in IndicesStore
                     // once all shards are allocated
                     logger.debug("{} removing shard (not allocated)", shardId);
-                    if (currentRoutingEntry.splitting()) {
-                        logger.info("Removing parent shard [" + shardId + "] after split");
+                    if (currentRoutingEntry.isSplitTarget()) {
+                        logger.info("ShardSplit: removing child shard {} from local node ", shardId);
+                    } else if (currentRoutingEntry.splitting()) {
+                        logger.info("ShardSplit: removing parent shard {} from local node ", shardId);
                     }
                     indexService.removeShard(shardId.id(), "removing shard (not allocated)");
                 } else if (newShardRouting.isSameAllocation(currentRoutingEntry) == false) {
@@ -1076,6 +1078,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent imple
      *
      * @opensearch.internal
      */
+    @PublicApi(since = "1.0.0")
     public interface Shard {
 
         /**

@@ -8,6 +8,7 @@
 
 package org.opensearch.cluster.metadata;
 
+import org.opensearch.common.annotation.ExperimentalApi;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.common.io.stream.Writeable;
@@ -17,6 +18,7 @@ import org.opensearch.core.xcontent.XContentParser;
 
 import java.io.IOException;
 
+@ExperimentalApi
 public class ShardRange implements Comparable<ShardRange>, ToXContentFragment, Writeable {
     private final int shardId;
     private final int start;

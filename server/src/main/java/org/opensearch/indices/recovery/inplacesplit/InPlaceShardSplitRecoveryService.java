@@ -21,6 +21,8 @@ import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.SetOnce;
+import org.opensearch.common.annotation.ExperimentalApi;
+import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.inject.Inject;
 import org.opensearch.common.lifecycle.AbstractLifecycleComponent;
 import org.opensearch.common.lifecycle.Lifecycle;
@@ -49,6 +51,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
+@PublicApi(since = "3.0.0")
 public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent implements IndexEventListener, ClusterStateListener {
     private static final Logger logger = LogManager.getLogger(InPlaceShardSplitRecoveryService.class);
 
@@ -340,33 +343,55 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
         }
 
         public void markAsDone(IndexShard sourceShard) {
+            if (!recoveries.containsKey(sourceShard.shardId())) {
+                return;
+            }
+            Recovery removed = null;
             synchronized (this) {
-                Recovery removed = recoveries.remove(sourceShard.shardId());
+                removed = recoveries.remove(sourceShard.shardId());
                 if (removed != null) {
                     assert sourceShard.routingEntry().splitting();
                     remove(removed.sourceHandler);
                     removed.targetHandler.onDone();
-                    removed.replicationListener.onDone(null);
+                } else {
+                    logger.error("ShardSplit: No ongoing split found for shard {}", sourceShard.shardId());
                 }
+            }
+
+            if (removed != null) {
+                removed.replicationListener.onDone(null);
             }
         }
 
         public void fail(IndexShard sourceShard, ReplicationFailedException ex, boolean sendShardFailure) {
+            if (!recoveries.containsKey(sourceShard.shardId())) {
+                return;
+            }
+            Recovery removed = null;
             synchronized (this) {
-                Recovery removed = recoveries.remove(sourceShard.shardId());
+                removed = recoveries.remove(sourceShard.shardId());
                 if (removed != null) {
                     remove(removed.sourceHandler);
-                    removed.replicationListener.onFailure(null, ex, sendShardFailure);
                     failedRecoveries.add(sourceShard.shardId());
                 }
+            }
+            // keeping this outside the synchronized block to avoid a deadlock with IndicesClusterStateService
+            // trying to cancel recovery due to a failing shard while replicationListener::onFailure concurrently
+            // trying to enter synchronized block of IndicesClusterStateService::handleChildRecoveriesFailure
+            if(removed != null) {
+                removed.replicationListener.onFailure(null, ex, sendShardFailure);
             }
         }
 
         void cancel(IndexShard shard, String reason) {
+            ShardId sourceShardId = getSplittingSourceShardId(shard);
+            if (sourceShardId == null || !recoveries.containsKey(sourceShardId)) {
+                return;
+            }
+            logger.info("ShardSplit: cancelling split of shard {} with reason {}", shard.shardId(), reason);
             synchronized (this) {
                 try {
-                    ShardId sourceShardId = getSplittingSourceShardId(shard);
-                    if (sourceShardId != null && recoveries.containsKey(sourceShardId)) {
+                    if (recoveries.containsKey(sourceShardId)) {
                         recoveries.get(sourceShardId).sourceHandler.cancel(reason);
                     }
                 } catch (Exception ex) {
