@@ -13,6 +13,7 @@ import org.opensearch.test.OpenSearchTestCase;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.when;
+import static org.opensearch.cluster.metadata.SplitShardsMetadata.validateShardRanges;
 
 public class SplitShardsMetadataTests extends OpenSearchTestCase {
 
@@ -658,15 +659,6 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
     }
 
     @Test
-    public void testSplitShardWithInvalidChildren() {
-        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(1);
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            builder.splitShard(0, 1000000);
-        });
-        assertTrue(exception.getMessage().contains(" is below shard range threshold of "));
-    }
-
-    @Test
     public void testSplitInvalidShardId() {
         SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(1);
         IllegalArgumentException exception = assertThrows(
@@ -741,8 +733,8 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
             parentRange.getEnd(), secondLevelShards[secondLevelShards.length - 1].getEnd());
 
         // Test hash routing through the nested structure
-        int hashInFirstThird = parentRange.getStart() +
-            (parentRange.getEnd() - parentRange.getStart()) / 3;
+        long rangeSize = ((long) parentRange.getEnd() - (long) parentRange.getStart() + 1) / 3;
+        int hashInFirstThird = (parentRange.getStart() + (int) rangeSize) - 1;
 
         assertEquals("Hash should route to first child of nested split",
             3, metadata.getShardIdOfHash(0, hashInFirstThird, true));
@@ -924,6 +916,70 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
             metadata1.equals(metadata2));
     }
 
+    @Test
+    public void testValidateShardRangesOverlap() {
+        // Test overlapping ranges
+        ShardRange[] overlappingRanges = new ShardRange[] {
+            new ShardRange(0,Integer.MIN_VALUE, 100),
+            new ShardRange(0,50, Integer.MAX_VALUE)  // Overlaps with previous range at 50-100
+        };
 
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> validateShardRanges(0, overlappingRanges)
+        );
+        assertTrue(exception.getMessage().contains("Shard range overlap"));
+    }
+
+    @Test
+    public void testValidateShardRangesBelowThreshold() {
+        // Test range below threshold
+        ShardRange[] smallRange = new ShardRange[] {
+            new ShardRange(0, Integer.MIN_VALUE, Integer.MIN_VALUE + 10)
+        };
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> validateShardRanges(0, smallRange)
+        );
+        assertTrue(exception.getMessage().contains("below shard range threshold"));
+    }
+
+    @Test
+    public void testValidateShardRangesMissingRange() {
+        // Test missing range
+        ShardRange[] missingRange = new ShardRange[] {
+            new ShardRange(0, Integer.MIN_VALUE, 100),
+            new ShardRange(0, 200, Integer.MAX_VALUE)  // Missing range at 101-199
+        };
+
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> validateShardRanges(0, missingRange)
+        );
+        System.out.println(exception.getMessage());
+        assertTrue(exception.getMessage().contains("Shard range from 101 to 199 is missing from the list of shard ranges"));
+    }
+
+    @Test
+    public void testValidateShardRangesInvalidStartRange() {
+        // test shard range not at Integer.Min
+        ShardRange[] missingRange = new ShardRange[] {
+            new ShardRange(0, Integer.MIN_VALUE + 1, 100),
+            new ShardRange(0, 100, Integer.MAX_VALUE)  // Missing range at 101-199
+        };
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> validateShardRanges(0, missingRange)
+        );
+        assertTrue(exception.getMessage().contains("Shard range from -2147483648 to -2147483648 is missing from the list of shard ranges"));
+
+
+        // Empty shard range
+        IllegalArgumentException exception2 = assertThrows(
+            IllegalArgumentException.class,
+            () -> validateShardRanges(0,new ShardRange[0]));
+        assertTrue(exception2.getMessage().contains("No shard range defined for child shards of shard 0"));
+    }
 
 }
