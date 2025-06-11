@@ -6,12 +6,9 @@ import java.io.IOException;
 import java.util.*;
 
 import org.mockito.Mockito;
-import org.opensearch.common.collect.Tuple;
 import org.opensearch.core.common.io.stream.StreamInput;
-import org.opensearch.core.common.util.CollectionUtils;
 import org.opensearch.test.OpenSearchTestCase;
 
-import static org.junit.Assert.*;
 import static org.mockito.Mockito.when;
 import static org.opensearch.cluster.metadata.SplitShardsMetadata.validateShardRanges;
 
@@ -356,7 +353,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         Set<Integer> childShardIds = Set.of(1, 2, 3);
         builder.updateSplitMetadataForChildShards(0, childShardIds);
         SplitShardsMetadata metadata = builder.build();
-        assertEquals(4, metadata.getNumberOfShards());
+        assertEquals(3, metadata.getNumberOfShards());
     }
 
     @Test
@@ -464,7 +461,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
 
         assertEquals(numberOfShards, metadata.getNumberOfRootShards());
         assertEquals(numberOfShards, metadata.getNumberOfShards());
-        assertEquals(SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS, metadata.getInProgressSplitShardId());
+        assertTrue(metadata.getInProgressSplitShardIds().isEmpty());
 
         for (int i = 0; i < numberOfShards; i++) {
             assertNull(metadata.getChildShardsOfParent(i));
@@ -492,7 +489,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         assertNull(result.getChildShardsOfParent(0));
         assertNull(result.getChildShardsOfParent(1));
         assertNull(result.getChildShardsOfParent(2));
-        assertEquals(SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS, result.getInProgressSplitShardId());
+        assertTrue(result.getInProgressSplitShardIds().isEmpty());
     }
 
     /**
@@ -510,7 +507,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         builder.splitShard(sourceShardId, numberOfChildren);
 
         // Verify split is in progress
-        assertEquals(sourceShardId, builder.build().getInProgressSplitShardId());
+        assertTrue(builder.build().getInProgressSplitShardIds().contains(sourceShardId));
 
         // Cancel the split
         builder.cancelSplit(sourceShardId);
@@ -519,7 +516,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         SplitShardsMetadata metadata = builder.build();
 
         // Verify the split was canceled
-        assertEquals(SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS, metadata.getInProgressSplitShardId());
+        assertTrue(metadata.getInProgressSplitShardIds().isEmpty());
         assertNull(metadata.getChildShardsOfParent(sourceShardId));
     }
 
@@ -559,9 +556,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         builder.splitShard(expectedShardId, 2);
         SplitShardsMetadata metadata = builder.build();
 
-        int actualShardId = metadata.getInProgressSplitShardId();
-
-        assertEquals("The in-progress split shard ID should match the expected value", expectedShardId, actualShardId);
+        assertTrue("The in-progress split shard ID should match the expected value", metadata.getInProgressSplitShardIds().contains(expectedShardId));
     }
 
     @Test
@@ -570,7 +565,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         builder.splitShard(0, 2);
         builder.cancelSplit(0);
         SplitShardsMetadata metadata = builder.build();
-        assertEquals("After canceling a split, SPLIT_NOT_IN_PROGRESS should be returned", SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS, metadata.getInProgressSplitShardId());
+        assertTrue("After canceling a split, shard split shouldn't be in progress", metadata.getInProgressSplitShardIds().isEmpty());
     }
 
     @Test
@@ -579,13 +574,13 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         builder.splitShard(0, 2);
         builder.updateSplitMetadataForChildShards(0, Set.of(1, 2));
         SplitShardsMetadata metadata = builder.build();
-        assertEquals("After completing a split, SPLIT_NOT_IN_PROGRESS should be returned", SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS, metadata.getInProgressSplitShardId());
+        assertTrue("After completing a split, shard split shouldn't be in progress", metadata.getInProgressSplitShardIds().isEmpty());
     }
 
     @Test
     public void testGetInProgressSplitShardIdWhenNoSplitInProgress() {
         SplitShardsMetadata metadata = new SplitShardsMetadata.Builder(1).build();
-        assertEquals("When no split is in progress, SPLIT_NOT_IN_PROGRESS should be returned", SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS, metadata.getInProgressSplitShardId());
+        assertTrue("No split should be in progress", metadata.getInProgressSplitShardIds().isEmpty());
     }
 
     @Test
@@ -593,25 +588,25 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(1);
         builder.splitShard(0, 2);
         SplitShardsMetadata metadata = builder.build();
-        assertEquals("When a valid split is in progress, the correct shard ID should be returned", 0, metadata.getInProgressSplitShardId());
+        assertTrue("When a valid split is in progress, the correct shard ID should be returned", metadata.getInProgressSplitShardIds().contains(0));
     }
 
+    /**
+     * Test that the method returns true when the correct shard is being split.
+     */
     @Test
     public void testIsSplitOfShardInProgress_CorrectShardInProgress() {
-        /**
-         * Test that the method returns true when the correct shard is being split.
-         */
         SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(5);
         builder.splitShard(2, 2);
         SplitShardsMetadata metadata = builder.build();
         assertTrue(metadata.isSplitOfShardInProgress(2));
     }
 
+    /**
+     * Test that the method returns false when a different shard is being split.
+     */
     @Test
     public void testIsSplitOfShardInProgress_DifferentShardInProgress() {
-        /**
-         * Test that the method returns false when a different shard is being split.
-         */
         SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(5);
         builder.splitShard(2, 2);
         SplitShardsMetadata metadata = builder.build();
@@ -625,17 +620,316 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
          */
         SplitShardsMetadata metadata = new SplitShardsMetadata.Builder(5).build();
         assertFalse(metadata.isSplitOfShardInProgress(0));
-        assertTrue(metadata.isSplitOfShardInProgress(SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS));
+        assertTrue(metadata.getInProgressSplitShardIds().isEmpty());
     }
 
     @Test
     public void testSplitShardWhenSplitAlreadyInProgress() {
-        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(2);
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3);
         builder.splitShard(0, 2);
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            builder.splitShard(1, 2);
-        });
-        assertTrue(exception.getMessage().contains("Split of shard [0] is already in progress or completed."));
+        SplitShardsMetadata metadata = builder.build();
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(1, 3);
+        metadata = builder.build();
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(2, 5);
+        metadata = builder.build();
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.updateSplitMetadataForChildShards(0, Set.of(3, 4));
+        builder.updateSplitMetadataForChildShards(1, Set.of(5, 6, 7));
+        builder.updateSplitMetadataForChildShards(2, Set.of(8, 9, 10, 11, 12));
+        metadata = builder.build();
+        Set<Integer> finalShards = new HashSet<>(Arrays.asList(3, 4, 5, 6, 7, 8, 9, 10, 11, 12));
+        Iterator<Integer> shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            assertTrue(finalShards.remove(shardIterator.next()));
+        }
+        assertTrue(finalShards.isEmpty());
+    }
+
+    public void testSplitShardWhenAnotherSplitIsCancelled_1() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3);
+        builder.splitShard(0, 2);
+        SplitShardsMetadata metadata = builder.build();
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(1, 4);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.splitShard(2, 5);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(0, Set.of(3, 4));
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(2, Set.of(9, 10, 11, 12, 13));
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.cancelSplit(1);
+        metadata = builder.build();
+        Set<Integer> finalShards = new HashSet<>(Arrays.asList(1, 3, 4, 9, 10, 11, 12, 13));
+        Iterator<Integer> shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+
+        // Test reusing holes in new split
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(4, 2);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(4, Set.of(5, 6));
+        finalShards = new HashSet<>(Arrays.asList(1, 3, 5, 6, 9, 10, 11, 12, 13));
+        metadata = builder.build();
+        shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(12, 3);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(12, Set.of(7, 8, 14));
+        finalShards = new HashSet<>(Arrays.asList(1, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14));
+        metadata = builder.build();
+        shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+    }
+
+    public void testSplitShardWhenAnotherSplitIsCancelled_2() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3);
+        builder.splitShard(0, 2);
+        SplitShardsMetadata metadata = builder.build();
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(1, 3);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.splitShard(2, 5);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(0, Set.of(3, 4));
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(1, Set.of(5, 6, 7));
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.cancelSplit(2);
+        metadata = builder.build();
+        Set<Integer> finalShards = new HashSet<>(Arrays.asList(2, 3, 4, 5, 6, 7));
+        Iterator<Integer> shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+    }
+
+    public void testSplitCancelWhenAnotherSplitIsInProgress() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(3);
+        builder.splitShard(0, 2);
+        SplitShardsMetadata metadata = builder.build();
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(1, 4);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.splitShard(2, 5);
+        builder.cancelSplit(1);
+        metadata = builder.build();
+        Set<Integer> finalShards = new HashSet<>(Arrays.asList(0, 1, 2));
+        Iterator<Integer> shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(0, Set.of(3, 4));
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(2, Set.of(9, 10, 11, 12, 13));
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        metadata = builder.build();
+        finalShards = new HashSet<>(Arrays.asList(1, 3, 4, 9, 10, 11, 12, 13));
+        shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+
+        // Test reusing holes in new split
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(4, 2);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(4, Set.of(5, 6));
+        finalShards = new HashSet<>(Arrays.asList(1, 3, 5, 6, 9, 10, 11, 12, 13));
+        metadata = builder.build();
+        shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+
+
+        builder = new SplitShardsMetadata.Builder(metadata);
+        builder.splitShard(12, 3);
+        builder = new SplitShardsMetadata.Builder(builder.build());
+        builder.updateSplitMetadataForChildShards(12, Set.of(7, 8, 14));
+        finalShards = new HashSet<>(Arrays.asList(1, 3, 5, 6, 7, 8, 9, 10, 11, 13, 14));
+        metadata = builder.build();
+        shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int nextShard = shardIterator.next();
+            assertTrue(finalShards.remove(nextShard));
+        }
+        assertTrue(finalShards.isEmpty());
+
+        // Case 1
+        // 1. 0,1,2 original
+        // 2. 0 -> 3,4
+        // 3. 1 -> 5, 6, 7
+        // 4. 0=>X
+        // 5. 0 -> 3,4,8
+        // 6. 0 completes 1,2,3,4,8 holes is 0, max shard  id 8
+        // 7. 1=>X, 1,2,3,4,8 hoes is 5,6,7 m=
+        // 8.
+
+    }
+
+    public void testChildShardIdsGeneration() {
+        int maxInitialShards = 20;
+        int initialShards = randomIntBetween(1, maxInitialShards);
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(initialShards);
+        SplitShardsMetadata metadata = builder.build();
+        int splitExecCount = randomIntBetween(1, 20);
+        for (int i=0; i < splitExecCount; i++) {
+            Set<Integer> cancellableShards = new HashSet<>();
+            Map<Integer, Set<Integer>> splitCompletingShards = new HashMap<>();
+            for (int j=0; j < 10; j++) {
+                List<Integer> activeAndNotInProgress = getActiveAndNotInProgressShards(metadata);
+                if (activeAndNotInProgress.isEmpty()) {
+                    break;
+                }
+                builder = new SplitShardsMetadata.Builder(metadata);
+                int splittingShard = activeAndNotInProgress.get(randomIntBetween(0, activeAndNotInProgress.size() - 1));
+
+                int numberOfChildren = randomIntBetween(1, 50);
+                List<ShardRange> childShardRanges;
+                try {
+                    childShardRanges = builder.splitShard(splittingShard, numberOfChildren);
+                } catch (Exception ex) {
+                    if (ex.getMessage().equals("Cannot split shard [" + splittingShard + "] further.")) {
+                        break;
+                    }
+                    throw ex;
+                }
+                Set<Integer> childShardIds = new HashSet<>();
+                childShardRanges.forEach(shardRange -> childShardIds.add(shardRange.getShardId()));
+                validateShardsInExistingAndNewMetadata(metadata, builder.build(), new HashSet<>(), -1);
+                if (childShardRanges.size() != childShardIds.size()) {
+                    builder = new SplitShardsMetadata.Builder(metadata);
+                    builder.splitShard(splittingShard, numberOfChildren);
+                }
+                assertEquals(childShardRanges.size(), childShardIds.size());
+                ensureUniqueChildShards(metadata, childShardIds, builder.build());
+                metadata = builder.build();
+
+                boolean complete = randomBoolean();
+                builder = new SplitShardsMetadata.Builder(metadata);
+                boolean cancelSplit = randomBoolean();
+                if (complete) {
+                    if (cancelSplit) {
+                        builder.cancelSplit(splittingShard);
+                        validateShardsInExistingAndNewMetadata(metadata, builder.build(), new HashSet<>(), -1);
+                        metadata = builder.build();
+                        builder = new SplitShardsMetadata.Builder(metadata);
+                        builder.splitShard(splittingShard, childShardIds.size());
+                        builder.updateSplitMetadataForChildShards(splittingShard, childShardIds);
+                        validateShardsInExistingAndNewMetadata(metadata, builder.build(), childShardIds, splittingShard);
+                        metadata = builder.build();
+                    } else {
+                        builder.updateSplitMetadataForChildShards(splittingShard, childShardIds);
+                        validateShardsInExistingAndNewMetadata(metadata, builder.build(), childShardIds, splittingShard);
+                        metadata = builder.build();
+                    }
+                } else {
+                    if (cancelSplit) {
+                        cancellableShards.add(splittingShard);
+                    } else {
+                        splitCompletingShards.put(splittingShard, childShardIds);
+                    }
+                }
+            }
+            finishPendingSplits(cancellableShards, splitCompletingShards, metadata);
+        }
+    }
+
+    private void finishPendingSplits(Set<Integer> cancellableShards, Map<Integer, Set<Integer>> splitCompletingShards,
+                                     SplitShardsMetadata metadata) {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(metadata);
+        for (Integer shardId : cancellableShards) {
+            builder.cancelSplit(shardId);
+            validateShardsInExistingAndNewMetadata(metadata, builder.build(), new HashSet<>(), -1);
+            metadata = builder.build();
+        }
+
+        for (Integer shardId : splitCompletingShards.keySet()) {
+            builder = new SplitShardsMetadata.Builder(metadata);
+            builder.updateSplitMetadataForChildShards(shardId, splitCompletingShards.get(shardId));
+            validateShardsInExistingAndNewMetadata(metadata, builder.build(), splitCompletingShards.get(shardId), shardId);
+            metadata = builder.build();
+        }
+    }
+
+    private List<Integer> getActiveAndNotInProgressShards(SplitShardsMetadata metadata) {
+        List<Integer> result = new ArrayList<>();
+        Iterator<Integer> shardIterator = metadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            int shardId = shardIterator.next();
+            if (metadata.getInProgressSplitShardIds().contains(shardId) == false) {
+                result.add(shardId);
+            }
+        }
+        return result;
+    }
+
+    private void ensureUniqueChildShards(SplitShardsMetadata previousMetadata, Set<Integer> childShards, SplitShardsMetadata newMetadata) {
+        Set<Integer> existingShards = new HashSet<>();
+        Iterator<Integer> shardIterator = previousMetadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            existingShards.add(shardIterator.next());
+        }
+        childShards.forEach(shard -> assertFalse(existingShards.contains(shard)));
+
+        previousMetadata.getInProgressSplitShardIds().forEach(shardId -> assertFalse(childShards.contains(shardId)));
+    }
+
+    private void validateShardsInExistingAndNewMetadata(SplitShardsMetadata existing, SplitShardsMetadata newMetadata,
+                                                                Set<Integer> newShards, int splittingShard) {
+        Set<Integer> existingShards = new HashSet<>();
+        Iterator<Integer> shardIterator = existing.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            existingShards.add(shardIterator.next());
+        }
+        existingShards.remove(splittingShard);
+
+        Set<Integer> shardsFromNewMetadata = new HashSet<>();
+        shardIterator = newMetadata.getActiveShardIterator();
+        while(shardIterator.hasNext()) {
+            shardsFromNewMetadata.add(shardIterator.next());
+        }
+
+        assertTrue(shardsFromNewMetadata.containsAll(existingShards));
+        if (newShards.isEmpty()) {
+            assertEquals(existingShards.size(), shardsFromNewMetadata.size());
+        } else {
+            assertTrue(shardsFromNewMetadata.containsAll(newShards));
+            assertEquals(existingShards.size() + newShards.size(), shardsFromNewMetadata.size());
+            assertFalse(newMetadata.getInProgressSplitShardIds().contains(splittingShard));
+            ShardRange[] shardRanges = newMetadata.getChildShardsOfParent(splittingShard);
+            assertEquals(shardRanges.length, newShards.size());
+            for (ShardRange shardRange : shardRanges) {
+                assertTrue(newShards.contains(shardRange.getShardId()));
+            }
+        }
     }
 
     @Test
@@ -646,7 +940,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
             builder.splitShard(0, 2);
         });
-        assertTrue(exception.getMessage().startsWith("Split of shard [-2] is already in progress or completed."));
+        assertTrue(exception.getMessage().startsWith("Split of shard [0] is already in progress or completed."));
     }
 
     @Test
@@ -676,7 +970,7 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         SplitShardsMetadata metadata = builder.build();
 
         // Verify split state
-        assertEquals(0, metadata.getInProgressSplitShardId());
+        assertTrue(metadata.isSplitOfShardInProgress(0));
         ShardRange[] childShards = metadata.getChildShardsOfParent(0);
         assertNotNull(childShards);
         assertEquals(2, childShards.length);
@@ -713,9 +1007,9 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         assertEquals("Should have 3 child shards", 3, secondLevelShards.length);
 
 //         Verify shard hierarchy
-        assertTrue("Original shard 0 should be split", metadata.isEmptyParentShard(0));
-        assertTrue("Child shard 1 should be split", metadata.isEmptyParentShard(1));
-        assertFalse("Child shard 2 should not be split", metadata.isEmptyParentShard(2));
+        assertTrue("Original shard 0 should be split", metadata.isSplitParent(0));
+        assertTrue("Child shard 1 should be split", metadata.isSplitParent(1));
+        assertFalse("Child shard 2 should not be split", metadata.isSplitParent(2));
 
         // Verify ranges are properly distributed
         for (int i = 0; i < secondLevelShards.length - 1; i++) {
@@ -733,11 +1027,46 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
             parentRange.getEnd(), secondLevelShards[secondLevelShards.length - 1].getEnd());
 
         // Test hash routing through the nested structure
-        long rangeSize = ((long) parentRange.getEnd() - (long) parentRange.getStart() + 1) / 3;
-        int hashInFirstThird = (parentRange.getStart() + (int) rangeSize) - 1;
+        long childShardRangeDiff = Math.abs((long)parentRange.getEnd() - parentRange.getStart() + 1) /3;
+        int hashInFirstThird = parentRange.getStart() + (int)childShardRangeDiff - 1;
 
         assertEquals("Hash should route to first child of nested split",
             3, metadata.getShardIdOfHash(0, hashInFirstThird, true));
+    }
+
+    @Test
+    public void testHashCodeAndEquals() {
+        assertEquals(createDummySplitShardsMetadataWithNoRandomisation(), createDummySplitShardsMetadataWithNoRandomisation());
+        assertEquals(createDummySplitShardsMetadataWithNoRandomisation().hashCode(), createDummySplitShardsMetadataWithNoRandomisation().hashCode());
+    }
+
+    private SplitShardsMetadata createDummySplitShardsMetadataWithNoRandomisation() {
+
+        int numberOfRootShards = 2;
+        ShardRange[][] rootToChildShards = new ShardRange[numberOfRootShards][];
+        Map<Integer, ShardRange[]> parentToChildShards = new HashMap<>();
+        rootToChildShards[0] = new ShardRange[2];
+        rootToChildShards[0][0] = new ShardRange(numberOfRootShards, 0, 100);
+        rootToChildShards[0][1] = new ShardRange(numberOfRootShards + 1, 0, 100);
+
+        // put details for already split shard into parent-to-child map
+        parentToChildShards.put(0, new ShardRange[] { rootToChildShards[0][0], rootToChildShards[0][1]});
+
+        // put details for splitting shard into parent-to-child map
+        int inProgressSplitShardId = 1;
+        Set<Integer> inProgressSplitShards = Set.of(0);
+        Set<Integer> activeShards = Set.of(0);
+        parentToChildShards.put(inProgressSplitShardId, new ShardRange[2]);
+        parentToChildShards.get(inProgressSplitShardId)[0] = new ShardRange(numberOfRootShards + 2, 0, 100);
+        parentToChildShards.get(inProgressSplitShardId)[1] = new ShardRange(numberOfRootShards + 3, 101, 200);
+
+        return new SplitShardsMetadata(
+            rootToChildShards,
+            parentToChildShards,
+            inProgressSplitShards,
+            activeShards,
+            0
+        );
     }
 
     @Test
@@ -751,17 +1080,18 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         });
     }
 
-//    @Test
-//    public void testUpdateSplitMetadataForChildShards_NoSplitInProgress() {
-//        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(1);
-//        builder.splitShard(0, 2);
-//        builder.cancelSplit(0);
-//        builder.updateSplitMetadataForChildShards(0, Set.of(1, 2));
+    @Test
+    public void testUpdateSplitMetadataForChildShards_NoSplitInProgress() {
+        SplitShardsMetadata.Builder builder = new SplitShardsMetadata.Builder(1);
+        List<ShardRange> childShards = builder.splitShard(0, 2);
+        builder.cancelSplit(0);
 
-//        assertThrows(AssertionError.class, () -> {
-//            builder.updateSplitMetadataForChildShards(0, newChildShardIds);
-//        });
-//    }
+        Set<Integer> newChildShardIds = new HashSet<>();
+        childShards.forEach(shard -> newChildShardIds.add(shard.getShardId()));
+        assertThrows(AssertionError.class, () -> {
+            builder.updateSplitMetadataForChildShards(0, newChildShardIds);
+        });
+    }
 
     @Test
     public void testUpdateSplitMetadataForChildShards_InvalidChildShardId() {
@@ -816,8 +1146,8 @@ public class SplitShardsMetadataTests extends OpenSearchTestCase {
         SplitShardsMetadata metadata = builder.build();
 
         // Assert
-        assertEquals(SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS, metadata.getInProgressSplitShardId());
-        assertEquals(4, metadata.getNumberOfShards());
+        assertTrue(metadata.getInProgressSplitShardIds().isEmpty());
+        assertEquals(3, metadata.getNumberOfShards());
 
         ShardRange[] childShards = metadata.getChildShardsOfParent(sourceShardId);
         assertNotNull(childShards);

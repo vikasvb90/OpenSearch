@@ -36,11 +36,9 @@ import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.opensearch.ExceptionsHelper;
 import org.opensearch.OpenSearchException;
-import org.opensearch.Version;
 import org.opensearch.action.ActionListenerResponseHandler;
 import org.opensearch.action.PrimaryShardSplitException;
 import org.opensearch.action.UnavailableShardsException;
-import org.opensearch.action.bulk.TransportShardBulkAction;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.ActiveShardCount;
 import org.opensearch.action.support.ChannelActionListener;
@@ -1074,7 +1072,7 @@ public abstract class TransportReplicationAction<
                     : "request waitForActiveShards must be set in resolveRequest";
 
                 ShardRouting primary = null;
-                if (indexMetadata.getSplitShardsMetadata().isEmptyParentShard(request.shardId().id())) {
+                if (indexMetadata.getSplitShardsMetadata().isSplitParent(request.shardId().id())) {
                     // This will get retried on coordinator. Entire request will be re-driven on respective child shards.
                     // Since, we are throwing a custom exception, coordinator will re-drive it explicitly on child shards
                     // even if coordinator is also stale and yet to receive update from cluster manager.

@@ -21,38 +21,50 @@ import org.opensearch.core.xcontent.XContentParser;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 @ExperimentalApi
 public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> implements ToXContentFragment {
     private static final int MINIMUM_RANGE_LENGTH_THRESHOLD = 1000;
-    public static final int SPLIT_NOT_IN_PROGRESS = -2;
 
     private static final String KEY_ROOT_SHARDS_TO_ALL_CHILDREN = "root_shards_to_all_children";
     private static final String KEY_NUMBER_OF_ROOT_SHARDS = "num_of_root_shards";
-    private static final String KEY_TEMP_SHARD_ID_TO_CHILD_SHARDS = "temp_shard_id_to_child_shards";
+    private static final String KEY_PARENT_TO_CHILD_SHARDS = "parent_to_child_shards";
     private static final String KEY_MAX_SHARD_ID = "max_shard_id";
-    private static final String KEY_IN_PROGRESS_SPLIT_SHARD_ID = "in_progress_split_shard_id";
+    private static final String KEY_IN_PROGRESS_SPLIT_SHARD_IDS = "in_progress_split_shard_id";
+    private static final String KEY_ACTIVE_SHARD_IDS = "active_shard_ids";
 
+
+    // Following fields are upadated only after split completion and are used to service active shards request.
     // Root shard id to flat list of all child shards under root.
     private final ShardRange[][] rootShardsToAllChildren;
+    private final int maxShardId;
+    private final Set<Integer> activeShardIds;
+
+    // Following fields can store temporary information about in progress child shards along with info about
+    // split completed shards.
     // Mapping of a parent shard ID to children.
     private final Map<Integer, ShardRange[]> parentToChildShards;
-    private final int maxShardId;
-    private final int inProgressSplitShardId;
+    private final Set<Integer> inProgressSplitShardIds;
 
-    private SplitShardsMetadata(ShardRange[][] rootShardsToAllChildren, Map<Integer, ShardRange[]> parentToChildShards,
-                                int inProgressSplitShardId, int maxShardId) {
+
+    SplitShardsMetadata(ShardRange[][] rootShardsToAllChildren, Map<Integer, ShardRange[]> parentToChildShards,
+                        Set<Integer> inProgressSplitShardIds, Set<Integer> activeShardIds,
+                        int maxShardId) {
 
         this.rootShardsToAllChildren = rootShardsToAllChildren;
-        this.parentToChildShards = parentToChildShards;
+        this.parentToChildShards = Collections.unmodifiableMap(parentToChildShards);
         this.maxShardId = maxShardId;
-        this.inProgressSplitShardId = inProgressSplitShardId;
+        this.inProgressSplitShardIds = Collections.unmodifiableSet(inProgressSplitShardIds);
+        this.activeShardIds = activeShardIds;
     }
 
     public SplitShardsMetadata(StreamInput in) throws IOException {
@@ -62,8 +74,9 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             this.rootShardsToAllChildren[i] = in.readOptionalArray(ShardRange::new, ShardRange[]::new);
         }
         this.maxShardId = in.readVInt();
-        this.inProgressSplitShardId = in.readInt();
-        this.parentToChildShards = in.readMap(StreamInput::readInt, i-> i.readArray(ShardRange::new, ShardRange[]::new));
+        this.inProgressSplitShardIds = Collections.unmodifiableSet(in.readSet(StreamInput::readInt));
+        this.activeShardIds = Collections.unmodifiableSet(in.readSet(StreamInput::readInt));
+        this.parentToChildShards = Collections.unmodifiableMap(in.readMap(StreamInput::readInt, i-> i.readArray(ShardRange::new, ShardRange[]::new)));
     }
 
     public void writeTo(StreamOutput out) throws IOException {
@@ -72,7 +85,8 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             out.writeOptionalArray(rootShardsToAllChild);
         }
         out.writeVInt(this.maxShardId);
-        out.writeInt(this.inProgressSplitShardId);
+        out.writeCollection(this.inProgressSplitShardIds, StreamOutput::writeInt);
+        out.writeCollection(this.activeShardIds, StreamOutput::writeInt);
         out.writeMap(this.parentToChildShards, StreamOutput::writeInt, StreamOutput::writeArray);
     }
 
@@ -115,12 +129,29 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return null;
     }
 
+    @Override
+    public String toString() {
+        StringBuilder parentToChildMap = new StringBuilder();
+        for (Map.Entry<Integer, ShardRange[]> entry : parentToChildShards.entrySet()) {
+            parentToChildMap.append("[");
+            parentToChildMap.append(entry.getKey()).append("=").append(Arrays.toString(entry.getValue()));
+            parentToChildMap.append("]");
+        }
+        return "SplitShardsMetadata{" +
+            "rootShardsToAllChildren=" + Arrays.toString(rootShardsToAllChildren) +
+            ", maxShardId=" + maxShardId +
+            ", activeShardIds=" + activeShardIds +
+            ", parentToChildShards=" + parentToChildMap +
+            ", inProgressSplitShardIds=" + inProgressSplitShardIds +
+            '}';
+    }
+
     public int getNumberOfRootShards() {
         return rootShardsToAllChildren.length;
     }
 
     public int getNumberOfShards() {
-        return maxShardId + 1;
+        return activeShardIds.size();
     }
 
     public List<Integer> getRootShards() {
@@ -144,34 +175,28 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return childShards;
     }
 
-    public int numberOfEmptyParentShards() {
-        int emptyParents = parentToChildShards.size();
-        if (inProgressSplitShardId != SPLIT_NOT_IN_PROGRESS) {
-            emptyParents -= 1;
+    public Set<Integer> getChildShardIdsOfParent(int shardId) {
+        Set<Integer> childShardIds = new HashSet<>();
+        if (parentToChildShards.containsKey(shardId) == false) {
+            return childShardIds;
         }
-        return emptyParents;
+
+        for (ShardRange childShard : parentToChildShards.get(shardId)) {
+            childShardIds.add(childShard.getShardId());
+        }
+        return childShardIds;
+    }
+
+    public int inProgressShardsCount() {
+        int total = 0;
+        for (Integer parent : inProgressSplitShardIds) {
+            total += parentToChildShards.get(parent).length;
+        }
+        return total;
     }
 
     public Iterator<Integer> getActiveShardIterator() {
-        return new Iterator<>() {
-            private int currentIndex = 0;
-
-            @Override
-            public boolean hasNext() {
-               while(currentIndex<=maxShardId && isEmptyParentShard(currentIndex)){
-                   currentIndex++;
-               }
-               return currentIndex<=maxShardId;
-            }
-
-            @Override
-            public Integer next() {
-                if (!hasNext()) {
-                    throw new NoSuchElementException();
-                }
-                return currentIndex++;
-            }
-        };
+        return new HashSet<>(activeShardIds).iterator();
     }
 
     // Visible for testing
@@ -226,26 +251,35 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         private final ShardRange[][] rootShardsToAllChildren;
         private final Map<Integer, ShardRange[]> parentToChildShards;
         private int maxShardId;
-        private int inProgressSplitShardId;
+        private final Set<Integer> inProgressSplitShardIds;
+        private final Set<Integer> activeShardIds;
 
         public Builder(int numberOfShards) {
             maxShardId = numberOfShards - 1;
             rootShardsToAllChildren = new ShardRange[numberOfShards][];
             parentToChildShards = new HashMap<>();
-            inProgressSplitShardId = SPLIT_NOT_IN_PROGRESS;
+            inProgressSplitShardIds = new HashSet<>();
+            activeShardIds = new HashSet<>();
+            for (int i=0; i < numberOfShards; i++) {
+                activeShardIds.add(i);
+            }
         }
 
         public Builder(SplitShardsMetadata splitShardsMetadata) {
             this.maxShardId = splitShardsMetadata.maxShardId;
 
             this.rootShardsToAllChildren = new ShardRange[splitShardsMetadata.rootShardsToAllChildren.length][];
+            Set<Integer> activeShardIds = new HashSet<>();
             for (int i = 0; i < splitShardsMetadata.rootShardsToAllChildren.length; i++) {
                 if (splitShardsMetadata.rootShardsToAllChildren[i] != null) {
                     this.rootShardsToAllChildren[i] = new ShardRange[splitShardsMetadata.rootShardsToAllChildren[i].length];
                     int j = 0;
                     for (ShardRange childShard : splitShardsMetadata.rootShardsToAllChildren[i]) {
                         this.rootShardsToAllChildren[i][j++] = childShard.copy();
+                        activeShardIds.add(childShard.getShardId());
                     }
+                } else {
+                    activeShardIds.add(i);
                 }
             }
 
@@ -256,7 +290,8 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
                 this.parentToChildShards.put(parentShardId, childShards);
             }
 
-            inProgressSplitShardId = splitShardsMetadata.inProgressSplitShardId;
+            inProgressSplitShardIds = new HashSet<>(splitShardsMetadata.inProgressSplitShardIds);
+            this.activeShardIds = activeShardIds;
         }
 
         /**
@@ -264,13 +299,11 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
          * @param splitShardId Shard id to split
          * @param numberOfChildren Number of child shards this shard is going to have.
          */
-        public void splitShard(int splitShardId, int numberOfChildren) {
-            if (inProgressSplitShardId != SPLIT_NOT_IN_PROGRESS || parentToChildShards.containsKey(splitShardId)) {
-                throw new IllegalArgumentException("Split of shard [" + inProgressSplitShardId +
+        public List<ShardRange> splitShard(int splitShardId, int numberOfChildren) {
+            if (inProgressSplitShardIds.contains(splitShardId) || parentToChildShards.containsKey(splitShardId)) {
+                throw new IllegalArgumentException("Split of shard [" + splitShardId +
                     "] is already in progress or completed.");
             }
-
-            inProgressSplitShardId = splitShardId;
 
             Tuple<Integer, ShardRange> shardTuple = findRootAndShard(splitShardId, rootShardsToAllChildren);
             if (shardTuple == null) {
@@ -278,22 +311,54 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             }
             ShardRange parentShard = shardTuple.v2();
 
-            long rangeSize = ((long)parentShard.getEnd() - parentShard.getStart() + 1 ) / numberOfChildren;
-
+            long rangeSize = Math.abs((long)parentShard.getEnd() - parentShard.getStart() + 1) / numberOfChildren;
             if(rangeSize <= MINIMUM_RANGE_LENGTH_THRESHOLD) {
                 throw new IllegalArgumentException("Cannot split shard [" + splitShardId + "] further.");
             }
 
-            long start = parentShard.getStart();
+            Set<Integer> inProgressChildShardIds = getInProgressChildShardIds();
+            inProgressSplitShardIds.add(splitShardId);
+
+            List<Integer> allConsumedShardIds = new ArrayList<>();
+            for (int i = 0; i<rootShardsToAllChildren.length; i++) {
+                if (rootShardsToAllChildren[i] == null) {
+                    allConsumedShardIds.add(i);
+                }
+            }
+            for (Integer splitId : parentToChildShards.keySet()) {
+                allConsumedShardIds.add(splitId);
+                for (ShardRange shard : parentToChildShards.get(splitId)) {
+                    allConsumedShardIds.add(shard.getShardId());
+                }
+            }
+
+            Set<Integer> shardIdHoles = findHoles(allConsumedShardIds);
             List<ShardRange> newChildShardsList = new ArrayList<>();
-            int nextChildShardId = maxShardId + 1;
+            long start = parentShard.getStart();
+
+            int nextChildShardId = maxShardId, childShardId;
             for (int i = 0; i < numberOfChildren; ++i) {
+                if (shardIdHoles.isEmpty()) {
+                    nextChildShardId++;
+                    while(inProgressChildShardIds.contains(nextChildShardId)) {
+                        assert activeShardIds.contains(nextChildShardId) == false;
+                        nextChildShardId++;
+                    }
+                    childShardId = nextChildShardId;
+                } else {
+                    childShardId = shardIdHoles.iterator().next();
+                    shardIdHoles.remove(childShardId);
+                }
+                assert !inProgressChildShardIds.contains(childShardId);
+                assert !activeShardIds.contains(childShardId);
+                inProgressChildShardIds.add(childShardId);
+
                 long end = i == numberOfChildren - 1 ? parentShard.getEnd() : start + rangeSize - 1;
-                int childShardId = nextChildShardId++;
                 ShardRange childShard = new ShardRange(childShardId, (int) start, (int) end);
                 newChildShardsList.add(childShard);
                 start = end + 1;
             }
+
             ShardRange[] newShardRanges = newChildShardsList.toArray(new ShardRange[0]);
 
 //            // Get existing childShardRanges under rootShard
@@ -305,13 +370,38 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             Arrays.sort(newShardsUnderRoot);
 
             validateShardRanges(splitShardId, newShardsUnderRoot);
+
             parentToChildShards.put(splitShardId, newShardRanges);
+            return Collections.unmodifiableList(newChildShardsList);
+        }
+
+        private Set<Integer> findHoles(List<Integer> allConsumedShardIds) {
+            Set<Integer> gaps = new TreeSet<>();
+
+            if (allConsumedShardIds == null || allConsumedShardIds.size() <= 1) {
+                return gaps;
+            }
+
+            Collections.sort(allConsumedShardIds);
+            for (int i = 1; i < allConsumedShardIds.size(); i++) {
+                int current = allConsumedShardIds.get(i);
+                int previous = allConsumedShardIds.get(i-1);
+
+                if (current - previous > 1) {
+                    for (int j = previous + 1; j < current; j++) {
+                        gaps.add(j);
+                    }
+                }
+            }
+
+            return gaps;
         }
 
         public void updateSplitMetadataForChildShards(int sourceShardId, Set<Integer> newChildShardIds) {
             Tuple<Integer, ShardRange> shardRangeTuple = findRootAndShard(sourceShardId, rootShardsToAllChildren);
             assert shardRangeTuple != null;
 
+            assert inProgressSplitShardIds.contains(sourceShardId);
             assert newChildShardIds.size() == parentToChildShards.get(sourceShardId).length;
             for (ShardRange childShard : parentToChildShards.get(sourceShardId)) {
                 assert newChildShardIds.contains(childShard.getShardId());
@@ -325,20 +415,40 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             Arrays.sort(newShardsUnderRoot);
             validateShardRanges(shardRangeTuple.v1(), newShardsUnderRoot);
 
-            maxShardId += newChildShardIds.size();
+            int currentMaxShardId = maxShardId;
+            for (Integer newChildId : newChildShardIds) {
+                assert activeShardIds.contains(newChildId) == false;
+                activeShardIds.add(newChildId);
+                currentMaxShardId = Math.max(currentMaxShardId, newChildId);
+            }
+
+            activeShardIds.remove(sourceShardId);
+            maxShardId = currentMaxShardId;
             rootShardsToAllChildren[shardRangeTuple.v1()] = newShardsUnderRoot;
-            inProgressSplitShardId = SPLIT_NOT_IN_PROGRESS;
+            inProgressSplitShardIds.remove(sourceShardId);
+        }
+
+        private Set<Integer> getInProgressChildShardIds() {
+            Set<Integer> inProgressChildShardIds = new HashSet<>();
+            for (Integer inProgressParent : inProgressSplitShardIds) {
+                assert parentToChildShards.containsKey(inProgressParent);
+                ShardRange[] childShards = parentToChildShards.get(inProgressParent);
+                for (ShardRange childShard : childShards) {
+                    inProgressChildShardIds.add(childShard.getShardId());
+                }
+            }
+            return inProgressChildShardIds;
         }
 
         public void cancelSplit(int sourceShardId) {
-            assert inProgressSplitShardId != SPLIT_NOT_IN_PROGRESS;
+            assert inProgressSplitShardIds.contains(sourceShardId);
+            inProgressSplitShardIds.remove(sourceShardId);
             parentToChildShards.remove(sourceShardId);
-            inProgressSplitShardId = SPLIT_NOT_IN_PROGRESS;
         }
 
         public SplitShardsMetadata build() {
             return new SplitShardsMetadata(this.rootShardsToAllChildren, this.parentToChildShards,
-                this.inProgressSplitShardId, this.maxShardId);
+                this.inProgressSplitShardIds, this.activeShardIds, this.maxShardId);
         }
     }
 
@@ -363,16 +473,16 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         throw new IllegalArgumentException("Shard ID doesn't exist in the current list of shard ranges");
     }
 
-    public int getInProgressSplitShardId() {
-        return inProgressSplitShardId;
+    public Set<Integer> getInProgressSplitShardIds() {
+        return inProgressSplitShardIds;
     }
 
     public boolean isSplitOfShardInProgress(int shardId) {
-        return inProgressSplitShardId == shardId;
+        return inProgressSplitShardIds.contains(shardId);
     }
 
-    public boolean isEmptyParentShard(int shardId) {
-        return isSplitOfShardInProgress(shardId) == false && parentToChildShards.containsKey(shardId);
+    public boolean isSplitParent(int shardId) {
+        return activeShardIds.contains(shardId) == false && parentToChildShards.containsKey(shardId);
     }
 
     @Override
@@ -383,7 +493,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         SplitShardsMetadata that = (SplitShardsMetadata) o;
 
         if (maxShardId != that.maxShardId) return false;
-        if (inProgressSplitShardId != that.inProgressSplitShardId) return false;
+        if (!inProgressSplitShardIds.equals(that.inProgressSplitShardIds)) return false;
         if (!Arrays.deepEquals(rootShardsToAllChildren, that.rootShardsToAllChildren)) return false;
         if (parentToChildShards.size() != that.parentToChildShards.size()) return false;
         for (Integer key : parentToChildShards.keySet()) {
@@ -397,9 +507,12 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
     @Override
     public int hashCode() {
         int result = Arrays.deepHashCode(rootShardsToAllChildren);
-        result = 31 * result + parentToChildShards.hashCode();
+        for (Map.Entry<Integer, ShardRange[]> entry : parentToChildShards.entrySet()) {
+            result = 31 * result + Objects.hash(entry.getKey(), Arrays.deepHashCode(entry.getValue()));
+        }
         result = 31 * result + maxShardId;
-        result = 31 * result + inProgressSplitShardId;
+        result = 31 * result + inProgressSplitShardIds.hashCode();
+        result = 31 * result + activeShardIds.hashCode();
         return result;
     }
 
@@ -407,7 +520,10 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.field(KEY_NUMBER_OF_ROOT_SHARDS, rootShardsToAllChildren.length);
         builder.field(KEY_MAX_SHARD_ID, maxShardId);
-        builder.field(KEY_IN_PROGRESS_SPLIT_SHARD_ID, inProgressSplitShardId);
+        if (!inProgressSplitShardIds.isEmpty()) {
+            builder.field(KEY_IN_PROGRESS_SPLIT_SHARD_IDS, new ArrayList<>(inProgressSplitShardIds));
+        }
+        builder.field(KEY_ACTIVE_SHARD_IDS, new ArrayList<>(activeShardIds));
         builder.startObject(KEY_ROOT_SHARDS_TO_ALL_CHILDREN);
         for (int rootShardId = 0; rootShardId < rootShardsToAllChildren.length; rootShardId++) {
             ShardRange[] childShards = rootShardsToAllChildren[rootShardId];
@@ -421,7 +537,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         }
         builder.endObject();
 
-        builder.startObject(KEY_TEMP_SHARD_ID_TO_CHILD_SHARDS);
+        builder.startObject(KEY_PARENT_TO_CHILD_SHARDS);
         for (Integer parentShardId : parentToChildShards.keySet()) {
             builder.startArray(String.valueOf(parentShardId));
             for (ShardRange childShard : parentToChildShards.get(parentShardId)) {
@@ -437,7 +553,9 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
     public static SplitShardsMetadata parse(XContentParser parser) throws IOException {
         XContentParser.Token token;
         String currentFieldName = null;
-        int maxShardId = -1, inProgressSplitShardId = SPLIT_NOT_IN_PROGRESS;
+        int maxShardId = -1;
+        Set<Integer> inProgressSplitShardIds = new HashSet<>();
+        Set<Integer> activeShardIds = new HashSet<>();
         ShardRange[][] rootShardsToAllChildren = null;
         Map<Integer, ShardRange[]> tempShardIdToChildShards = new HashMap<>();
         int numberOfRootShards = -1;
@@ -447,8 +565,6 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             } else if (token == XContentParser.Token.VALUE_NUMBER) {
                 if (KEY_MAX_SHARD_ID.equals(currentFieldName)) {
                     maxShardId = parser.intValue();
-                } else if (KEY_IN_PROGRESS_SPLIT_SHARD_ID.equals(currentFieldName)) {
-                    inProgressSplitShardId = parser.intValue();
                 } else if (KEY_NUMBER_OF_ROOT_SHARDS.equals(currentFieldName)) {
                     numberOfRootShards = parser.intValue();
                 }
@@ -459,13 +575,24 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
                     for (Map.Entry<Integer, ShardRange[]> entry : rootShards.entrySet()) {
                         rootShardsToAllChildren[entry.getKey()] = entry.getValue();
                     }
-                } else if (KEY_TEMP_SHARD_ID_TO_CHILD_SHARDS.equals(currentFieldName)) {
+                } else if (KEY_PARENT_TO_CHILD_SHARDS.equals(currentFieldName)) {
                     tempShardIdToChildShards = parseShardsMap(parser);
+                }
+            } else if (token == XContentParser.Token.START_ARRAY) {
+                if (KEY_IN_PROGRESS_SPLIT_SHARD_IDS.equals(currentFieldName)) {
+                    while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
+                        inProgressSplitShardIds.add(parser.intValue());
+                    }
+                } else if (KEY_ACTIVE_SHARD_IDS.equals(currentFieldName)) {
+                    while (parser.nextToken() != XContentParser.Token.END_ARRAY) {
+                        activeShardIds.add(parser.intValue());
+                    }
                 }
             }
         }
 
-        return new SplitShardsMetadata(rootShardsToAllChildren, tempShardIdToChildShards, inProgressSplitShardId, maxShardId);
+        return new SplitShardsMetadata(rootShardsToAllChildren, tempShardIdToChildShards, inProgressSplitShardIds,
+            activeShardIds, maxShardId);
     }
 
     private static Map<Integer, ShardRange[]> parseShardsMap(XContentParser parser) throws IOException {

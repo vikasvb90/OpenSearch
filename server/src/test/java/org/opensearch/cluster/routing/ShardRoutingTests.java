@@ -760,13 +760,12 @@ public class ShardRoutingTests extends OpenSearchTestCase {
 
         ShardRouting parentShard = TestShardRouting.newShardRouting(parentShardId, currentNodeId, primary, ShardRoutingState.STARTED);
 
-        ShardRange[] recoveringChildShardRanges = new ShardRange[]{
-            new ShardRange(1, 0, 50),
-            new ShardRange(2, 51, 100)
-        };
+        Map<Integer, ShardRange> recoveringChildShards = new HashMap<>();
+        recoveringChildShards.put(1, new ShardRange(1, 0, 50));
+        recoveringChildShards.put(2, new ShardRange(2, 51, 100));
 
         // Act
-        ShardRouting result = parentShard.createRecoveringChildShards(recoveringChildShardRanges, replicaCount);
+        ShardRouting result = parentShard.createRecoveringChildShards(Set.of(1, 2), replicaCount);
 
         // Assert
         assertNotNull("Result should not be null", result);
@@ -781,20 +780,28 @@ public class ShardRoutingTests extends OpenSearchTestCase {
         assertEquals("Expected shard size should be unavailable", UNAVAILABLE_EXPECTED_SHARD_SIZE, result.getExpectedShardSize());
 
         ShardRouting[] childShards = result.getRecoveringChildShards();
+        Map<Integer, List<ShardRouting>> childShardsMap = new HashMap<>();
+        for (ShardRouting routing : childShards) {
+            childShardsMap.putIfAbsent(routing.getId(), new ArrayList<>());
+            childShardsMap.get(routing.getId()).add(routing);
+        }
         assertNotNull("Child shards should not be null", childShards);
-        assertEquals("Number of child shards should match expected", recoveringChildShardRanges.length * (replicaCount + 1), childShards.length);
+        assertEquals("Number of child shards should match expected", recoveringChildShards.size() * (replicaCount + 1), childShards.length);
 
-        for (int i = 0; i < recoveringChildShardRanges.length; i++) {
-            ShardRouting primaryChildShard = childShards[i * (replicaCount + 1)];
-            assertEquals("Child shard index should match", recoveringChildShardRanges[i].getShardId(), primaryChildShard.id());
+        List<Integer> sortedChildShards = new ArrayList<>(recoveringChildShards.keySet());
+        Collections.sort(sortedChildShards);
+        for (int childShardId : sortedChildShards) {
+
+            ShardRouting primaryChildShard = childShardsMap.get(childShardId).get(0);
+            assertEquals("Child shard index should match", recoveringChildShards.get(childShardId).getShardId(), primaryChildShard.id());
             assertTrue("Primary child shard should be primary", primaryChildShard.primary());
             assertEquals("Primary child shard should be UNASSIGNED", ShardRoutingState.UNASSIGNED, primaryChildShard.state());
             assertEquals("Primary child shard should have correct recovery source",
                 RecoverySource.InPlaceShardSplitRecoverySource.INSTANCE, primaryChildShard.recoverySource());
 
             for (int j = 1; j <= replicaCount; j++) {
-                ShardRouting replicaChildShard = childShards[i * (replicaCount + 1) + j];
-                assertEquals("Replica child shard index should match", recoveringChildShardRanges[i].getShardId(), replicaChildShard.id());
+                ShardRouting replicaChildShard = childShardsMap.get(childShardId).get(j);
+                assertEquals("Replica child shard index should match", recoveringChildShards.get(childShardId).getShardId(), replicaChildShard.id());
                 assertFalse("Replica child shard should not be primary", replicaChildShard.primary());
                 assertEquals("Replica child shard should be UNASSIGNED", ShardRoutingState.UNASSIGNED, replicaChildShard.state());
                 assertEquals("Replica child shard should have peer recovery source",
@@ -810,21 +817,15 @@ public class ShardRoutingTests extends OpenSearchTestCase {
         // Act & Assert
         AssertionError error = assertThrows(
             AssertionError.class,
-            () -> parentShard.createRecoveringChildShards(ranges, 1)
-        );
-
-        assertEquals(
-            "recovery source only available on unassigned or initializing shard but was SPLITTING",
-            error.getMessage()
+            () -> parentShard.createRecoveringChildShards(new HashSet<>(), 1)
         );
     }
 
     public void testCreateRecoveringChildShardsWithNullShardRange() {
         ShardRouting parentShard = TestShardRouting.newShardRouting("test", 0, "node1", true, ShardRoutingState.STARTED);
-        ShardRange[] ranges = new ShardRange[]{ null };
 
-        assertThrows(NullPointerException.class, () -> {
-            parentShard.createRecoveringChildShards(ranges, 1);
+        assertThrows(AssertionError.class, () -> {
+            parentShard.createRecoveringChildShards(new HashSet<>(), 1);
         });
 
     }

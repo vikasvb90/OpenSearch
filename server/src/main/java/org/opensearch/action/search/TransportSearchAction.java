@@ -1454,11 +1454,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 final ShardId shardId = entry.getKey();
                 IndexMetadata indexMetadata = clusterState.metadata().getIndexSafe(shardId.getIndex());
                 final List<ShardId> allShardIds;
-                if (indexMetadata.getSplitShardsMetadata().isEmptyParentShard(shardId.id())) {
-                    ShardRange[] childShards = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(shardId.id());
+                if (indexMetadata.getSplitShardsMetadata().isSplitParent(shardId.id())) {
                     allShardIds = new ArrayList<>();
-                    for (ShardRange childShard : childShards) {
-                        allShardIds.add(new ShardId(shardId.getIndex(), childShard.getShardId()));
+                    for (int childShardId : indexMetadata.getSplitShardsMetadata().getChildShardIdsOfParent(shardId.id())) {
+                        allShardIds.add(new ShardId(shardId.getIndex(), childShardId));
                     }
                 } else {
                     allShardIds = List.of(shardId);

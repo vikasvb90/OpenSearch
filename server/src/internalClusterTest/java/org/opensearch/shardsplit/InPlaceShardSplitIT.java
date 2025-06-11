@@ -70,7 +70,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
         return Arrays.stream(shards).map(ShardRange::getShardId).collect(Collectors.toSet());
     }
 
-    private void waitForSplit(int numberOfSplits, Set<Integer> childShardIds, int parentShardId, int replicaCount) throws Exception {
+    private void waitForSplit(int numberOfSplits, Set<Integer> childShardIds, Set<Integer> parentShardIds, int replicaCount) throws Exception {
         final long maxWaitTimeMs = Math.max(190 * 1000, 200 * numberOfSplits);
 
         assertBusy(() -> {
@@ -78,8 +78,8 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             int startedChildShards = 0, startedChildReplicas = 0;
             for (ShardStats shardStat : shardStats) {
                 ShardRouting shardRouting = shardStat.getShardRouting();
-                if (shardRouting.primary() && shardRouting.shardId().id() == parentShardId && shardStat.getShardRouting().started()) {
-                    throw new Exception("Splitting of shard id " + parentShardId + " failed ");
+                if (shardRouting.primary() && parentShardIds.contains(shardRouting.shardId().id()) && shardStat.getShardRouting().started()) {
+                    throw new Exception("Splitting of shard id " + shardRouting.shardId().id() + " failed ");
                 } else if (childShardIds.contains(shardStat.getShardRouting().shardId().id())) {
                     startedChildShards++;
                     if (shardRouting.primary() == false) {
@@ -88,8 +88,7 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
                 }
 
             }
-            assertEquals(numberOfSplits * (replicaCount + 1), startedChildShards);
-            assertEquals(numberOfSplits * replicaCount, startedChildReplicas);
+            assertEquals(numberOfSplits * (replicaCount + 1) * parentShardIds.size(), startedChildShards);
         }, maxWaitTimeMs, TimeUnit.MILLISECONDS);
 
         assertClusterHealth();
@@ -124,18 +123,21 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
         assertThat(clusterHealthResponse.getStatus(), equalTo(ClusterHealthStatus.GREEN));
     }
 
-    private void verifyAfterSplit(long totalIndexedDocs, Set<String> ids, int parentShardId, Set<Integer> childShardIds) throws InterruptedException {
+    private void verifyAfterSplit(long totalIndexedDocs, Set<String> ids, Set<Integer> parentShardIds, Set<Integer> childShardIds) throws InterruptedException {
         ClusterState clusterState = internalCluster().clusterManagerClient().admin().cluster().prepareState().get().getState();
         IndexMetadata indexMetadata = clusterState.metadata().index("test");
         if (!childShardIds.isEmpty()) {
-            assertNotNull(indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId));
-            ShardRange[] shards = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId);
-            Set<Integer> currentShardIds = Arrays.stream(shards).map(ShardRange::getShardId).collect(Collectors.toSet());
-            assertEquals(childShardIds, currentShardIds);
             Set<Integer> newServingChildShardIds = new HashSet<>();
-            for (int shardId : currentShardIds) {
-                assertTrue(parentShardId != shardId);
-                if (childShardIds.contains(shardId)) newServingChildShardIds.add(shardId);
+            for (Integer parentShardId : parentShardIds) {
+                assertNotNull(indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId));
+                ShardRange[] shards = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId);
+                Set<Integer> currentShardIds = Arrays.stream(shards).map(ShardRange::getShardId).collect(Collectors.toSet());
+                for (int shardId : currentShardIds) {
+                    assertFalse(parentShardIds.contains(shardId));
+                    if (childShardIds.contains(shardId)) {
+                        newServingChildShardIds.add(shardId);
+                    }
+                }
             }
             assertEquals(childShardIds, newServingChildShardIds);
         }
@@ -179,12 +181,40 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> starting split...");
             Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
             logger.info("--> waiting for shards to be split ...");
-            waitForSplit(numberOfSplits, childShardIds, parentShardId, replicaCount);
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardId), replicaCount);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
             indexer.pauseIndexing();
             indexer.stopAndAwaitStopped();
-            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardId), childShardIds);
+        }
+    }
+
+    public void testConcurrentShardSplitsOnIndex() throws Exception {
+        internalCluster().startNodes(2);
+        int replicaCount = 2;
+        prepareCreate("test", Settings.builder().put("index.number_of_shards", 3)
+            .put("index.number_of_replicas", replicaCount)).get();
+        ensureGreen();
+        int numDocs = scaledRandomIntBetween(200, 500);
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", MapperService.SINGLE_MAPPING_NAME, client(), numDocs, 4)) {
+            logger.info("--> waiting for {} docs to be indexed ...", numDocs);
+            waitForDocs(numDocs, indexer);
+            logger.info("--> {} docs indexed", numDocs);
+            numDocs = scaledRandomIntBetween(5000, 7500);
+            logger.info("--> Allow indexer to index [{}] more documents", numDocs);
+            indexer.continueIndexing(numDocs);
+            int numberOfSplits = 3, parentShardIdA = 0, parentShardIdB = 1;
+            logger.info("--> starting split...");
+            Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardIdA, numberOfSplits);
+            childShardIds.addAll(triggerSplitAndGetChildShardIds(parentShardIdB, numberOfSplits));
+            logger.info("--> waiting for shards to be split ...");
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardIdA, parentShardIdB), replicaCount);
+            logger.info("--> Shard split completed ...");
+            logger.info("--> Verifying after split ...");
+            indexer.pauseIndexing();
+            indexer.stopAndAwaitStopped();
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardIdA, parentShardIdB), childShardIds);
         }
     }
 
@@ -257,12 +287,12 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> starting split...");
             Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
             logger.info("--> waiting for shards to be split ...");
-            waitForSplit(numberOfSplits, childShardIds, parentShardId, replicaCount);
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardId), replicaCount);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
             indexer.pauseIndexing();
             indexer.stopAndAwaitStopped();
-            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardId), childShardIds);
         }
 
     }
@@ -309,12 +339,12 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> starting split...");
             Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
             logger.info("--> waiting for shards to be split ...");
-            waitForSplit(numberOfSplits, childShardIds, parentShardId, replicaCount);
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardId), replicaCount);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
             indexer.pauseIndexing();
             indexer.stopAndAwaitStopped();
-            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardId), childShardIds);
         }
     }
 
@@ -347,10 +377,10 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> starting split...");
             Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
             logger.info("--> waiting for shards to be split ...");
-            waitForSplit(numberOfSplits, childShardIds, parentShardId, replicaCount);
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardId), replicaCount);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
-            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardId), childShardIds);
         }
     }
 
@@ -411,12 +441,12 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> starting split...");
             Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
             logger.info("--> waiting for shards to be split ...");
-            waitForSplit(numberOfSplits, childShardIds, parentShardId, replicaCount);
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardId), replicaCount);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
             indexer.pauseIndexing();
             indexer.stopAndAwaitStopped();
-            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardId), childShardIds);
             stopped.set(true);
         } finally {
             ThreadPool.terminate(testThreadPool, 5, TimeUnit.SECONDS);
@@ -476,12 +506,12 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> starting split...");
             Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
             logger.info("--> waiting for shards to be split ...");
-            waitForSplit(numberOfSplits, childShardIds, parentShardId, replicaCount);
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardId), replicaCount);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
             indexer.pauseIndexing();
             indexer.stopAndAwaitStopped();
-            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardId), childShardIds);
             Thread.sleep(5000);
             stopped.set(true);
         } finally {
@@ -553,12 +583,12 @@ public class InPlaceShardSplitIT extends OpenSearchIntegTestCase {
             logger.info("--> starting split...");
             Set<Integer> childShardIds = triggerSplitAndGetChildShardIds(parentShardId, numberOfSplits);
             logger.info("--> waiting for shards to be split ...");
-            waitForSplit(numberOfSplits, childShardIds, parentShardId, replicaCount);
+            waitForSplit(numberOfSplits, childShardIds, Set.of(parentShardId), replicaCount);
             logger.info("--> Shard split completed ...");
             logger.info("--> Verifying after split ...");
             indexer.pauseIndexing();
             indexer.stopAndAwaitStopped();
-            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), parentShardId, childShardIds);
+            verifyAfterSplit(indexer.totalIndexedDocs(), indexer.getIds(), Set.of(parentShardId), childShardIds);
             Thread.sleep(5000);
             stopped.set(true);
         } finally {

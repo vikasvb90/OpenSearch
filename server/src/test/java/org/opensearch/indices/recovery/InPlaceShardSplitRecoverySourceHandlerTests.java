@@ -446,8 +446,8 @@ public class InPlaceShardSplitRecoverySourceHandlerTests extends OpenSearchTestC
             super.newStartedShard(p -> parentShard, true);
             IndexMetadata sourceShardMetadata = parentShard.indexSettings().getIndexMetadata();
 
-            ShardRange[] childShardRanges = sourceShardMetadata.getSplitShardsMetadata().getChildShardsOfParent(parentShardId);
-            ShardRouting parentRouting = parentShard.routingEntry().createRecoveringChildShards(childShardRanges, replicaCount);
+            Set<Integer> childShardIds = sourceShardMetadata.getSplitShardsMetadata().getChildShardIdsOfParent(parentShardId);
+            ShardRouting parentRouting = parentShard.routingEntry().createRecoveringChildShards(childShardIds, replicaCount);
             assignChildShards(parentRouting, parentNode);
 
             updateRoutingEntry(parentShard, parentRouting);

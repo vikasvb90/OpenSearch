@@ -134,12 +134,11 @@ public class IndexRoutingTable extends AbstractDiffable<IndexRoutingTable>
         }
 
         // check the number of shards
-        if (indexMetadata.getNumberOfShards() - indexMetadata.getSplitShardsMetadata().numberOfEmptyParentShards() != shards().size()) {
+        if (indexMetadata.getNumberOfShards() != shards().size()) {
             Set<Integer> expected = new HashSet<>();
-            for (int i = 0; i < indexMetadata.getNumberOfShards(); i++) {
-                if (indexMetadata.getSplitShardsMetadata().isEmptyParentShard(i) == false) {
-                    expected.add(i);
-                }
+            Iterator<Integer> shardsIterator = indexMetadata.getSplitShardsMetadata().getActiveShardIterator();
+            while (shardsIterator.hasNext()) {
+                expected.add(shardsIterator.next());
             }
             for (IndexShardRoutingTable indexShardRoutingTable : this) {
                 expected.remove(indexShardRoutingTable.shardId().id());

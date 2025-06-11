@@ -188,8 +188,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                         } else if (shard.started() && shard.primary()) {
                             IndexMetadata indexMetadata = metadata.getIndexSafe(indexRoutingTable.getIndex());
                             if (indexMetadata.getSplitShardsMetadata().isSplitOfShardInProgress(shard.id())) {
-                                ShardRange[] childShardRanges = indexMetadata.getSplitShardsMetadata().getChildShardsOfParent(shard.shardId().id());
-                                ShardRouting parentRouting = shard.createRecoveringChildShards(childShardRanges, indexMetadata.getNumberOfReplicas());
+                                Set<Integer> childShardIds = indexMetadata.getSplitShardsMetadata().getChildShardIdsOfParent(shard.shardId().id());
+                                ShardRouting parentRouting = shard.createRecoveringChildShards(childShardIds, indexMetadata.getNumberOfReplicas());
                                 pendingShardsForSplit.add(parentRouting);
                             }
                         }

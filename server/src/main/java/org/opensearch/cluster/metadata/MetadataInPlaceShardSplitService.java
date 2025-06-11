@@ -26,17 +26,10 @@ import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
-import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.ShardLimitValidator;
 import org.opensearch.plugins.PluginsService;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.function.BiFunction;
 
 public class MetadataInPlaceShardSplitService {
@@ -131,12 +124,11 @@ public class MetadataInPlaceShardSplitService {
     ) {
         IndexMetadata curIndexMetadata = currentState.metadata().index(request.getIndex());
         ShardId sourceShardId = new ShardId(curIndexMetadata.getIndex(), request.getShardId());
-        if (curIndexMetadata.getSplitShardsMetadata().getInProgressSplitShardId() != SplitShardsMetadata.SPLIT_NOT_IN_PROGRESS) {
-            int inProgressSplitShard = curIndexMetadata.getSplitShardsMetadata().getInProgressSplitShardId();
-            throw new IllegalArgumentException("Splitting of shard [" + inProgressSplitShard + "] is already in progress");
+        if (curIndexMetadata.getSplitShardsMetadata().getInProgressSplitShardIds().contains(request.getShardId())) {
+            throw new IllegalArgumentException("Splitting of shard [" + request.getShardId() + "] is already in progress");
         }
 
-        if (curIndexMetadata.getSplitShardsMetadata().isEmptyParentShard(request.getShardId())) {
+        if (curIndexMetadata.getSplitShardsMetadata().isSplitParent(request.getShardId())) {
             throw new IllegalArgumentException("Shard [" + request.getShardId() + "] has already been split.");
         }
 

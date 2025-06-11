@@ -55,6 +55,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * {@link ShardRouting} immutably encapsulates information about shard
@@ -648,16 +649,17 @@ public class ShardRouting implements Writeable, ToXContentObject {
     /**
      * Create child shard routings for a splitting parent.
      */
-    public ShardRouting createRecoveringChildShards(ShardRange[] recoveringChildShardRanges, int replicaCount) {
-        int totalShards = recoveringChildShardRanges.length * (replicaCount + 1);
+    public ShardRouting createRecoveringChildShards(Set<Integer> recoveringChildShardIds, int replicaCount) {
+        assert !recoveringChildShardIds.isEmpty();
+        int totalShards = recoveringChildShardIds.size() * (replicaCount + 1);
         AllocationId allocationId = AllocationId.newSplit(allocationId(), totalShards);
         ShardRouting[] childShards = new ShardRouting[totalShards];
         int allocationIdx = 0;
         UnassignedInfo childUnassignedInfo = new UnassignedInfo(UnassignedInfo.Reason.CHILD_SHARD_CREATED,
             "child_shard_allocation_pending[parent shard " + shardId + "]");
-        for (ShardRange recoveringChildShardRange : recoveringChildShardRanges) {
+        for (int childShard : recoveringChildShardIds) {
             childShards[allocationIdx] = new ShardRouting(
-                    new ShardId(index(), recoveringChildShardRange.getShardId()),
+                    new ShardId(index(), childShard),
                     null,
                     null,
                     true,
@@ -674,7 +676,7 @@ public class ShardRouting implements Writeable, ToXContentObject {
 
             for (int replica = 0; replica < replicaCount; replica++) {
                 childShards[allocationIdx] = new ShardRouting(
-                        new ShardId(index(), recoveringChildShardRange.getShardId()),
+                        new ShardId(index(), childShard),
                         null,
                         null,
                         false,

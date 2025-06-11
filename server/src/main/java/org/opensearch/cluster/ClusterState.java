@@ -67,6 +67,7 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -369,12 +370,12 @@ public class ClusterState implements ToXContentFragment, Diffable<ClusterState> 
                 .append("], av[")
                 .append(indexMetadata.getAliasesVersion())
                 .append("]\n");
-            for (int shard = 0; shard < indexMetadata.getNumberOfShards(); shard++) {
-                if (indexMetadata.getSplitShardsMetadata().isEmptyParentShard(shard) == false) {
-                    sb.append(TAB).append(TAB).append(shard).append(": ");
-                    sb.append("p_term [").append(indexMetadata.primaryTerm(shard)).append("], ");
-                    sb.append("isa_ids ").append(indexMetadata.inSyncAllocationIds(shard)).append("\n");
-                }
+            Iterator<Integer> shardIterator = indexMetadata.getSplitShardsMetadata().getActiveShardIterator();
+            while (shardIterator.hasNext()) {
+                int shard = shardIterator.next();
+                sb.append(TAB).append(TAB).append(shard).append(": ");
+                sb.append("p_term [").append(indexMetadata.primaryTerm(shard)).append("], ");
+                sb.append("isa_ids ").append(indexMetadata.inSyncAllocationIds(shard)).append("\n");
             }
         }
         if (metadata.customs().isEmpty() == false) {
