@@ -174,10 +174,13 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         };
     }
 
-    private static void validateShardRanges(int shardId, ShardRange[] shardRanges, long parentStart, long parentEnd) {
+    // Visible for testing
+    static void validateShardRanges(int shardId, ShardRange[] shardRanges) {
         Integer start = null;
+        int lowerBound = Integer.MIN_VALUE;
+        int upperBound = Integer.MAX_VALUE;
         for (ShardRange shardRange : shardRanges) {
-            validateBounds(shardRange, start, parentStart);
+            validateBounds(shardRange, start, lowerBound);
             long rangeEnd = shardRange.getEnd();
             long rangeLength = rangeEnd - shardRange.getStart() + 1;
             if (rangeLength < MINIMUM_RANGE_LENGTH_THRESHOLD) {
@@ -193,9 +196,9 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             throw new IllegalArgumentException("No shard range defined for child shards of shard " + shardId);
         }
 
-        if (start != parentEnd) {
+        if (start != upperBound) {
             throw new IllegalArgumentException(
-                "Shard range from " + (start + 1) + " to " + parentEnd
+                "Shard range from " + (start + 1) + " to " + upperBound
                     + " is missing from the list of shard ranges");
         }
     }
@@ -208,9 +211,14 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
                         + " is missing from the list of shard ranges");
             }
         } else if (shardRange.getStart() != start + 1) {
-            throw new IllegalArgumentException(
-                "Shard range from " + (start + 1) + " to " + (shardRange.getStart() - 1)
-                    + " is missing from the list of shard ranges");
+            String errorMessage;
+            if (shardRange.getStart() < start + 1) {
+                errorMessage = "Shard range overlaps from " + shardRange.getStart() + " to " + start;
+            } else {
+                errorMessage = "Shard range from " + (start + 1) + " to " + (shardRange.getStart() - 1)
+                    + " is missing from the list of shard ranges";
+            }
+            throw new IllegalArgumentException(errorMessage);
         }
     }
 
@@ -270,7 +278,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             }
             ShardRange parentShard = shardTuple.v2();
 
-            long rangeSize = ((long)parentShard.getEnd() - parentShard.getStart()) / numberOfChildren;
+            long rangeSize = ((long)parentShard.getEnd() - parentShard.getStart() + 1 ) / numberOfChildren;
 
             if(rangeSize <= MINIMUM_RANGE_LENGTH_THRESHOLD) {
                 throw new IllegalArgumentException("Cannot split shard [" + splitShardId + "] further.");
@@ -280,15 +288,23 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             List<ShardRange> newChildShardsList = new ArrayList<>();
             int nextChildShardId = maxShardId + 1;
             for (int i = 0; i < numberOfChildren; ++i) {
-                long end = i == numberOfChildren - 1 ? parentShard.getEnd() : start + rangeSize;
+                long end = i == numberOfChildren - 1 ? parentShard.getEnd() : start + rangeSize - 1;
                 int childShardId = nextChildShardId++;
                 ShardRange childShard = new ShardRange(childShardId, (int) start, (int) end);
                 newChildShardsList.add(childShard);
                 start = end + 1;
             }
             ShardRange[] newShardRanges = newChildShardsList.toArray(new ShardRange[0]);
-            validateShardRanges(splitShardId, newShardRanges, parentShard.getStart(), parentShard.getEnd());
 
+//            // Get existing childShardRanges under rootShard
+            List<ShardRange> shardsUnderRoot = rootShardsToAllChildren[shardTuple.v1()] == null ? new ArrayList<>() :
+                new ArrayList<>(Arrays.asList(rootShardsToAllChildren[shardTuple.v1()]));
+            shardsUnderRoot.remove(shardTuple.v2()); // Remove parent shard range
+            shardsUnderRoot.addAll(List.of(newShardRanges)); // Add child shard range
+            ShardRange[] newShardsUnderRoot = shardsUnderRoot.toArray(new ShardRange[0]);
+            Arrays.sort(newShardsUnderRoot);
+
+            validateShardRanges(splitShardId, newShardsUnderRoot);
             parentToChildShards.put(splitShardId, newShardRanges);
         }
 
@@ -307,7 +323,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             shardsUnderRoot.addAll(Arrays.asList(parentToChildShards.get(sourceShardId)));
             ShardRange[] newShardsUnderRoot = shardsUnderRoot.toArray(new ShardRange[0]);
             Arrays.sort(newShardsUnderRoot);
-            validateShardRanges(shardRangeTuple.v1(), newShardsUnderRoot, Integer.MIN_VALUE, Integer.MAX_VALUE);
+            validateShardRanges(shardRangeTuple.v1(), newShardsUnderRoot);
 
             maxShardId += newChildShardIds.size();
             rootShardsToAllChildren[shardRangeTuple.v1()] = newShardsUnderRoot;
