@@ -69,6 +69,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
     private volatile boolean inSync = false;
     protected final Consumer<ShardId> onSync;
     private volatile Runnable finalizer;
+    private SetOnce<IndexCommit> acquiredCommit = new SetOnce<>();
 
     public InPlaceShardSplitRecoverySourceHandler(
         IndexShard sourceShard,
@@ -105,6 +106,8 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             resources.add(releasable);
             return releasable;
         });
+
+        recoveryTarget.initCommitSupplier(()-> acquiredCommit.get());
     }
 
     public IndexShard getSourceShard() {
@@ -146,6 +149,7 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         GatedCloseable<IndexCommit> lastCommit;
         try {
             lastCommit = acquireCommitAndFetchMetadata(translogRetentionLock);
+            acquiredCommit.set(lastCommit.get());
         } catch (NoSuchFileException ex) {
             // Handling of a known issue in remote store flow https://github.com/opensearch-project/OpenSearch/pull/10341
             logger.warn("Exception while acquiring commit and fetching metadata", ex);

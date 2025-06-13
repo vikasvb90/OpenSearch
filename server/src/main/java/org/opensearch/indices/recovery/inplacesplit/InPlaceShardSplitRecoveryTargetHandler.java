@@ -9,6 +9,7 @@
 package org.opensearch.indices.recovery.inplacesplit;
 
 import org.apache.lucene.codecs.CodecUtil;
+import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.misc.store.HardlinkCopyDirectoryWrapper;
@@ -65,6 +66,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static org.opensearch.index.translog.Translog.TRANSLOG_UUID_KEY;
 
@@ -75,6 +77,7 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
     protected final IndexShard sourceShard;
     private final CancellableThreads cancellableThreads;
     protected final SetOnce<Function<Store, Releasable>> storeAcquirer = new SetOnce<>();
+    private final SetOnce<Supplier<IndexCommit>> acquiredCommitSupplier = new SetOnce<>();
 
     private final ReplicationListener unSupportedTargetListener = new ReplicationListener() {
         @Override
@@ -110,6 +113,10 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
 
     public void initStoreAcquirer(Function<Store, Releasable> storeAcquirer) {
         this.storeAcquirer.set(storeAcquirer);
+    }
+
+    public void initCommitSupplier(Supplier<IndexCommit> commitSupplier) {
+        this.acquiredCommitSupplier.set(commitSupplier);
     }
 
     public void cleanShardDirectoriesForTargets() throws IOException {
@@ -403,7 +410,8 @@ public class InPlaceShardSplitRecoveryTargetHandler implements RecoveryTargetHan
 
         String sourceTranslogUUID;
         try {
-            sourceTranslogUUID = sourceShard.store().getMetadata().getCommitUserData().get(TRANSLOG_UUID_KEY);
+            assert acquiredCommitSupplier.get() != null && acquiredCommitSupplier.get().get() != null;
+            sourceTranslogUUID = sourceShard.store().getMetadata(acquiredCommitSupplier.get().get()).getCommitUserData().get(TRANSLOG_UUID_KEY);
         } catch (Exception ex) {
             listener.onFailure(ex);
             return;

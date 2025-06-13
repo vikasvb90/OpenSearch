@@ -320,7 +320,7 @@ public class IndexMetadataUpdater extends RoutingChangesObserver.AbstractRouting
             // Only trim the set of allocation ids when it grows, otherwise we might trim too eagerly when the number
             // of replicas was decreased while shards were unassigned.
             int maxActiveShards = oldIndexMetadata.getNumberOfReplicas() + 1 +
-                oldIndexMetadata.getSplitShardsMetadata().inProgressShardsCount(); // +1 for
+                oldIndexMetadata.getSplitShardsMetadata().inProgressChildShardsCount(); // +1 for
                                                                               // the
                                                                               // primary
             IndexShardRoutingTable newShardRoutingTable = newRoutingTable.shardRoutingTable(shardId);

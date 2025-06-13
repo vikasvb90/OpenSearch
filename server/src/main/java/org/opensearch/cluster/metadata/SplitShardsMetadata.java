@@ -187,7 +187,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return childShardIds;
     }
 
-    public int inProgressShardsCount() {
+    public int inProgressChildShardsCount() {
         int total = 0;
         for (Integer parent : inProgressSplitShardIds) {
             total += parentToChildShards.get(parent).length;
