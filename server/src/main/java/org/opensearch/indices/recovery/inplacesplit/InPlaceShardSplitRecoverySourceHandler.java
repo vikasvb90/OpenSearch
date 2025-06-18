@@ -13,6 +13,7 @@ import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.lucene.index.IndexCommit;
 import org.opensearch.action.StepListener;
 import org.opensearch.action.admin.indices.flush.FlushRequest;
+import org.opensearch.action.admin.indices.forcemerge.ForceMergeRequest;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.SetOnce;
 import org.opensearch.common.StopWatch;
@@ -489,8 +490,38 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         });
 
         finalizer = () -> super.finalizeRecovery(new StopWatch().start(), trimAboveSeqNo, listener);
+        try {
+            forceMergeChildShards();
+        } catch (Exception ex) {
+            logger.error("Error performing force merge", ex);
+            listener.onFailure(ex);
+        }
         inSync = true;
         onSync.accept(sourceShard.shardId());
+    }
+
+    private void forceMergeChildShards() throws IOException, InterruptedException {
+        StopWatch parentStopWatch = new StopWatch().start();
+
+        for (InPlaceShardRecoveryContext recoveryContext : recoveryContexts) {
+            StopWatch stopWatch = new StopWatch().start();
+            ForceMergeRequest forceMergeRequest = new ForceMergeRequest();
+            forceMergeRequest.onlyExpungeDeletes(true);
+            recoveryContext.getIndexShard().forceMerge(forceMergeRequest);
+            logger.info("Force merge on child shard completed {} in {}s. Invoking flush to sync new segments to remote for child shard {}",
+                recoveryContext.getIndexShard().shardId().id(),
+                stopWatch.totalTime().seconds(),
+                recoveryContext.getIndexShard().shardId().id()
+            );
+            stopWatch = new StopWatch().start();
+            recoveryContext.getIndexShard().flush(new FlushRequest().waitIfOngoing(true));
+            stopWatch.stop();
+            logger.info("Flush after force merge completed on child shard {} in {}s",
+                recoveryContext.getIndexShard().shardId().id(),
+                stopWatch.totalTime().seconds()
+            );
+        }
+        logger.info("Force merge completed on all child shards in {}s", parentStopWatch.totalTime().seconds());
     }
 
     public void performHandoff() {

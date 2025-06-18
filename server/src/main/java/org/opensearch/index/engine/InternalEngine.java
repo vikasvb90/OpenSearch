@@ -2015,6 +2015,7 @@ public class InternalEngine extends Engine {
             try {
                 if (onlyExpungeDeletes) {
                     assert upgrade == false;
+
                     indexWriter.forceMergeDeletes(true /* blocks and waits for merges*/);
                 } else if (maxNumSegments <= 0) {
                     assert upgrade == false;
@@ -2054,6 +2055,26 @@ public class InternalEngine extends Engine {
             } finally {
                 optimizeLock.unlock();
             }
+        }
+    }
+
+    @Override
+    public void onlyExpunge(Set<String> segmentsToExpunge) throws IOException {
+        assert indexWriter.getConfig().getMergePolicy() instanceof OpenSearchMergePolicy : "MergePolicy is "
+            + indexWriter.getConfig().getMergePolicy().getClass().getName();
+        OpenSearchMergePolicy mp = (OpenSearchMergePolicy) indexWriter.getConfig().getMergePolicy();
+        optimizeLock.lock();
+        try {
+            indexWriter.forceMergeDeletes(true /* blocks and waits for merges*/);
+        } catch (Exception e) {
+            try {
+                maybeFailEngine(FORCE_MERGE, e);
+            } catch (Exception inner) {
+                e.addSuppressed(inner);
+            }
+            throw e;
+        } finally {
+            optimizeLock.unlock();
         }
     }
 
@@ -2339,7 +2360,7 @@ public class InternalEngine extends Engine {
         }
 
         iwc.setCheckPendingFlushUpdate(config().getIndexSettings().isCheckPendingFlushEnabled());
-        iwc.setMergePolicy(new OpenSearchMergePolicy(mergePolicy));
+        iwc.setMergePolicy(new OpenSearchMergePolicy(mergePolicy, config().getIndexSettings().getMergeSchedulerConfig().getSegmentMergeLimiterOnExpunge()));
         iwc.setSimilarity(engineConfig.getSimilarity());
         iwc.setRAMBufferSizeMB(engineConfig.getIndexingBufferSize().getMbFrac());
         iwc.setCodec(engineConfig.getCodec());

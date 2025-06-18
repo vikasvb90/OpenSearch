@@ -37,13 +37,16 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.FilterMergePolicy;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.MergePolicy;
+import org.apache.lucene.index.MergeTrigger;
 import org.apache.lucene.index.SegmentCommitInfo;
 import org.apache.lucene.index.SegmentInfos;
 import org.opensearch.Version;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A {@link MergePolicy} that upgrades segments and can upgrade merges.
@@ -70,10 +73,16 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
     private volatile boolean upgradeOnlyAncientSegments;
 
     private static final int MAX_CONCURRENT_UPGRADE_MERGES = 5;
+    private static final int MAX_CONCURRENT_EXPUNGE_MERGES = 5;
+
+    private final SegmentMergeLimiterOnExpunge mergeLimiterOnExpunge;
+
+    private final Set<String> segmentsToExpunge = new HashSet<>();
 
     /** @param delegate the merge policy to wrap */
-    public OpenSearchMergePolicy(MergePolicy delegate) {
+    public OpenSearchMergePolicy(MergePolicy delegate, SegmentMergeLimiterOnExpunge segmentMergeLimiterOnExpunge) {
         super(delegate);
+        this.mergeLimiterOnExpunge = segmentMergeLimiterOnExpunge;
     }
 
     /** return the wrapped merge policy */
@@ -158,4 +167,67 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
         this.upgradeInProgress = upgrade;
         this.upgradeOnlyAncientSegments = onlyAncientSegments;
     }
+
+    @Override
+    public MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos infos, MergeContext mergeContext) throws IOException {
+        MergeSpecification mergeSpecification = in.findMerges(mergeTrigger, infos, mergeContext);
+        if (mergeSpecification == null || mergeSpecification.merges.isEmpty() || !mergeLimiterOnExpunge.shouldRateLimitMerges()) {
+            return mergeSpecification;
+        }
+        logger.info("background merges found disabled in findMerges");
+        return mergeLimiterOnExpunge.excludeExpungingSegments(mergeSpecification);
+    }
+
+    @Override
+    public MergeSpecification findFullFlushMerges(MergeTrigger mergeTrigger, SegmentInfos infos, MergeContext mergeContext)
+        throws IOException {
+        MergeSpecification mergeSpecification = in.findFullFlushMerges(mergeTrigger, infos, mergeContext);
+        if (mergeSpecification == null || mergeSpecification.merges.isEmpty() || !mergeLimiterOnExpunge.shouldRateLimitMerges()) {
+            return mergeSpecification;
+        }
+        logger.info("background merges found disabled in findFullFlushMerges");
+        return mergeLimiterOnExpunge.excludeExpungingSegments(mergeSpecification);
+    }
+
+    @Override
+    public MergeSpecification findForcedDeletesMerges(SegmentInfos infos, MergeContext mergeContext) throws IOException {
+        if (segmentsToExpunge.isEmpty() == false) {
+            MergeSpecification spec = new MergeSpecification();
+            for (SegmentCommitInfo info : infos) {
+
+                if (shouldUpgrade(info)) {
+
+                    // TODO: Use IndexUpgradeMergePolicy instead. We should be comparing codecs,
+                    // for now we just assume every minor upgrade has a new format.
+                    logger.info("Adding segment {} to be expunged", info.info.name);
+                    spec.add(new OneMerge(Collections.singletonList(info)));
+                }
+
+                // TODO: we could check IndexWriter.getMergingSegments and avoid adding merges that IW will just reject?
+
+                if (spec.merges.size() == MAX_CONCURRENT_EXPUNGE_MERGES) {
+                    // hit our max upgrades, so return the spec. we will get a cascaded call to continue.
+                    logger.debug("Returning {} merges for upgrade", spec.merges.size());
+                    return spec;
+                }
+            }
+
+            // We must have less than our max upgrade merges, so the next return will be our last in upgrading mode.
+            if (spec.merges.isEmpty() == false) {
+                logger.info("Returning {} merges for end of expunge", spec.merges.size());
+                return spec;
+            }
+
+            // Only set this once there are 0 segments needing upgrading, because when we return a
+            // spec, IndexWriter may (silently!) reject that merge if some of the segments we asked
+            // to be merged were already being (naturally) merged:
+            segmentsToExpunge.clear();
+
+            // fall through, so when we don't have any segments to upgrade, the delegate policy
+            // has a chance to decide what to do (e.g. collapse the segments to satisfy maxSegmentCount)
+        }
+
+        return super.findForcedDeletesMerges(infos, mergeContext);
+    }
+
 }
