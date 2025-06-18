@@ -1278,6 +1278,10 @@ public abstract class Engine implements Closeable {
         @Nullable String forceMergeUUID
     ) throws EngineException, IOException;
 
+    public void onlyExpunge(Set<String> segmentsToExpunge) throws IOException {
+
+    }
+
     /**
      * Snapshots the most recent index and returns a handle to it. If needed will try and "commit" the
      * lucene index to make sure we have a "fresh" copy of the files to snapshot.

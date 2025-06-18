@@ -75,6 +75,7 @@ public class RestForceMergeAction extends BaseRestHandler {
         mergeRequest.indicesOptions(IndicesOptions.fromRequest(request, mergeRequest.indicesOptions()));
         mergeRequest.maxNumSegments(request.paramAsInt("max_num_segments", mergeRequest.maxNumSegments()));
         mergeRequest.onlyExpungeDeletes(request.paramAsBoolean("only_expunge_deletes", mergeRequest.onlyExpungeDeletes()));
+        mergeRequest.onlyExpungeOptimal(request.paramAsBoolean("only_expunge_optimal", mergeRequest.onlyExpungeOptimal()));
         mergeRequest.flush(request.paramAsBoolean("flush", mergeRequest.flush()));
         mergeRequest.primaryOnly(request.paramAsBoolean("primary_only", mergeRequest.primaryOnly()));
         if (mergeRequest.onlyExpungeDeletes() && mergeRequest.maxNumSegments() != ForceMergeRequest.Defaults.MAX_NUM_SEGMENTS) {

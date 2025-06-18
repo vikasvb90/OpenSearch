@@ -75,6 +75,7 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
 
     private int maxNumSegments = Defaults.MAX_NUM_SEGMENTS;
     private boolean onlyExpungeDeletes = Defaults.ONLY_EXPUNGE_DELETES;
+    private boolean onlyExpungeOptimal = false;
     private boolean flush = Defaults.FLUSH;
     private boolean primaryOnly = Defaults.PRIMARY_ONLY;
 
@@ -103,6 +104,7 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
         super(in);
         maxNumSegments = in.readInt();
         onlyExpungeDeletes = in.readBoolean();
+        onlyExpungeOptimal = in.readBoolean();
         flush = in.readBoolean();
         if (in.getVersion().onOrAfter(Version.V_2_13_0)) {
             primaryOnly = in.readBoolean();
@@ -139,12 +141,21 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
         return onlyExpungeDeletes;
     }
 
+    public boolean onlyExpungeOptimal() {
+        return onlyExpungeOptimal;
+    }
+
     /**
      * Should the merge only expunge deletes from the index, without full merge.
      * Defaults to full merging ({@code false}).
      */
     public ForceMergeRequest onlyExpungeDeletes(boolean onlyExpungeDeletes) {
         this.onlyExpungeDeletes = onlyExpungeDeletes;
+        return this;
+    }
+
+    public ForceMergeRequest onlyExpungeOptimal(boolean onlyExpungeOptimal) {
+        this.onlyExpungeOptimal = onlyExpungeOptimal;
         return this;
     }
 
@@ -219,6 +230,7 @@ public class ForceMergeRequest extends BroadcastRequest<ForceMergeRequest> {
         super.writeTo(out);
         out.writeInt(maxNumSegments);
         out.writeBoolean(onlyExpungeDeletes);
+        out.writeBoolean(onlyExpungeOptimal);
         out.writeBoolean(flush);
         if (out.getVersion().onOrAfter(Version.V_2_13_0)) {
             out.writeBoolean(primaryOnly);

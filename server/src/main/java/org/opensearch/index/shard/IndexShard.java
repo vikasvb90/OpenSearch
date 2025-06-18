@@ -41,6 +41,7 @@ import org.apache.lucene.index.FilterDirectoryReader;
 import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.SegmentCommitInfo;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.Query;
@@ -81,6 +82,7 @@ import org.opensearch.common.CheckedFunction;
 import org.opensearch.common.CheckedRunnable;
 import org.opensearch.common.Nullable;
 import org.opensearch.common.SetOnce;
+import org.opensearch.common.StopWatch;
 import org.opensearch.common.annotation.PublicApi;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.concurrent.GatedCloseable;
@@ -1578,20 +1580,61 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         engine.rollTranslogGeneration();
     }
 
+    public Set<String> getSegmentsToExpunge() throws IOException {
+        flush(new FlushRequest().waitIfOngoing(true).force(true));
+        SegmentInfos infos = store.readLastCommittedSegmentsInfo();
+        long totalDocCount = 0, totalDeletedCount = 0;
+        Set<String> curSegmentsToExpunge = new HashSet<>();
+        for (SegmentCommitInfo info : infos) {
+            totalDocCount += info.info.maxDoc();
+            totalDeletedCount += info.getDelCount();
+            final double delRatio = ((double) info.getDelCount()) / info.info.maxDoc();
+            if (delRatio > 0.05) {
+                curSegmentsToExpunge.add(info.info.name);
+            }
+        }
+        double delRatio = ((double) totalDeletedCount) / totalDocCount;
+        if (delRatio <= 0.05) {
+            logger.info("Overall deleted count ratio is below 5% on shard {}", shardId().id());
+        }
+        return curSegmentsToExpunge;
+    }
+
     public void forceMerge(ForceMergeRequest forceMerge) throws IOException {
         verifyActive();
         if (logger.isTraceEnabled()) {
             logger.trace("force merge with {}", forceMerge);
         }
+        StopWatch parentStopWatch = new StopWatch().start();
         Engine engine = getEngine();
-        engine.forceMerge(
-            forceMerge.flush(),
-            forceMerge.maxNumSegments(),
-            forceMerge.onlyExpungeDeletes(),
-            false,
-            false,
-            forceMerge.forceMergeUUID()
-        );
+        if (forceMerge.onlyExpungeOptimal()) {
+            Set<String> previousSegments;
+            Set<String> segmentsToExpunge = getSegmentsToExpunge();
+            while (segmentsToExpunge.isEmpty() == false) {
+                engine.onlyExpunge(segmentsToExpunge);
+                flush(new FlushRequest());
+                Set<String> curSegmentsToExpunge = getSegmentsToExpunge();
+                previousSegments = segmentsToExpunge;
+                segmentsToExpunge = new HashSet<>();
+                for (String segment : curSegmentsToExpunge) {
+                    if (previousSegments.contains(segment)) {
+                        segmentsToExpunge.add(segment);
+                    }
+                }
+            }
+            refresh("after-expunge");
+        } else {
+            engine.forceMerge(
+                forceMerge.flush(),
+                forceMerge.maxNumSegments(),
+                forceMerge.onlyExpungeDeletes(),
+                false,
+                false,
+                forceMerge.forceMergeUUID()
+            );
+        }
+        parentStopWatch.stop();
+        logger.info("Force merge completed on shard {} in {}ms", shardId, parentStopWatch.totalTime().millis());
     }
 
     /**
