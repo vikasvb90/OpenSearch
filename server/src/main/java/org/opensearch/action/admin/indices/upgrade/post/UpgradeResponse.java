@@ -42,6 +42,7 @@ import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.xcontent.XContentBuilder;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -54,10 +55,12 @@ import java.util.Map;
 public class UpgradeResponse extends BroadcastResponse {
 
     private final Map<String, Tuple<Version, String>> versions;
+    private Map<String, Boolean> fullUpgrades;
 
     UpgradeResponse(StreamInput in) throws IOException {
         super(in);
         versions = in.readMap(StreamInput::readString, i -> Tuple.tuple(i.readVersion(), i.readString()));
+        fullUpgrades = in.readMap(StreamInput::readString, StreamInput::readBoolean);
     }
 
     UpgradeResponse(
@@ -71,6 +74,13 @@ public class UpgradeResponse extends BroadcastResponse {
         this.versions = versions;
     }
 
+    public void setFullUpgradeStatus(String index, boolean upgraded) {
+        if (fullUpgrades == null) {
+            fullUpgrades = new HashMap<>();
+        }
+        fullUpgrades.put(index, upgraded);
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
@@ -78,6 +88,7 @@ public class UpgradeResponse extends BroadcastResponse {
             o.writeVersion(v.v1());
             o.writeString(v.v2());
         });
+        out.writeMap(fullUpgrades, StreamOutput::writeString, StreamOutput::writeBoolean);
     }
 
     @Override
@@ -87,6 +98,9 @@ public class UpgradeResponse extends BroadcastResponse {
             builder.startObject(entry.getKey());
             builder.field("upgrade_version", entry.getValue().v1());
             builder.field("oldest_lucene_segment_version", entry.getValue().v2());
+            if (fullUpgrades != null && fullUpgrades.isEmpty() == false) {
+                builder.field("fully_upgraded", fullUpgrades.getOrDefault(entry.getKey(), false));
+            }
             builder.endObject();
         }
         builder.endObject();

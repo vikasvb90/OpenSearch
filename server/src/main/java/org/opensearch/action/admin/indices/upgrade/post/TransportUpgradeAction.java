@@ -34,31 +34,47 @@ package org.opensearch.action.admin.indices.upgrade.post;
 
 import org.opensearch.Version;
 import org.opensearch.action.PrimaryMissingActionException;
+import org.opensearch.action.admin.indices.mapping.put.PutMappingClusterStateUpdateRequest;
 import org.opensearch.action.support.ActionFilters;
 import org.opensearch.action.support.broadcast.node.TransportBroadcastByNodeAction;
 import org.opensearch.client.node.NodeClient;
+import org.opensearch.cluster.AckedClusterStateTaskListener;
 import org.opensearch.cluster.ClusterState;
+import org.opensearch.cluster.ClusterStateTaskConfig;
+import org.opensearch.cluster.ClusterStateTaskExecutor;
+import org.opensearch.cluster.ClusterStateUpdateTask;
 import org.opensearch.cluster.block.ClusterBlockException;
 import org.opensearch.cluster.block.ClusterBlockLevel;
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.metadata.IndexNameExpressionResolver;
 import org.opensearch.cluster.metadata.Metadata;
+import org.opensearch.cluster.metadata.MetadataIndexUpgradeService;
+import org.opensearch.cluster.metadata.MetadataUpdateSettingsService;
+import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.IndexRoutingTable;
 import org.opensearch.cluster.routing.RoutingTable;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.routing.ShardsIterator;
 import org.opensearch.cluster.service.ClusterService;
+import org.opensearch.common.Nullable;
+import org.opensearch.common.Priority;
 import org.opensearch.common.collect.Tuple;
 import org.opensearch.common.inject.Inject;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.action.support.DefaultShardOperationFailedException;
 import org.opensearch.core.common.io.stream.StreamInput;
+import org.opensearch.gateway.GatewayMetaState;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.indices.IndicesService;
+import org.opensearch.plugins.MetadataUpgrader;
 import org.opensearch.tasks.Task;
 import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.TransportService;
 
 import java.io.IOException;
+import java.text.ParseException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -74,6 +90,8 @@ public class TransportUpgradeAction extends TransportBroadcastByNodeAction<Upgra
 
     private final IndicesService indicesService;
     private final NodeClient client;
+    private final MetadataUpgrader metadataUpgrader;
+    private final MetadataIndexUpgradeService upgradeService;
 
     @Inject
     public TransportUpgradeAction(
@@ -82,7 +100,9 @@ public class TransportUpgradeAction extends TransportBroadcastByNodeAction<Upgra
         IndicesService indicesService,
         ActionFilters actionFilters,
         IndexNameExpressionResolver indexNameExpressionResolver,
-        NodeClient client
+        NodeClient client,
+        MetadataUpgrader metadataUpgrader,
+        MetadataIndexUpgradeService upgradeService
     ) {
         super(
             UpgradeAction.NAME,
@@ -95,6 +115,8 @@ public class TransportUpgradeAction extends TransportBroadcastByNodeAction<Upgra
         );
         this.indicesService = indicesService;
         this.client = client;
+        this.metadataUpgrader = metadataUpgrader;
+        this.upgradeService = upgradeService;
     }
 
     @Override
@@ -223,9 +245,125 @@ public class TransportUpgradeAction extends TransportBroadcastByNodeAction<Upgra
             if (upgradeResponse.versions().isEmpty()) {
                 listener.onResponse(upgradeResponse);
             } else {
-                updateSettings(upgradeResponse, listener);
+                List<IndexMetadata> indexMetadataUpgradeList = new ArrayList<>();
+                List<String> indicesForUpgrade = new ArrayList<>();
+                for (Map.Entry<String, Tuple<Version, String>> versionEntry: upgradeResponse.versions().entrySet()) {
+                    boolean luceneVersionUpgraded = false;
+                    try {
+                        luceneVersionUpgraded = org.apache.lucene.util.Version.parse(versionEntry.getValue().v2())
+                            .onOrAfter(org.apache.lucene.util.Version.LATEST);
+                    } catch (ParseException e) {
+                        // This can never happen
+                        logger.error("Failed to parse lucene version", e);
+                    }
+                    if (luceneVersionUpgraded) {
+                        indexMetadataUpgradeList.add(indicesService.clusterService().state().metadata().index(versionEntry.getKey()));
+                        indicesForUpgrade.add(versionEntry.getKey());
+                    }
+                }
+                ActionListener<UpgradeResponse> clusterStateListener = ActionListener.delegateFailure(
+                    listener, (delegatedListener, resp) -> {
+                        for (String index : indicesForUpgrade) {
+                            IndexMetadata indexMetadata = indicesService.clusterService().state().metadata().index(index);
+                            boolean metadataUpgraded = indexMetadata.getUpgradedVersion() != null &&
+                                indexMetadata.getUpgradedVersion().onOrAfter(Version.CURRENT);
+                            resp.setFullUpgradeStatus(index, metadataUpgraded);
+                        }
+                        delegatedListener.onResponse(resp);
+                    }
+                );
+                MetadataUpgradeExecutor metadataUpgradeExecutor = new MetadataUpgradeExecutor(
+                    indexMetadataUpgradeList, metadataUpgrader, upgradeService, upgradeResponse
+                );
+                UpgradeMetadataClusterStateUpdateRequest upgradeRequest = new UpgradeMetadataClusterStateUpdateRequest(indicesForUpgrade);
+                upgradeMetadata(upgradeRequest, clusterStateListener, upgradeResponse, metadataUpgradeExecutor);
             }
         }, listener::onFailure));
+    }
+
+    static class MetadataUpgradeExecutor implements ClusterStateTaskExecutor<UpgradeMetadataClusterStateUpdateRequest> {
+        private final List<IndexMetadata> indexMetadataUpgradeList;
+        private final MetadataUpgrader metadataUpgrader;
+        private final MetadataIndexUpgradeService upgradeService;
+        private final UpgradeResponse upgradeResponse;
+
+        public MetadataUpgradeExecutor(
+            List<IndexMetadata> indexMetadataUpgradeList,
+            MetadataUpgrader metadataUpgrader,
+            MetadataIndexUpgradeService upgradeService,
+            UpgradeResponse upgradeResponse
+        ) {
+            this.indexMetadataUpgradeList = indexMetadataUpgradeList;
+            this.metadataUpgrader = metadataUpgrader;
+            this.upgradeService = upgradeService;
+            this.upgradeResponse = upgradeResponse;
+        }
+
+        @Override
+        public ClusterTasksResult<UpgradeMetadataClusterStateUpdateRequest> execute(ClusterState currentState, List<UpgradeMetadataClusterStateUpdateRequest> tasks) throws Exception {
+            ClusterTasksResult.Builder<UpgradeMetadataClusterStateUpdateRequest> builder = ClusterTasksResult.builder();
+            ClusterState.Builder clusterState = ClusterState.builder(currentState);
+            for (UpgradeMetadataClusterStateUpdateRequest request : tasks) {
+                try {
+                    Metadata upgradedMetadata = GatewayMetaState.upgradeMetadataWhileHandlingFailure(
+                        clusterState.build().metadata(),
+                        indexMetadataUpgradeList,
+                        upgradeService,
+                        metadataUpgrader
+                    );
+                    if (upgradedMetadata != clusterState.build().metadata()) {
+                        final Metadata.Builder metadataSettingsBuilder = Metadata.builder(upgradedMetadata);
+                        MetadataUpdateSettingsService.incMetadataSettings(metadataSettingsBuilder, upgradeResponse.versions());
+                        clusterState.metadata(metadataSettingsBuilder);
+                    }
+                    builder.success(request);
+                } catch (Exception ex) {
+                    builder.failure(request, ex);
+                }
+            }
+            return builder.build(clusterState.build());
+        }
+    }
+
+    private void upgradeMetadata(UpgradeMetadataClusterStateUpdateRequest request,
+                                 ActionListener<UpgradeResponse> listener,
+                                 UpgradeResponse upgradeResponse,
+                                 MetadataUpgradeExecutor metadataUpgradeExecutor) {
+        indicesService.clusterService().submitStateUpdateTask(
+            "upgrade-metadata " + request.getIndices(),
+            request,
+            ClusterStateTaskConfig.build(Priority.HIGH, request.masterNodeTimeout()),
+            metadataUpgradeExecutor,
+            new AckedClusterStateTaskListener() {
+
+                @Override
+                public void onFailure(String source, Exception e) {
+                    logger.error("[{}] Cluster state update failed.", source, e);
+                    listener.onFailure(e);
+                }
+
+                @Override
+                public boolean mustAck(DiscoveryNode discoveryNode) {
+                    return true;
+                }
+
+                @Override
+                public void onAllNodesAcked(@Nullable Exception e) {
+                    listener.onResponse(upgradeResponse);
+                }
+
+                @Override
+                public void onAckTimeout() {
+                    logger.error("[{}] Cluster state update timed out.", request.getIndices());
+                    listener.onResponse(upgradeResponse);
+                }
+
+                @Override
+                public TimeValue ackTimeout() {
+                    return TimeValue.timeValueSeconds(30);
+                }
+            }
+        );
     }
 
     private void updateSettings(final UpgradeResponse upgradeResponse, final ActionListener<UpgradeResponse> listener) {

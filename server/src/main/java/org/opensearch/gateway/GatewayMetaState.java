@@ -78,6 +78,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -102,7 +103,7 @@ import static org.opensearch.node.remotestore.RemoteStoreNodeAttribute.isRemoteS
  * @opensearch.internal
  */
 public class GatewayMetaState implements Closeable {
-
+    private static final Logger logger = LogManager.getLogger(GatewayMetaState.class);
     /**
      * Fake node ID for a voting configuration written by a cluster-manager-ineligible data node to indicate that its on-disk state is potentially stale (since
      * it is written asynchronously after application, rather than before acceptance). This node ID means that if the node is restarted as a
@@ -301,6 +302,39 @@ public class GatewayMetaState implements Closeable {
             );
             changed |= indexMetadata != newMetadata;
             upgradedMetadata.put(newMetadata, false);
+        }
+        // upgrade current templates
+        if (applyPluginUpgraders(
+            metadata.getTemplates(),
+            metadataUpgrader.indexTemplateMetadataUpgraders,
+            upgradedMetadata::removeTemplate,
+            (s, indexTemplateMetadata) -> upgradedMetadata.put(indexTemplateMetadata)
+        )) {
+            changed = true;
+        }
+        return changed ? upgradedMetadata.build() : metadata;
+    }
+
+    public static Metadata upgradeMetadataWhileHandlingFailure(
+        Metadata metadata,
+        List<IndexMetadata> indexMetadataList,
+        MetadataIndexUpgradeService metadataIndexUpgradeService,
+        MetadataUpgrader metadataUpgrader
+    ) {
+        // upgrade index meta data
+        boolean changed = false;
+        final Metadata.Builder upgradedMetadata = Metadata.builder(metadata);
+        for (IndexMetadata indexMetadata : indexMetadataList) {
+            try {
+                IndexMetadata newMetadata = metadataIndexUpgradeService.upgradeIndexMetadata(
+                    indexMetadata,
+                    Version.CURRENT.minimumIndexCompatibilityVersion()
+                );
+                changed |= indexMetadata != newMetadata;
+                upgradedMetadata.put(newMetadata, false);
+            } catch (Exception ex) {
+                logger.error("Failed to upgrade metadata of index {}", indexMetadata.getIndex(), ex);
+            }
         }
         // upgrade current templates
         if (applyPluginUpgraders(

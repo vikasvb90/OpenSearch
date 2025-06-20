@@ -503,28 +503,32 @@ public class MetadataUpdateSettingsService {
                 @Override
                 public ClusterState execute(ClusterState currentState) {
                     Metadata.Builder metadataBuilder = Metadata.builder(currentState.metadata());
-                    for (Map.Entry<String, Tuple<Version, String>> entry : request.versions().entrySet()) {
-                        String index = entry.getKey();
-                        IndexMetadata indexMetadata = metadataBuilder.get(index);
-                        if (indexMetadata != null) {
-                            if (Version.CURRENT.equals(indexMetadata.getCreationVersion()) == false) {
-                                // no reason to pollute the settings, we didn't really upgrade anything
-                                metadataBuilder.put(
-                                    IndexMetadata.builder(indexMetadata)
-                                        .settings(
-                                            Settings.builder()
-                                                .put(indexMetadata.getSettings())
-                                                .put(IndexMetadata.SETTING_VERSION_UPGRADED, entry.getValue().v1())
-                                        )
-                                        .settingsVersion(1 + indexMetadata.getSettingsVersion())
-                                );
-                            }
-                        }
-                    }
+                    incMetadataSettings(metadataBuilder, request.versions());
                     return ClusterState.builder(currentState).metadata(metadataBuilder).build();
                 }
             }
         );
+    }
+
+    public static void incMetadataSettings(Metadata.Builder metadataBuilder, Map<String, Tuple<Version, String>> versions) {
+        for (Map.Entry<String, Tuple<Version, String>> entry : versions.entrySet()) {
+            String index = entry.getKey();
+            IndexMetadata indexMetadata = metadataBuilder.get(index);
+            if (indexMetadata != null) {
+                if (Version.CURRENT.equals(indexMetadata.getCreationVersion()) == false) {
+                    // no reason to pollute the settings, we didn't really upgrade anything
+                    metadataBuilder.put(
+                        IndexMetadata.builder(indexMetadata)
+                            .settings(
+                                Settings.builder()
+                                    .put(indexMetadata.getSettings())
+                                    .put(IndexMetadata.SETTING_VERSION_UPGRADED, entry.getValue().v1())
+                            )
+                            .settingsVersion(1 + indexMetadata.getSettingsVersion())
+                    );
+                }
+            }
+        }
     }
 
     /**

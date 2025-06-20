@@ -45,6 +45,7 @@ import org.opensearch.action.ActionModule;
 import org.opensearch.action.ActionModule.DynamicActionRegistry;
 import org.opensearch.action.ActionType;
 import org.opensearch.action.admin.cluster.snapshots.status.TransportNodesSnapshotsStatus;
+import org.opensearch.action.admin.indices.upgrade.post.GatewayMetadataUpgrader;
 import org.opensearch.action.search.SearchExecutionStatsCollector;
 import org.opensearch.action.search.SearchPhaseController;
 import org.opensearch.action.search.SearchRequestOperationsCompositeListenerFactory;
@@ -1364,6 +1365,18 @@ public class Node implements Closeable {
             resourcesToClose.add(persistentTasksClusterService);
             final PersistentTasksService persistentTasksService = new PersistentTasksService(clusterService, threadPool, client);
 
+            GatewayMetadataUpgrader gatewayMetadataUpgrader  = new GatewayMetadataUpgrader(() -> gatewayMetaState.start(
+                settings(),
+                transportService,
+                clusterService,
+                metaStateService,
+                metadataIndexUpgradeService,
+                metadataUpgrader,
+                lucenePersistedStateFactory,
+                remoteClusterStateService,
+                persistedStateRegistry,
+                remoteStoreRestoreService
+            ));
             modules.add(b -> {
                 b.bind(Node.class).toInstance(this);
                 b.bind(NodeService.class).toInstance(nodeService);
@@ -1463,6 +1476,7 @@ public class Node implements Closeable {
                 b.bind(SegmentReplicationStatsTracker.class).toInstance(segmentReplicationStatsTracker);
                 b.bind(SearchRequestOperationsCompositeListenerFactory.class).toInstance(searchRequestOperationsCompositeListenerFactory);
                 b.bind(SegmentReplicator.class).toInstance(segmentReplicator);
+                b.bind(GatewayMetadataUpgrader.class).toInstance(gatewayMetadataUpgrader);
             });
             injector = modules.createInjector();
 
