@@ -315,6 +315,7 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
             case IndexMetadata.SETTING_INDEX_UUID:
             case IndexMetadata.SETTING_HISTORY_UUID:
             case IndexMetadata.SETTING_VERSION_UPGRADED:
+            case IndexMetadata.SETTING_FULLY_UPGRADED:
             case IndexMetadata.SETTING_INDEX_PROVIDED_NAME:
             case MergePolicyProvider.INDEX_MERGE_ENABLED:
                 // we keep the shrink settings for BWC - this can be removed in 8.0

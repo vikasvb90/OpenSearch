@@ -503,14 +503,14 @@ public class MetadataUpdateSettingsService {
                 @Override
                 public ClusterState execute(ClusterState currentState) {
                     Metadata.Builder metadataBuilder = Metadata.builder(currentState.metadata());
-                    incMetadataSettings(metadataBuilder, request.versions());
+                    incMetadataSettings(metadataBuilder, request.versions(), false);
                     return ClusterState.builder(currentState).metadata(metadataBuilder).build();
                 }
             }
         );
     }
 
-    public static void incMetadataSettings(Metadata.Builder metadataBuilder, Map<String, Tuple<Version, String>> versions) {
+    public static void incMetadataSettings(Metadata.Builder metadataBuilder, Map<String, Tuple<Version, String>> versions, boolean fullyUpgraded) {
         for (Map.Entry<String, Tuple<Version, String>> entry : versions.entrySet()) {
             String index = entry.getKey();
             IndexMetadata indexMetadata = metadataBuilder.get(index);
@@ -523,6 +523,7 @@ public class MetadataUpdateSettingsService {
                                 Settings.builder()
                                     .put(indexMetadata.getSettings())
                                     .put(IndexMetadata.SETTING_VERSION_UPGRADED, entry.getValue().v1())
+                                    .put(IndexMetadata.SETTING_FULLY_UPGRADED, entry.getValue().v1())
                             )
                             .settingsVersion(1 + indexMetadata.getSettingsVersion())
                     );

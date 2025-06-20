@@ -313,7 +313,7 @@ public class TransportUpgradeAction extends TransportBroadcastByNodeAction<Upgra
                     );
                     if (upgradedMetadata != clusterState.build().metadata()) {
                         final Metadata.Builder metadataSettingsBuilder = Metadata.builder(upgradedMetadata);
-                        MetadataUpdateSettingsService.incMetadataSettings(metadataSettingsBuilder, upgradeResponse.versions());
+                        MetadataUpdateSettingsService.incMetadataSettings(metadataSettingsBuilder, upgradeResponse.versions(), true);
                         clusterState.metadata(metadataSettingsBuilder);
                     }
                     builder.success(request);

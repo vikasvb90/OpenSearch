@@ -714,6 +714,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
 
     private final Version indexCreatedVersion;
     private final Version indexUpgradedVersion;
+    private final Version indexFullyUpgradedVersion;
 
     private final ActiveShardCount waitForActiveShards;
     private final Map<String, RolloverInfo> rolloverInfos;
@@ -746,6 +747,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         final DiscoveryNodeFilters excludeFilters,
         final Version indexCreatedVersion,
         final Version indexUpgradedVersion,
+        final Version indexFullyUpgradedVersion,
         final int routingNumShards,
         final int routingPartitionSize,
         final ActiveShardCount waitForActiveShards,
@@ -781,6 +783,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         this.initialRecoveryFilters = initialRecoveryFilters;
         this.indexCreatedVersion = indexCreatedVersion;
         this.indexUpgradedVersion = indexUpgradedVersion;
+        this.indexFullyUpgradedVersion = indexFullyUpgradedVersion;
         this.routingNumShards = routingNumShards;
         this.routingFactor = routingNumShards / numberOfShards;
         this.routingPartitionSize = routingPartitionSize;
@@ -853,7 +856,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @return true if the index is fully upgraded, false otherwise
      */
     public Version getFullyUpgradedVersion() {
-        return SETTING_INDEX_FULLY_UPGRADED.get(settings);
+        return indexFullyUpgradedVersion;
     }
 
     /**
@@ -1744,6 +1747,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             }
             Version indexCreatedVersion = indexCreated(settings);
             Version indexUpgradedVersion = settings.getAsVersion(IndexMetadata.SETTING_VERSION_UPGRADED, indexCreatedVersion);
+            Version indexFullyUpgraded = settings.getAsVersion(IndexMetadata.SETTING_FULLY_UPGRADED, null);
 
             if (primaryTerms == null) {
                 initializePrimaryTerms();
@@ -1797,6 +1801,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
                 excludeFilters,
                 indexCreatedVersion,
                 indexUpgradedVersion,
+                indexFullyUpgraded,
                 getRoutingNumShards(),
                 routingPartitionSize,
                 waitForActiveShards,
