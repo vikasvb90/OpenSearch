@@ -1463,6 +1463,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.rolloverInfos = new HashMap<>();
             this.isSystem = false;
             primaryTermsMap = new HashMap<>();
+            this.primaryTerms = new long[0];
         }
 
         public Builder(IndexMetadata indexMetadata) {
