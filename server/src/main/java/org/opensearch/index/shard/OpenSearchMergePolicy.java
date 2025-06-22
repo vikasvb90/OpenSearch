@@ -205,12 +205,25 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
     public MergeSpecification findForcedDeletesMerges(SegmentInfos infos, MergeContext mergeContext) throws IOException {
         if (optimalExpungeInProgress.get()) {
             MergeSpecification spec = new MergeSpecification();
+            long currentSize = 0, maxSize = 5L * 1024 * 1024 * 1024;
+            OneMerge oneMerge = new OneMerge();
             for (SegmentCommitInfo info : infos) {
-
                 if (info.info != null && info.info.name != null && info.getDelCount() > 0) {
                     logger.info("Adding segment {} to be expunged", info.info.name);
-                    spec.add(new OneMerge(Collections.singletonList(info)));
+
+                    if (currentSize + info.sizeInBytes() > maxSize && !oneMerge.segments.isEmpty()) {
+                        spec.add(oneMerge);
+                        oneMerge = new OneMerge();
+                        currentSize = 0;
+                    }
+
+                    oneMerge.segments.add(info);
+                    currentSize += info.sizeInBytes();
                 }
+            }
+
+            if (!oneMerge.segments.isEmpty()) {
+                spec.add(oneMerge);
             }
 
             // Only set this once there are 0 segments needing upgrading, because when we return a
