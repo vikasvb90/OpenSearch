@@ -148,14 +148,18 @@ class OpenSearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
             totalMergeThrottledTime.inc(throttledMS);
 
             long deletedDocs = 0;
+            StringBuilder sb = new StringBuilder();
             for (SegmentCommitInfo info : merge.segments) {
+                if (info.info != null && info.info.name != null) {
+                    sb.append(info.info.name).append(",");
+                }
                 deletedDocs += info.getDelCount();
             }
             String message = String.format(
                 Locale.ROOT,
-                "merge segment [%s] done: took [%s], [%,.1f MB], [%,d docs], [%,d deleted docs], [%s stopped], "
+                "merge segments [%s] done: took [%s], [%,.1f MB], [%,d docs], [%,d deleted docs], [%s stopped], "
                     + "[%s throttled], [%,.1f MB written], [%,.1f MB/sec throttle]",
-                OneMergeHelper.getSegmentName(merge),
+                sb,
                 TimeValue.timeValueMillis(tookMS),
                 totalSizeInBytes / 1024f / 1024f,
                 totalNumDocs,

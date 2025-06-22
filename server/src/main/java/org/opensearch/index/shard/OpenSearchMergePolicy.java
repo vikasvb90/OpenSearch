@@ -43,10 +43,16 @@ import org.apache.lucene.index.SegmentInfos;
 import org.opensearch.Version;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -201,29 +207,43 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
         return mergeLimiterOnExpunge.excludeExpungingSegments(mergeSpecification);
     }
 
+    private Map<Long, SegmentCommitInfo> sortedSegments(SegmentInfos infos, MergeContext mergeContext) throws IOException {
+
+        Map<Long, SegmentCommitInfo> sortedInfos = new TreeMap<>(Comparator.reverseOrder());
+        for (SegmentCommitInfo info : infos) {
+            long size = size(info, mergeContext);
+            sortedInfos.put(size, info);
+        }
+        return sortedInfos;
+    }
+
     @Override
     public MergeSpecification findForcedDeletesMerges(SegmentInfos infos, MergeContext mergeContext) throws IOException {
         if (optimalExpungeInProgress.get()) {
             MergeSpecification spec = new MergeSpecification();
             long currentSize = 0, maxSize = 5L * 1024 * 1024 * 1024;
-            OneMerge oneMerge = new OneMerge();
-            for (SegmentCommitInfo info : infos) {
-                if (info.info != null && info.info.name != null && info.getDelCount() > 0) {
+            int currentCount = 0, maxCount = 10;
+            List<SegmentCommitInfo> oneMergeInfos = new ArrayList<>();
+            for (SegmentCommitInfo info : sortedSegments(infos, mergeContext).values()) {
+                if (info.info != null && info.info.name != null && info.getDelCount() > 0 &&
+                    mergeContext.getMergingSegments().contains(info) == false) {
                     logger.info("Adding segment {} to be expunged", info.info.name);
 
-                    if (currentSize + info.sizeInBytes() > maxSize && !oneMerge.segments.isEmpty()) {
-                        spec.add(oneMerge);
-                        oneMerge = new OneMerge();
+                    if (currentSize + info.sizeInBytes() > maxSize && !oneMergeInfos.isEmpty() || currentCount >= maxCount) {
+                        spec.add(new OneMerge(oneMergeInfos));
+                        oneMergeInfos = new ArrayList<>();
                         currentSize = 0;
+                        currentCount = 0;
                     }
 
-                    oneMerge.segments.add(info);
+                    oneMergeInfos.add(info);
                     currentSize += info.sizeInBytes();
+                    currentCount++;
                 }
             }
 
-            if (!oneMerge.segments.isEmpty()) {
-                spec.add(oneMerge);
+            if (!oneMergeInfos.isEmpty()) {
+                spec.add(new OneMerge(oneMergeInfos));
             }
 
             // Only set this once there are 0 segments needing upgrading, because when we return a

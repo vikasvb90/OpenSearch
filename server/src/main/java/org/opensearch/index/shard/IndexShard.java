@@ -1582,24 +1582,22 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     public Set<String> getSegmentsToExpunge() throws IOException {
-        try (GatedCloseable<SegmentInfos> infosGatedCloseable = getSegmentInfosSnapshot()) {
-            SegmentInfos infos = infosGatedCloseable.get();
-            long totalDocCount = 0, totalDeletedCount = 0;
-            Set<String> curSegmentsToExpunge = new HashSet<>();
-            for (SegmentCommitInfo info : infos) {
-                totalDocCount += info.info.maxDoc();
-                totalDeletedCount += info.getDelCount();
-                final double delRatio = ((double) info.getDelCount()) / info.info.maxDoc();
-                if (delRatio > 0.05) {
-                    curSegmentsToExpunge.add(info.info.name);
-                }
+        SegmentInfos infos = store.readLastCommittedSegmentsInfo();
+        long totalDocCount = 0, totalDeletedCount = 0;
+        Set<String> curSegmentsToExpunge = new HashSet<>();
+        for (SegmentCommitInfo info : infos) {
+            totalDocCount += info.info.maxDoc();
+            totalDeletedCount += info.getDelCount();
+            final double delRatio = ((double) info.getDelCount()) / info.info.maxDoc();
+            if (delRatio > 0.05) {
+                curSegmentsToExpunge.add(info.info.name);
             }
-            double delRatio = ((double) totalDeletedCount) / totalDocCount;
-            if (delRatio <= 0.05) {
-                logger.info("Overall deleted count ratio is below 5% on shard {}", shardId().id());
-            }
-            return curSegmentsToExpunge;
         }
+        double delRatio = ((double) totalDeletedCount) / totalDocCount;
+        if (delRatio <= 0.05) {
+            logger.info("Overall deleted count ratio is below 5% on shard {}", shardId().id());
+        }
+        return curSegmentsToExpunge;
     }
 
     public void forceMerge(ForceMergeRequest forceMerge) throws IOException {
@@ -1621,6 +1619,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                 forceMerge.forceMergeUUID()
             );
         }
+        engine.flush(true, true);
         parentStopWatch.stop();
         logger.info("Force merge completed on shard {} in {}ms", shardId, parentStopWatch.totalTime().millis());
     }
