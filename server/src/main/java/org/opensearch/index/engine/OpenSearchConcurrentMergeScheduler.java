@@ -37,6 +37,8 @@ import org.apache.lucene.index.ConcurrentMergeScheduler;
 import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.MergeScheduler;
 import org.apache.lucene.index.OneMergeHelper;
+import org.apache.lucene.index.SegmentCommitInfo;
+import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.metrics.CounterMetric;
 import org.opensearch.common.metrics.MeanMetric;
@@ -53,8 +55,10 @@ import org.opensearch.index.merge.OnGoingMerge;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * An extension to the {@link ConcurrentMergeScheduler} that provides tracking on merge times, total
@@ -143,20 +147,25 @@ class OpenSearchConcurrentMergeScheduler extends ConcurrentMergeScheduler {
             totalMergeStoppedTime.inc(stoppedMS);
             totalMergeThrottledTime.inc(throttledMS);
 
+            long deletedDocs = 0;
+            for (SegmentCommitInfo info : merge.segments) {
+                deletedDocs += info.getDelCount();
+            }
             String message = String.format(
                 Locale.ROOT,
-                "merge segment [%s] done: took [%s], [%,.1f MB], [%,d docs], [%s stopped], "
+                "merge segment [%s] done: took [%s], [%,.1f MB], [%,d docs], [%,d deleted docs], [%s stopped], "
                     + "[%s throttled], [%,.1f MB written], [%,.1f MB/sec throttle]",
                 OneMergeHelper.getSegmentName(merge),
                 TimeValue.timeValueMillis(tookMS),
                 totalSizeInBytes / 1024f / 1024f,
                 totalNumDocs,
+                deletedDocs,
                 TimeValue.timeValueMillis(stoppedMS),
                 TimeValue.timeValueMillis(throttledMS),
                 totalBytesWritten / 1024f / 1024f,
                 mbPerSec
             );
-
+            logger.info("{}", message);
             if (tookMS > 20000) { // if more than 20 seconds, DEBUG log it
                 logger.debug("{}", message);
             } else if (logger.isTraceEnabled()) {

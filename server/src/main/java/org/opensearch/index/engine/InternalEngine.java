@@ -2219,13 +2219,13 @@ public class InternalEngine extends Engine {
     }
 
     @Override
-    public void onlyExpunge(Set<String> segmentsToExpunge) throws IOException {
+    public void onlyExpunge() throws IOException {
         assert indexWriter.getConfig().getMergePolicy() instanceof OpenSearchMergePolicy : "MergePolicy is "
             + indexWriter.getConfig().getMergePolicy().getClass().getName();
         OpenSearchMergePolicy mp = (OpenSearchMergePolicy) indexWriter.getConfig().getMergePolicy();
         optimizeLock.lock();
         try {
-            mp.setSegmentsToExpunge(segmentsToExpunge);
+            mp.setSegmentsToExpunge();
             indexWriter.forceMergeDeletes(true /* blocks and waits for merges*/);
             mp.clearExpungeJob();
         } catch (Exception e) {

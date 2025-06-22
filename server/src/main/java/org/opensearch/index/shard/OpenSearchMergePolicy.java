@@ -47,6 +47,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A {@link MergePolicy} that upgrades segments and can upgrade merges.
@@ -73,11 +74,11 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
     private volatile boolean upgradeOnlyAncientSegments;
 
     private static final int MAX_CONCURRENT_UPGRADE_MERGES = 5;
-    private static final int MAX_CONCURRENT_EXPUNGE_MERGES = 5;
 
     private final SegmentMergeLimiterOnExpunge mergeLimiterOnExpunge;
 
-    private final Set<String> segmentsToExpunge = new HashSet<>();
+    private final AtomicReference<Boolean> optimalExpungeInProgress = new AtomicReference<>(false);
+
 
     /** @param delegate the merge policy to wrap */
     public OpenSearchMergePolicy(MergePolicy delegate, SegmentMergeLimiterOnExpunge segmentMergeLimiterOnExpunge) {
@@ -168,15 +169,15 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
         this.upgradeOnlyAncientSegments = onlyAncientSegments;
     }
 
-    public synchronized void setSegmentsToExpunge(Set<String> segmentsToExpunge) {
-        if (this.segmentsToExpunge.isEmpty() == false) {
+    public synchronized void setSegmentsToExpunge() {
+        if (this.optimalExpungeInProgress.get()) {
             throw new IllegalArgumentException("Expunge already in progress");
         }
-        this.segmentsToExpunge.addAll(segmentsToExpunge);
+        this.optimalExpungeInProgress.set(true);
     }
 
     public synchronized void clearExpungeJob() {
-        this.segmentsToExpunge.clear();
+        this.optimalExpungeInProgress.set(false);
     }
 
     @Override
@@ -202,35 +203,20 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
 
     @Override
     public MergeSpecification findForcedDeletesMerges(SegmentInfos infos, MergeContext mergeContext) throws IOException {
-        if (segmentsToExpunge.isEmpty() == false) {
+        if (optimalExpungeInProgress.get()) {
             MergeSpecification spec = new MergeSpecification();
             for (SegmentCommitInfo info : infos) {
 
-                if (info.info != null && info.info.name != null && segmentsToExpunge.contains(info.info.name)) {
+                if (info.info != null && info.info.name != null && info.getDelCount() > 0) {
                     logger.info("Adding segment {} to be expunged", info.info.name);
                     spec.add(new OneMerge(Collections.singletonList(info)));
                 }
-
-                // TODO: we could check IndexWriter.getMergingSegments and avoid adding merges that IW will just reject?
-
-                if (spec.merges.size() == MAX_CONCURRENT_EXPUNGE_MERGES) {
-                    // hit our max upgrades, so return the spec. we will get a cascaded call to continue.
-                    logger.debug("Returning {} merges for upgrade", spec.merges.size());
-                    return spec;
-                }
-            }
-
-            // We must have less than our max upgrade merges, so the next return will be our last in upgrading mode.
-            if (spec.merges.isEmpty() == false) {
-                logger.info("Returning {} merges for end of expunge", spec.merges.size());
-                return spec;
             }
 
             // Only set this once there are 0 segments needing upgrading, because when we return a
             // spec, IndexWriter may (silently!) reject that merge if some of the segments we asked
             // to be merged were already being (naturally) merged:
-            segmentsToExpunge.clear();
-
+            return spec;
             // fall through, so when we don't have any segments to upgrade, the delegate policy
             // has a chance to decide what to do (e.g. collapse the segments to satisfy maxSegmentCount)
         }

@@ -215,6 +215,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -1581,23 +1582,24 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     public Set<String> getSegmentsToExpunge() throws IOException {
-        flush(new FlushRequest().waitIfOngoing(true).force(true));
-        SegmentInfos infos = store.readLastCommittedSegmentsInfo();
-        long totalDocCount = 0, totalDeletedCount = 0;
-        Set<String> curSegmentsToExpunge = new HashSet<>();
-        for (SegmentCommitInfo info : infos) {
-            totalDocCount += info.info.maxDoc();
-            totalDeletedCount += info.getDelCount();
-            final double delRatio = ((double) info.getDelCount()) / info.info.maxDoc();
-            if (delRatio > 0.05) {
-                curSegmentsToExpunge.add(info.info.name);
+        try (GatedCloseable<SegmentInfos> infosGatedCloseable = getSegmentInfosSnapshot()) {
+            SegmentInfos infos = infosGatedCloseable.get();
+            long totalDocCount = 0, totalDeletedCount = 0;
+            Set<String> curSegmentsToExpunge = new HashSet<>();
+            for (SegmentCommitInfo info : infos) {
+                totalDocCount += info.info.maxDoc();
+                totalDeletedCount += info.getDelCount();
+                final double delRatio = ((double) info.getDelCount()) / info.info.maxDoc();
+                if (delRatio > 0.05) {
+                    curSegmentsToExpunge.add(info.info.name);
+                }
             }
+            double delRatio = ((double) totalDeletedCount) / totalDocCount;
+            if (delRatio <= 0.05) {
+                logger.info("Overall deleted count ratio is below 5% on shard {}", shardId().id());
+            }
+            return curSegmentsToExpunge;
         }
-        double delRatio = ((double) totalDeletedCount) / totalDocCount;
-        if (delRatio <= 0.05) {
-            logger.info("Overall deleted count ratio is below 5% on shard {}", shardId().id());
-        }
-        return curSegmentsToExpunge;
     }
 
     public void forceMerge(ForceMergeRequest forceMerge) throws IOException {
@@ -1608,21 +1610,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         StopWatch parentStopWatch = new StopWatch().start();
         Engine engine = getEngine();
         if (forceMerge.onlyExpungeOptimal()) {
-            Set<String> previousSegments;
-            Set<String> segmentsToExpunge = getSegmentsToExpunge();
-            while (segmentsToExpunge.isEmpty() == false) {
-                engine.onlyExpunge(segmentsToExpunge);
-                flush(new FlushRequest());
-                Set<String> curSegmentsToExpunge = getSegmentsToExpunge();
-                previousSegments = segmentsToExpunge;
-                segmentsToExpunge = new HashSet<>();
-                for (String segment : curSegmentsToExpunge) {
-                    if (previousSegments.contains(segment)) {
-                        segmentsToExpunge.add(segment);
-                    }
-                }
-            }
-            refresh("after-expunge");
+            engine.onlyExpunge();
         } else {
             engine.forceMerge(
                 forceMerge.flush(),

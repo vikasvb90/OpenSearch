@@ -1278,7 +1278,7 @@ public abstract class Engine implements Closeable {
         @Nullable String forceMergeUUID
     ) throws EngineException, IOException;
 
-    public void onlyExpunge(Set<String> segmentsToExpunge) throws IOException {
+    public void onlyExpunge() throws IOException {
 
     }
 
