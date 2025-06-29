@@ -1483,7 +1483,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
             this.rolloverInfos = new HashMap<>(indexMetadata.rolloverInfos);
             this.isSystem = indexMetadata.isSystem;
             this.context = indexMetadata.context;
-            this.primaryTermsMap = indexMetadata.primaryTermsMap;
+            this.primaryTermsMap = new HashMap<>(indexMetadata.primaryTermsMap);
             if (indexMetadata.splitShardsMetadata != null) {
                 this.splitShardsMetadata = new SplitShardsMetadata.Builder(indexMetadata.splitShardsMetadata).build();
             }
@@ -1716,12 +1716,17 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
          * See {@link IndexMetadata#primaryTerm(int)} for more information.
          */
         public Builder primaryTerm(int shardId, long primaryTerm) {
+            if (primaryTermsMap.isEmpty()) {
+                initializePrimaryTerms();
+            }
             primaryTermsMap.put(shardId, primaryTerm);
             return this;
         }
 
         private void primaryTerms(long[] primaryTerms) {
-            this.primaryTerms = primaryTerms.clone();
+            for (int shard = 0; shard < primaryTerms.length; shard++) {
+                this.primaryTermsMap.put(shard, primaryTerms[shard]);
+            }
         }
 
         private void primaryTermsMap(Map<Integer, Long> primaryTermsMap) {
@@ -1730,12 +1735,13 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         }
 
         private void initializePrimaryTerms() {
-            assert primaryTerms == null;
+            assert primaryTermsMap.isEmpty();
             if (numberOfShards() < 0) {
                 throw new IllegalStateException("you must set the number of shards before setting/reading primary terms");
             }
-            primaryTerms = new long[numberOfShards()];
-            Arrays.fill(primaryTerms, SequenceNumbers.UNASSIGNED_PRIMARY_TERM);
+            for (int i=0; i < numberOfShards(); i++) {
+                this.primaryTermsMap.put(i, SequenceNumbers.UNASSIGNED_PRIMARY_TERM);
+            }
         }
 
         public Builder system(boolean system) {
@@ -2300,7 +2306,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @return a the source shard ID to clone from
      */
     public static ShardId selectCloneShard(int shardId, IndexMetadata sourceIndexMetadata, int numTargetShards) {
-        int numSourceShards = sourceIndexMetadata.primaryTerms.length;
+        int numSourceShards = sourceIndexMetadata.primaryTermsMap.size();
         if (numSourceShards != numTargetShards) {
             throw new IllegalArgumentException(
                 "the number of target shards ("

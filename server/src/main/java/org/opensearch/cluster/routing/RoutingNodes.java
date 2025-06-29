@@ -743,7 +743,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
             assert startedChildReplicas > 0;
         } else {
             assert startedChildPrimaries == indexMetadata.getSplitShardsMetadata().
-                getChildShardsOfParent(parentShard.shardId().id()).length;
+                getChildShardIdsOfParent(parentShard.shardId().id()).size();
             assert startedChildReplicas == 0;
             for (ShardRouting childShard : parentShard.getRecoveringChildShards()) {
                 ShardRouting assignedChild = getByAllocationId(childShard.shardId(), childShard.allocationId().getId());
