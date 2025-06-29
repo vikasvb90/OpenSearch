@@ -37,7 +37,6 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.FilterMergePolicy;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.MergePolicy;
-import org.apache.lucene.index.MergeTrigger;
 import org.apache.lucene.index.SegmentCommitInfo;
 import org.apache.lucene.index.SegmentInfos;
 import org.opensearch.Version;
@@ -75,14 +74,11 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
     private static final int MAX_CONCURRENT_UPGRADE_MERGES = 5;
     private static final int MAX_CONCURRENT_EXPUNGE_MERGES = 5;
 
-    private final SegmentMergeLimiterOnExpunge mergeLimiterOnExpunge;
-
     private final Set<String> segmentsToExpunge = new HashSet<>();
 
     /** @param delegate the merge policy to wrap */
-    public OpenSearchMergePolicy(MergePolicy delegate, SegmentMergeLimiterOnExpunge segmentMergeLimiterOnExpunge) {
+    public OpenSearchMergePolicy(MergePolicy delegate) {
         super(delegate);
-        this.mergeLimiterOnExpunge = segmentMergeLimiterOnExpunge;
     }
 
     /** return the wrapped merge policy */
@@ -166,27 +162,6 @@ public final class OpenSearchMergePolicy extends FilterMergePolicy {
     public void setUpgradeInProgress(boolean upgrade, boolean onlyAncientSegments) {
         this.upgradeInProgress = upgrade;
         this.upgradeOnlyAncientSegments = onlyAncientSegments;
-    }
-
-    @Override
-    public MergeSpecification findMerges(MergeTrigger mergeTrigger, SegmentInfos infos, MergeContext mergeContext) throws IOException {
-        MergeSpecification mergeSpecification = in.findMerges(mergeTrigger, infos, mergeContext);
-        if (mergeSpecification == null || mergeSpecification.merges.isEmpty() || !mergeLimiterOnExpunge.shouldRateLimitMerges()) {
-            return mergeSpecification;
-        }
-        logger.info("background merges found disabled in findMerges");
-        return mergeLimiterOnExpunge.excludeExpungingSegments(mergeSpecification);
-    }
-
-    @Override
-    public MergeSpecification findFullFlushMerges(MergeTrigger mergeTrigger, SegmentInfos infos, MergeContext mergeContext)
-        throws IOException {
-        MergeSpecification mergeSpecification = in.findFullFlushMerges(mergeTrigger, infos, mergeContext);
-        if (mergeSpecification == null || mergeSpecification.merges.isEmpty() || !mergeLimiterOnExpunge.shouldRateLimitMerges()) {
-            return mergeSpecification;
-        }
-        logger.info("background merges found disabled in findFullFlushMerges");
-        return mergeLimiterOnExpunge.excludeExpungingSegments(mergeSpecification);
     }
 
     @Override

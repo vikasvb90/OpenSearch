@@ -2360,7 +2360,7 @@ public class InternalEngine extends Engine {
         }
 
         iwc.setCheckPendingFlushUpdate(config().getIndexSettings().isCheckPendingFlushEnabled());
-        iwc.setMergePolicy(new OpenSearchMergePolicy(mergePolicy, config().getIndexSettings().getMergeSchedulerConfig().getSegmentMergeLimiterOnExpunge()));
+        iwc.setMergePolicy(new OpenSearchMergePolicy(mergePolicy));
         iwc.setSimilarity(engineConfig.getSimilarity());
         iwc.setRAMBufferSizeMB(engineConfig.getIndexingBufferSize().getMbFrac());
         iwc.setCodec(engineConfig.getCodec());

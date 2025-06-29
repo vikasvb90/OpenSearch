@@ -38,7 +38,6 @@ import org.opensearch.common.settings.Setting;
 import org.opensearch.common.settings.Setting.Property;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.util.concurrent.OpenSearchExecutors;
-import org.opensearch.index.shard.SegmentMergeLimiterOnExpunge;
 
 /**
  * The merge scheduler (<code>ConcurrentMergeScheduler</code>) controls the execution of
@@ -95,14 +94,12 @@ public final class MergeSchedulerConfig {
     private volatile boolean autoThrottle;
     private volatile int maxThreadCount;
     private volatile int maxMergeCount;
-    private final SegmentMergeLimiterOnExpunge segmentMergeLimiterOnExpunge;
 
     MergeSchedulerConfig(IndexSettings indexSettings) {
         int maxThread = indexSettings.getValue(MAX_THREAD_COUNT_SETTING);
         int maxMerge = indexSettings.getValue(MAX_MERGE_COUNT_SETTING);
         setMaxThreadAndMergeCount(maxThread, maxMerge);
         this.autoThrottle = indexSettings.getValue(AUTO_THROTTLE_SETTING);
-        this.segmentMergeLimiterOnExpunge = new SegmentMergeLimiterOnExpunge(maxMerge);
     }
 
     /**
@@ -112,10 +109,6 @@ public final class MergeSchedulerConfig {
      */
     public boolean isAutoThrottle() {
         return autoThrottle;
-    }
-
-    public SegmentMergeLimiterOnExpunge getSegmentMergeLimiterOnExpunge() {
-        return segmentMergeLimiterOnExpunge;
     }
 
     /**
