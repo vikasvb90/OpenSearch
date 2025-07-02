@@ -181,12 +181,18 @@ public class InPlaceShardSplitRecoveryService extends AbstractLifecycleComponent
     }
 
     public void startChildShards(ShardId parentShardId) {
-        synchronized (this) {
-            OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(parentShardId);
-            if (isHandOffPending(parentShardId)) {
-                recovery.handOffInitiated.set(true);
-                recovery.sourceHandler.performHandoff();
+        try {
+            synchronized (this) {
+                OngoingRecoveries.Recovery recovery = ongoingRecoveries.recoveries.get(parentShardId);
+                if (isHandOffPending(parentShardId)) {
+                    recovery.handOffInitiated.set(true);
+                    recovery.sourceHandler.performHandoff();
+                }
             }
+        } catch (Exception ex) {
+            // We don't need to propagate the exception since it will be published on recovery listener in recovery thread
+            // but we still need to handle it here for graceful termination of this thread.
+            logger.error("Failed to start child shards", ex);
         }
     }
 
