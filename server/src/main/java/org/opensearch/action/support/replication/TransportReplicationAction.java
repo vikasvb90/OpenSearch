@@ -562,7 +562,14 @@ public abstract class TransportReplicationAction<
                 primaryRequest.getRequest(),
                 ActionListener.wrap(releasable -> runWithPrimaryShardReference(new PrimaryShardReference(indexShard, releasable)), e -> {
                     if (e instanceof ShardNotInPrimaryModeException) {
-                        onFailure(new ReplicationOperation.RetryOnPrimaryException(shardId, "shard is not in primary mode", e));
+                        final IndexMetadata indexMetadata = indexShard.indexSettings().getIndexMetadata();
+                        if (indexShard.routingEntry().splitting() || indexMetadata.getSplitShardsMetadata().isSplitParent(shardId.id())) {
+                            // This means shard was being split and was in relocation handoff stage when replication op on primary arrived.
+                            // Write ops specifically will now get retried and will be routed to respective child shards by coordinator.
+                            onFailure(new PrimaryShardSplitException("Primary shard is already split. Cannot perform replication operation on parent primary."));
+                        } else {
+                            onFailure(new ReplicationOperation.RetryOnPrimaryException(shardId, "shard is not in primary mode", e));
+                        }
                     } else {
                         onFailure(e);
                     }
