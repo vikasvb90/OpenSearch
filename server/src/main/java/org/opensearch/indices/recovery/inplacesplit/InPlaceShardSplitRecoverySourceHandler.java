@@ -23,6 +23,7 @@ import org.opensearch.common.lease.Releasable;
 import org.opensearch.common.logging.Loggers;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.CancellableThreads;
+import org.opensearch.common.util.concurrent.AbstractRunnable;
 import org.opensearch.common.util.io.IOUtils;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.index.shard.ShardId;
@@ -41,6 +42,7 @@ import org.opensearch.indices.recovery.RecoveryResponse;
 import org.opensearch.indices.recovery.RecoverySourceHandler;
 import org.opensearch.indices.recovery.RecoveryState;
 import org.opensearch.indices.recovery.StartRecoveryRequest;
+import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.transport.Transports;
 
 import java.io.Closeable;
@@ -53,6 +55,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -489,7 +492,11 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
             assert inSyncAllocationIds.contains(context.getIndexShard().routingEntry().allocationId().getId());
         });
 
-        finalizer = () -> super.finalizeRecovery(new StopWatch().start(), trimAboveSeqNo, listener);
+        AtomicBoolean finalizePending = new AtomicBoolean(true);
+        finalizer = () -> {
+            finalizePending.set(false);
+            super.finalizeRecovery(new StopWatch().start(), trimAboveSeqNo, listener);
+        };
         try {
             forceMergeChildShards();
         } catch (Exception ex) {
@@ -498,6 +505,36 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
         }
         inSync = true;
         onSync.accept(sourceShard.shardId());
+        new ShardsSyncMonitor(finalizePending, listener, sourceShard.getThreadPool(), cancellableThreads).run();
+    }
+
+    private static class ShardsSyncMonitor extends AbstractRunnable {
+        private final AtomicBoolean finalizePending;
+        private final ActionListener<Void> failureListener;
+        private final ThreadPool threadPool;
+        private final CancellableThreads cancellableThreads;
+
+        private ShardsSyncMonitor(AtomicBoolean finalizePending, ActionListener<Void> failureListener,
+                                  ThreadPool threadPool, CancellableThreads cancellableThreads) {
+            this.finalizePending = finalizePending;
+            this.failureListener = failureListener;
+            this.threadPool = threadPool;
+            this.cancellableThreads = cancellableThreads;
+        }
+
+        @Override
+        public void onFailure(Exception e) {
+            failureListener.onFailure(e);
+        }
+
+        @Override
+        protected void doRun() throws Exception {
+            if (finalizePending.get() == false) {
+                return;
+            }
+            cancellableThreads.checkForCancel();
+            threadPool.schedule(this, TimeValue.timeValueSeconds(5), ThreadPool.Names.SAME);
+        }
     }
 
     private void forceMergeChildShards() throws IOException, InterruptedException {
