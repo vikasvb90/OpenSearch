@@ -142,6 +142,8 @@ public class InPlaceShardSplitRecoverySourceHandler extends RecoverySourceHandle
 //        onFailure = consumerForCleanupOnFailure(onFailure);
         // Clean up shard directories if previous shard closures failed.
         cleanupChildShardDirectories();
+        // To make sure that we are syncing any pending merges on idle shard.
+        sourceShard.flush(new FlushRequest().waitIfOngoing(true).force(true));
 
         List<Releasable> delayedStaleCommitDeleteOps = sourceShard.delayStaleCommitDeletions();
         resources.addAll(delayedStaleCommitDeleteOps);

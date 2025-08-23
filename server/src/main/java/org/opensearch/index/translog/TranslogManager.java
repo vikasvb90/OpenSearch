@@ -60,6 +60,12 @@ public interface TranslogManager {
     void syncTranslog() throws IOException;
 
     /**
+     * Syncs translog only to disk
+     * @throws IOException the exception while performing the sync operation
+     */
+    void syncOnDiskOnly() throws IOException;
+
+    /**
      * Translog operation stats
      * @return the translog stats
      */

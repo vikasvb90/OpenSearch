@@ -200,6 +200,16 @@ public class InternalTranslogManager implements TranslogManager, Closeable {
         translogEventListener.onAfterTranslogSync();
     }
 
+    /**
+     * Syncs the translog only on and invokes the listener
+     * @throws IOException the exception on sync failure
+     */
+    @Override
+    public void syncOnDiskOnly() throws IOException {
+        translog.sync(false);
+        translogEventListener.onAfterTranslogSync();
+    }
+
     @Override
     public TranslogStats getTranslogStats() {
         return getTranslog(true).stats();

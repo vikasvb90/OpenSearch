@@ -76,6 +76,9 @@ public class NoOpTranslogManager implements TranslogManager {
     public void syncTranslog() throws IOException {}
 
     @Override
+    public void syncOnDiskOnly() throws IOException {}
+
+    @Override
     public TranslogStats getTranslogStats() {
         return translogStats;
     }

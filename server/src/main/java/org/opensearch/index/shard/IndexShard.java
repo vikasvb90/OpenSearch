@@ -4702,6 +4702,11 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         getEngine().translogManager().syncTranslog();
     }
 
+    public void syncOnDiskOnly() throws IOException {
+        verifyNotClosed();
+        getEngine().translogManager().syncTranslog();
+    }
+
     /**
      * Checks if the underlying storage sync is required.
      */
