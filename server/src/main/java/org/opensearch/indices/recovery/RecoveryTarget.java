@@ -351,7 +351,11 @@ public class RecoveryTarget extends ReplicationTarget implements RecoveryTargetH
             }
             // update stats only after all operations completed (to ensure that mapping updates don't mess with stats)
             translog.incrementRecoveredOperations(operations.size());
-            indexShard().sync();
+            if (indexShard().routingEntry().isSplitTarget()) {
+                indexShard().syncOnDiskOnly();
+            } else {
+                indexShard().sync();
+            }
             // roll over / flush / trim if needed
             indexShard().afterWriteOperation();
             return indexShard().getLocalCheckpoint();
