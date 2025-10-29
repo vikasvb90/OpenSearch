@@ -485,6 +485,19 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
         return activeShardIds.contains(shardId) == false && parentToChildShards.containsKey(shardId);
     }
 
+    public boolean isRecoveringChild(int shardId, int parentShardId) {
+        if (!inProgressSplitShardIds.contains(parentShardId)) {
+            return false;
+        }
+
+        for (ShardRange childShard : parentToChildShards.get(shardId)) {
+            if (childShard.getShardId() == shardId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

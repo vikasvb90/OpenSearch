@@ -2553,9 +2553,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             return operation;
         }
 
+        IndexMetadata indexMetadata = indexSettings().getIndexMetadata();
+        if (indexMetadata.getSplitShardsMetadata() == null || !indexMetadata.getSplitShardsMetadata().isRecoveringChild(
+            getParentShardId().id(), shardId().id())) {
+            return operation;
+        }
+
         final Translog.Index index = (Translog.Index) operation;
-        int computedShardId = OperationRouting.generateShardId(indexSettings().getIndexMetadata(),
-            index.id(), index.routing(), true);
+        int computedShardId = OperationRouting.generateShardId(indexMetadata, index.id(), index.routing(), true);
         if (computedShardId != shardId().id()) {
             return new Translog.NoOp(index.seqNo(), index.primaryTerm(), Translog.NoOp.FILLING_GAPS);
         }

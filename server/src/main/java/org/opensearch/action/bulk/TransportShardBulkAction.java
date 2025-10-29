@@ -831,12 +831,15 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             boolean discardOperation = false;
             if (replica.getParentShardId() != null) {
                 IndexMetadata indexMetadata = replica.indexSettings().getIndexMetadata();
-                // Discard operations belonging to a different child shard. This can happen during in-place shard
-                // split recovery where after all child shards are added to replication tracker, bulk
-                // operations are replicated to all child primaries.
-                int computedShardId = OperationRouting.generateShardId(indexMetadata, item.request().id(),
-                    item.request().routing(), true);
-                discardOperation = computedShardId != replica.shardId().id();
+                if (indexMetadata.getSplitShardsMetadata() != null && indexMetadata.getSplitShardsMetadata().isRecoveringChild(
+                    replica.shardId().id(), replica.getParentShardId().id())) {
+                    // Discard operations belonging to a different child shard. This can happen during in-place shard
+                    // split recovery where after all child shards are added to replication tracker, bulk
+                    // operations are replicated to all child primaries.
+                    int computedShardId = OperationRouting.generateShardId(indexMetadata, item.request().id(),
+                        item.request().routing(), true);
+                    discardOperation = computedShardId != replica.shardId().id();
+                }
             }
 
             if (item.getPrimaryResponse().isFailed()) {
