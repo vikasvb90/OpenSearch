@@ -490,7 +490,7 @@ public class SplitShardsMetadata extends AbstractDiffable<SplitShardsMetadata> i
             return false;
         }
 
-        for (ShardRange childShard : parentToChildShards.get(shardId)) {
+        for (ShardRange childShard : parentToChildShards.get(parentShardId)) {
             if (childShard.getShardId() == shardId) {
                 return true;
             }
