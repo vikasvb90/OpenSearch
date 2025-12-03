@@ -88,6 +88,7 @@ import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.SystemIndices;
+import org.opensearch.ingest.IngestService;
 import org.opensearch.telemetry.tracing.noop.NoopTracer;
 import org.opensearch.threadpool.TestThreadPool;
 import org.opensearch.threadpool.ThreadPool;
@@ -1567,6 +1568,7 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
             mock(SegmentReplicationPressureService.class),
             mock(RemoteStorePressureService.class),
             mock(SystemIndices.class),
+            mock(IngestService.class),
             NoopTracer.INSTANCE
         );
         action.handlePrimaryTermValidationRequest(
@@ -1599,6 +1601,7 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
             mock(SegmentReplicationPressureService.class),
             mock(RemoteStorePressureService.class),
             mock(SystemIndices.class),
+            mock(IngestService.class),
             NoopTracer.INSTANCE
         );
         action.handlePrimaryTermValidationRequest(
@@ -1631,6 +1634,7 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
             mock(SegmentReplicationPressureService.class),
             mock(RemoteStorePressureService.class),
             mock(SystemIndices.class),
+            mock(IngestService.class),
             NoopTracer.INSTANCE
         );
         action.handlePrimaryTermValidationRequest(
@@ -1674,6 +1678,7 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
             mock(SegmentReplicationPressureService.class),
             mock(RemoteStorePressureService.class),
             mock(SystemIndices.class),
+            mock(IngestService.class),
             NoopTracer.INSTANCE
         );
     }

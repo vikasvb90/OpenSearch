@@ -98,6 +98,7 @@ import org.opensearch.transport.TransportService;
 import org.opensearch.transport.client.node.NodeClient;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -255,25 +256,26 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
         boolean hasIndexRequestsWithPipelines = resolvePipelinesForActionRequests(bulkRequest.requests, metadata, minNodeVersion);
 
         if (hasIndexRequestsWithPipelines) {
-            // If ingest pipeline execution is required, we will execute the pipelines first before other operations.
-            // After pipeline execution, this method (doExecute) will be called again, but with the requests updated from ingest processing.
-            // The execution will also update the pipelines to IngestService.NOOP_PIPELINE_NAME on each request.
-            // This ensures that this on the second time through this method, we will not execute pipelines again.
-            try {
-                if (Assertions.ENABLED) {
-                    final boolean arePipelinesResolved = extractIndexRequests(bulkRequest.requests()).stream()
-                        .allMatch(IndexRequest::isPipelineResolved);
-                    assert arePipelinesResolved : bulkRequest;
+            boolean dataPlaneScriptExecutionEnabled = clusterService.getClusterSettings()
+                .get(IngestService.DATA_PLANE_SCRIPT_EXECUTION_ENABLED);
+
+            if (!dataPlaneScriptExecutionEnabled) {
+                try {
+                    if (Assertions.ENABLED) {
+                        final boolean arePipelinesResolved = extractIndexRequests(bulkRequest.requests()).stream()
+                            .allMatch(IndexRequest::isPipelineResolved);
+                        assert arePipelinesResolved : bulkRequest;
+                    }
+                    if (clusterService.localNode().isIngestNode()) {
+                        processBulkIndexIngestRequest(task, bulkRequest, executorName, listener);
+                    } else {
+                        ingestForwarder.forwardIngestRequest(BulkAction.INSTANCE, bulkRequest, listener);
+                    }
+                } catch (Exception e) {
+                    listener.onFailure(e);
                 }
-                if (clusterService.localNode().isIngestNode()) {
-                    processBulkIndexIngestRequest(task, bulkRequest, executorName, listener);
-                } else {
-                    ingestForwarder.forwardIngestRequest(BulkAction.INSTANCE, bulkRequest, listener);
-                }
-            } catch (Exception e) {
-                listener.onFailure(e);
+                return;
             }
-            return;
         }
 
         final boolean includesSystem = includesSystem(bulkRequest, clusterService.state().metadata().getIndicesLookup(), systemIndices);
@@ -695,6 +697,9 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
             final DocStatusStats docStatusStats = new DocStatusStats();
             String nodeId = clusterService.localNode().getId();
 
+            // Collect redirected items from all shards
+            final List<BulkItemRequest> allRedirectedItems = Collections.synchronizedList(new ArrayList<>());
+
             for (Map.Entry<ShardId, List<BulkItemRequest>> entry : requestsByShard.entrySet()) {
                 final ShardId shardId = entry.getKey();
                 final List<BulkItemRequest> requests = entry.getValue();
@@ -734,8 +739,17 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                                     responses.set(bulkItemResponse.getItemId(), bulkItemResponse);
                                 }
 
+                                if (bulkShardResponse.hasRedirectedItems()) {
+                                    allRedirectedItems.addAll(bulkShardResponse.getRedirectedItems());
+                                }
+
                                 if (counter.decrementAndGet() == 0) {
-                                    finishHim();
+                                    if (!allRedirectedItems.isEmpty()) {
+                                        indicesService.addDocStatusStats(docStatusStats);
+                                        handleRedirectedItems(task, allRedirectedItems, startTimeNanos, listener, responses);
+                                    } else {
+                                        finishHim();
+                                    }
                                 }
                             }
 
@@ -756,7 +770,12 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
                                 }
 
                                 if (counter.decrementAndGet() == 0) {
-                                    finishHim();
+                                    if (!allRedirectedItems.isEmpty()) {
+                                        indicesService.addDocStatusStats(docStatusStats);
+                                        handleRedirectedItems(task, allRedirectedItems, startTimeNanos, listener, responses);
+                                    } else {
+                                        finishHim();
+                                    }
                                 }
                             }
 
@@ -923,6 +942,39 @@ public class TransportBulkAction extends HandledTransportAction<BulkRequest, Bul
          * be saving us an iteration over the responses array
          */
         new BulkOperation(task, bulkRequest, listener, responses, startTimeNanos, indicesThatCannotBeCreated).run();
+    }
+
+    /**
+     * Handles redirected items from data nodes that need to be re-routed due to routing key changes.
+     * This method creates a new BulkRequest from the redirected items and reuses the existing
+     * BulkOperation logic to handle routing and execution.
+     *
+     * @param task The parent task
+     * @param redirectedItems List of items that need to be re-routed
+     * @param startTimeNanos Start time for tracking latency
+     * @param listener Listener to notify when all redirected items are processed
+     * @param responses Atomic array to store responses in original request order
+     */
+    private void handleRedirectedItems(
+        Task task,
+        List<BulkItemRequest> redirectedItems,
+        long startTimeNanos,
+        ActionListener<BulkResponse> listener,
+        AtomicArray<BulkItemResponse> responses
+    ) {
+        if (redirectedItems == null || redirectedItems.isEmpty()) {
+            listener.onResponse(
+                new BulkResponse(responses.toArray(new BulkItemResponse[responses.length()]), buildTookInMillis(startTimeNanos))
+            );
+            return;
+        }
+
+        BulkRequest redirectedBulkRequest = new BulkRequest();
+        for (BulkItemRequest item : redirectedItems) {
+            redirectedBulkRequest.add(item.request());
+        }
+
+        new BulkOperation(task, redirectedBulkRequest, listener, responses, startTimeNanos, emptyMap()).run();
     }
 
     /**

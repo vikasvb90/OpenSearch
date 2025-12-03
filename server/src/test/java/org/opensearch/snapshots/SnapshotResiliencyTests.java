@@ -2255,6 +2255,18 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                 );
                 final MappingUpdatedAction mappingUpdatedAction = new MappingUpdatedAction(settings, clusterSettings, clusterService);
                 mappingUpdatedAction.setClient(client);
+                final IngestService ingestService = new IngestService(
+                    clusterService,
+                    threadPool,
+                    environment,
+                    scriptService,
+                    new AnalysisModule(environment, Collections.emptyList()).getAnalysisRegistry(),
+                    Collections.emptyList(),
+                    client,
+                    indicesService,
+                    namedXContentRegistry,
+                    new SystemIngestPipelineCache()
+                );
                 final TransportShardBulkAction transportShardBulkAction = new TransportShardBulkAction(
                     settings,
                     transportService,
@@ -2276,6 +2288,7 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                     ),
                     mock(RemoteStorePressureService.class),
                     new SystemIndices(emptyMap()),
+                    ingestService,
                     NoopTracer.INSTANCE
                 );
                 actions.put(
@@ -2284,18 +2297,7 @@ public class SnapshotResiliencyTests extends OpenSearchTestCase {
                         threadPool,
                         transportService,
                         clusterService,
-                        new IngestService(
-                            clusterService,
-                            threadPool,
-                            environment,
-                            scriptService,
-                            new AnalysisModule(environment, Collections.emptyList()).getAnalysisRegistry(),
-                            Collections.emptyList(),
-                            client,
-                            indicesService,
-                            namedXContentRegistry,
-                            new SystemIngestPipelineCache()
-                        ),
+                        ingestService,
                         transportShardBulkAction,
                         client,
                         actionFilters,

@@ -66,6 +66,7 @@ import org.opensearch.cluster.metadata.MappingMetadata;
 import org.opensearch.cluster.metadata.ResolvedIndices;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.routing.AllocationId;
+import org.opensearch.cluster.routing.OperationRouting;
 import org.opensearch.cluster.routing.ShardRouting;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.collect.Tuple;
@@ -100,6 +101,9 @@ import org.opensearch.index.shard.ShardNotFoundException;
 import org.opensearch.index.translog.Translog;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.indices.SystemIndices;
+import org.opensearch.ingest.IngestDocument;
+import org.opensearch.ingest.IngestService;
+import org.opensearch.ingest.Pipeline;
 import org.opensearch.node.NodeClosedException;
 import org.opensearch.ratelimitting.admissioncontrol.enums.AdmissionControlActionType;
 import org.opensearch.tasks.Task;
@@ -113,6 +117,9 @@ import org.opensearch.transport.TransportService;
 import org.opensearch.transport.client.transport.NoNodeAvailableException;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -145,6 +152,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
     private final MappingUpdatedAction mappingUpdatedAction;
     private final SegmentReplicationPressureService segmentReplicationPressureService;
     private final RemoteStorePressureService remoteStorePressureService;
+    private final IngestService ingestService;
 
     /**
      * This action is used for performing primary term validation. With remote translog enabled, the translogs would
@@ -170,6 +178,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         SegmentReplicationPressureService segmentReplicationPressureService,
         RemoteStorePressureService remoteStorePressureService,
         SystemIndices systemIndices,
+        IngestService ingestService,
         Tracer tracer
     ) {
         super(
@@ -194,6 +203,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         this.mappingUpdatedAction = mappingUpdatedAction;
         this.segmentReplicationPressureService = segmentReplicationPressureService;
         this.remoteStorePressureService = remoteStorePressureService;
+        this.ingestService = ingestService;
 
         this.transportPrimaryTermValidationAction = ACTION_NAME + "[validate_primary_term]";
 
@@ -414,7 +424,9 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
 
     @Override
     protected BulkShardResponse newResponseInstance(StreamInput in) throws IOException {
-        return new BulkShardResponse(in);
+        boolean dataPlaneScriptExecutionEnabled = clusterService.getClusterSettings()
+            .get(IngestService.DATA_PLANE_SCRIPT_EXECUTION_ENABLED);
+        return new BulkShardResponse(in, dataPlaneScriptExecutionEnabled);
     }
 
     @Override
@@ -423,6 +435,82 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
         IndexShard primary,
         ActionListener<PrimaryResult<BulkShardRequest, BulkShardResponse>> listener
     ) {
+        boolean dataPlaneScriptExecutionEnabled = clusterService.getClusterSettings().get(IngestService.DATA_PLANE_SCRIPT_EXECUTION_ENABLED);
+
+        final List<BulkItemRequest> redirectedItems;
+
+        if (dataPlaneScriptExecutionEnabled) {
+            ScriptExecutionResult scriptResult = executeScriptsIfPresent(request, primary);
+
+            redirectedItems = scriptResult.hasItemsToRedirect()
+                ? new ArrayList<>(scriptResult.getItemsToRedirect())
+                : Collections.emptyList();
+
+            if (!scriptResult.getItemsToProcess().isEmpty()) {
+                BulkShardRequest modifiedRequest = new BulkShardRequest(
+                    request.shardId(),
+                    request.getRefreshPolicy(),
+                    scriptResult.getItemsToProcess().toArray(new BulkItemRequest[0])
+                );
+                modifiedRequest.waitForActiveShards(request.waitForActiveShards());
+                modifiedRequest.timeout(request.timeout());
+                modifiedRequest.setParentTask(request.getParentTask());
+                request = modifiedRequest;
+            } else if (redirectedItems.isEmpty()) {
+                listener.onResponse(
+                    new WritePrimaryResult<>(
+                        request,
+                        new BulkShardResponse(request.shardId(), new BulkItemResponse[0], Collections.emptyList(), true),
+                        null,
+                        null,
+                        primary,
+                        logger
+                    )
+                );
+                return;
+            } else {
+                listener.onResponse(
+                    new WritePrimaryResult<>(
+                        request,
+                        new BulkShardResponse(request.shardId(), new BulkItemResponse[0], redirectedItems, true),
+                        null,
+                        null,
+                        primary,
+                        logger
+                    )
+                );
+                return;
+            }
+        } else {
+            redirectedItems = Collections.emptyList();
+        }
+
+        final ActionListener<PrimaryResult<BulkShardRequest, BulkShardResponse>> wrappedListener =
+            redirectedItems.isEmpty() ? listener : ActionListener.wrap(
+                result -> {
+                    BulkShardResponse originalResponse = result.finalResponseIfSuccessful;
+                    BulkShardResponse responseWithRedirects = new BulkShardResponse(
+                        originalResponse.getShardId(),
+                        originalResponse.getResponses(),
+                        redirectedItems,
+                        dataPlaneScriptExecutionEnabled
+                    );
+                    assert result instanceof  WritePrimaryResult;
+                    WritePrimaryResult<BulkShardRequest, BulkShardResponse> writePrimaryResult = (WritePrimaryResult) result;
+                    listener.onResponse(
+                        new WritePrimaryResult<>(
+                            result.replicaRequest(),
+                            responseWithRedirects,
+                            writePrimaryResult.location,
+                            writePrimaryResult.finalFailure,
+                            writePrimaryResult.primary,
+                            logger
+                        )
+                    );
+                },
+                listener::onFailure
+            );
+
         ClusterStateObserver observer = new ClusterStateObserver(clusterService, request.timeout(), logger, threadPool.getThreadContext());
         performOnPrimary(request, primary, updateHelper, threadPool::absoluteTimeInMillis, (update, shardId, mappingListener) -> {
             assert update != null;
@@ -443,7 +531,7 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             public void onTimeout(TimeValue timeout) {
                 mappingUpdateListener.onFailure(new MapperException("timed out while waiting for a dynamic mapping update"));
             }
-        }), listener, threadPool, executor(primary));
+        }), wrappedListener, threadPool, executor(primary));
     }
 
     @Override
@@ -954,5 +1042,124 @@ public class TransportShardBulkAction extends TransportWriteAction<BulkShardRequ
             );
         }
         return result;
+    }
+
+    /**
+     * Checks if a DocWriteRequest has a painless script (ingest pipeline) to execute.
+     * Handles extraction of IndexRequest from UpdateRequest.
+     *
+     * @param request the document write request to check
+     * @return true if the request has a non-null and non-NOOP pipeline, false otherwise
+     */
+    private boolean hasPainlessScript(DocWriteRequest<?> request) {
+        IndexRequest indexRequest = TransportBulkAction.getIndexWriteRequest(request);
+        if (indexRequest == null) {
+            return false;
+        }
+        return indexRequest.getPipeline() != null && !IngestService.NOOP_PIPELINE_NAME.equals(indexRequest.getPipeline());
+    }
+
+    /**
+     * Executes a painless script (ingest pipeline) on a document.
+     * Creates an IngestDocument from the IndexRequest, retrieves the pipeline,
+     * executes it, and updates the IndexRequest with the results.
+     *
+     * @param request the document write request to execute the script on
+     * @throws Exception if script execution fails
+     */
+    private void executeScript(DocWriteRequest<?> request) throws Exception {
+        IndexRequest indexRequest = TransportBulkAction.getIndexWriteRequest(request);
+        if (indexRequest == null) {
+            return;
+        }
+
+        String pipelineId = indexRequest.getPipeline();
+        if (pipelineId == null || IngestService.NOOP_PIPELINE_NAME.equals(pipelineId)) {
+            return;
+        }
+
+        Pipeline pipeline = ingestService.getPipeline(pipelineId);
+        if (pipeline == null) {
+            throw new IllegalArgumentException("pipeline with id [" + pipelineId + "] does not exist");
+        }
+
+        IngestDocument ingestDocument = IngestService.toIngestDocument(indexRequest);
+
+        final Exception[] executionException = new Exception[1];
+        ingestDocument.executePipeline(pipeline, (result, e) -> {
+            if (e != null) {
+                executionException[0] = e;
+            } else {
+                IngestService.updateIndexRequestWithIngestDocument(indexRequest, result);
+            }
+        });
+
+        if (executionException[0] != null) {
+            throw executionException[0];
+        }
+    }
+
+    /**
+     * Executes scripts on bulk items if data plane script execution is enabled.
+     * Detects routing key changes and categorizes items into those that can be processed
+     * locally and those that need to be redirected to the coordinator.
+     *
+     * @param request the bulk shard request containing items to process
+     * @param primary the primary shard (we're already on the node hosting this shard)
+     * @return ScriptExecutionResult containing items to process locally and items to redirect
+     */
+    private ScriptExecutionResult executeScriptsIfPresent(BulkShardRequest request, IndexShard primary) {
+        List<BulkItemRequest> itemsToProcess = new ArrayList<>();
+        List<BulkItemRequest> itemsToRedirect = new ArrayList<>();
+
+        ClusterState clusterState = clusterService.state();
+        for (BulkItemRequest item : request.items()) {
+            DocWriteRequest<?> docRequest = item.request();
+
+            if (!hasPainlessScript(docRequest)) {
+                itemsToProcess.add(item);
+                continue;
+            }
+
+            try {
+                RoutingChangeDetector.RoutingKeys originalKeys = RoutingChangeDetector.extractRoutingKeys(docRequest);
+                executeScript(docRequest);
+                RoutingChangeDetector.RoutingKeys newKeys = RoutingChangeDetector.extractRoutingKeys(docRequest);
+
+                IndexRequest indexRequest = TransportBulkAction.getIndexWriteRequest(docRequest);
+                if (indexRequest != null) {
+                    indexRequest.setPipeline(IngestService.NOOP_PIPELINE_NAME);
+                }
+
+                if (RoutingChangeDetector.hasRoutingChanged(originalKeys, newKeys)) {
+                    try {
+                        ShardId newShardId = RoutingChangeDetector.resolveShardId(newKeys, clusterState);
+
+                        if (newShardId.equals(primary.shardId())) {
+                            itemsToProcess.add(item);
+                        } else {
+                            itemsToRedirect.add(item);
+                        }
+                    } catch (Exception e) {
+                        logger.error("Failed to resolve shard for changed routing after script execution, redirecting to coordinator", e);
+                        itemsToRedirect.add(item);
+                    }
+                } else {
+                    // No routing change - document still belongs to current shard, process locally
+                    itemsToProcess.add(item);
+                }
+            } catch (Exception e) {
+                logger.error("Script execution failed on shard {}", primary.shardId(), e);
+                item.setPrimaryResponse(
+                    new BulkItemResponse(
+                        item.id(),
+                        docRequest.opType(),
+                        new BulkItemResponse.Failure(docRequest.index(), docRequest.id(), e, ExceptionsHelper.status(e))
+                    )
+                );
+            }
+        }
+
+        return new ScriptExecutionResult(itemsToProcess, itemsToRedirect);
     }
 }

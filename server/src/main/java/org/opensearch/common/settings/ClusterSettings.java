@@ -438,6 +438,7 @@ public final class ClusterSettings extends AbstractScopedSettings {
                 ClusterManagerService.CLUSTER_MANAGER_SERVICE_SLOW_TASK_LOGGING_THRESHOLD_SETTING,
                 IngestService.MAX_NUMBER_OF_INGEST_PROCESSORS,
                 IngestService.SYSTEM_INGEST_PIPELINE_ENABLED,
+                IngestService.DATA_PLANE_SCRIPT_EXECUTION_ENABLED,
                 SearchService.DEFAULT_SEARCH_TIMEOUT_SETTING,
                 SearchService.DEFAULT_ALLOW_PARTIAL_SEARCH_RESULTS,
                 SearchPipelineService.ENABLED_SYSTEM_GENERATED_FACTORIES_SETTING,

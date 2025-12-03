@@ -144,6 +144,19 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         Setting.Property.Dynamic
     );
 
+    /**
+     * Defines whether painless scripts should execute on data nodes instead of coordinator nodes.
+     * When enabled, scripts execute on data nodes after routing, allowing for routing key changes
+     * to be detected and handled. When disabled (default), scripts execute on coordinator nodes
+     * before routing, maintaining backward compatibility.
+     */
+    public static final Setting<Boolean> DATA_PLANE_SCRIPT_EXECUTION_ENABLED = Setting.boolSetting(
+        "ingest.script.data_plane_execution.enabled",
+        false,
+        Setting.Property.NodeScope,
+        Setting.Property.Dynamic
+    );
+
     private static final Logger logger = LogManager.getLogger(IngestService.class);
 
     private final ClusterService clusterService;
@@ -1676,7 +1689,7 @@ public class IngestService implements ClusterStateApplier, ReportingService<Inge
         indexRequest.source(ingestDocument.getSourceAndMetadata(), indexRequest.getContentType());
     }
 
-    static IngestDocument toIngestDocument(IndexRequest indexRequest) {
+    public static IngestDocument toIngestDocument(IndexRequest indexRequest) {
         return new IngestDocument(
             indexRequest.index(),
             indexRequest.id(),
